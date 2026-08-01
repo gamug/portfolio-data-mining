@@ -1,7 +1,5 @@
 edgartools
-ijson
-lxml
+finnhub-python
 beautifulsoup4
 pandas
-requests
 tqdm

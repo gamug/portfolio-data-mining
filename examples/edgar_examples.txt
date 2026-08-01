@@ -1,0 +1,155 @@
+--- get_company_info('AAPL') ---
+{
+  "success": true,
+  "data": {
+    "name": "Apple Inc.",
+    "cik": "320193",
+    "sic": "3571",
+    "sic_description": null
+  }
+}
+Resolved to: Apple Inc. (CIK 320193)
+
+--- get_filings('AAPL', form='10-K', limit=5) ---
+{
+  "success": true,
+  "data": [
+    {
+      "form": "10-K",
+      "filing_date": "2025-10-31",
+      "accession_number": "0000320193-25-000079"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2024-11-01",
+      "accession_number": "0000320193-24-000123"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2023-11-03",
+      "accession_number": "0000320193-23-000106"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2022-10-28",
+      "accession_number": "0000320193-22-000108"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2021-10-29",
+      "accession_number": "0000320193-21-000105"
+    }
+  ]
+}
+
+--- list_years_available('AAPL', '10-K') ---
+{
+  "success": true,
+  "data": [
+    1994,
+    1995,
+    1996,
+    1997,
+    1998,
+    1999,
+    2000,
+    2002,
+    2003,
+    2004,
+    2005,
+    2006,
+    2007,
+    2008,
+    2009,
+    2010,
+    2011,
+    2012,
+    2013,
+    2014,
+    2015,
+    2016,
+    2017,
+    2018,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ]
+}
+
+--- get_filing_by_year('AAPL', '10-K', 2025) ---
+{
+  "success": true,
+  "data": {
+    "form": "10-K",
+    "filing_date": "2025-10-31",
+    "accession_number": "0000320193-25-000079"
+  }
+}
+
+--- get_filing_by_year('AAPL', '10-K', 1800)  # deliberately invalid ---
+{
+  "success": false,
+  "error": "No '10-K' filing found for 'AAPL' in 1800."
+}
+Handled gracefully: No '10-K' filing found for 'AAPL' in 1800.
+
+--- get_latest_filing('AAPL', '8-K') ---
+{
+  "success": true,
+  "data": {
+    "form": "8-K",
+    "filing_date": "2026-07-30",
+    "accession_number": "0000320193-26-000018"
+  }
+}
+
+--- get_financials('AAPL', '10-K', 2025) ---
+{
+  "success": true,
+  "data": {
+    "income_statement": [
+      {
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "label": "Net sales",
+        "standard_concept": "Revenue",
+        "2025-09-27 (FY)": 416161000000.0,
+        "2024-09-28 (FY)": 391035000000.0,
+        "2023-09-30 (FY)": 383285000000.0,
+        "level": 4,
+        "abstract": false,
+        "dimension": false,
+        "is_breakdown": false,
+        "dimension_axis": NaN,
+        "dimension_member": NaN,
+        "dimension_member_label": NaN,
+        "dimension_label": NaN,
+        "balance": "credit",
+        "weight": 1.0,
+        "preferred_sign": 1.0,
+        "parent_concept": "us-gaap_GrossProfit",
+        "parent_abstract_concept": "us-gaap_StatementLineItems"
+      },
+      {
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "label": "Products",
+        "standard_concept": NaN,
+        "2025-09-27 (FY)": 307003000000.0,
+        "2024-09-28 (FY)": 294866000000.0,
+        "2023-09-30 (FY)": 298085000000.0,
+        "level": 4,
+        "abstract": false,
+        "dimension": true,
+        "is_breakdown": false,
+        "dimension_axis": "srt:ProductOrServiceAxis",
+        "dimension_member": "us-gaap_ProductMember",
+        "dimension_member_label": "Products",
+        "dimension_label": "srt:ProductOrServiceAxis: Products",
+        "balance": "credit",
+        "weight": 1.0,
+        "preferred_sign": 1.0,
+        "parent_conc
+Income statement has 47 line items
