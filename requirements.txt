@@ -1,0 +1,7 @@
+edgartools
+ijson
+lxml
+beautifulsoup4
+pandas
+requests
+tqdm
