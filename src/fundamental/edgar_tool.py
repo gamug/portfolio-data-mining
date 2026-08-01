@@ -183,7 +183,7 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            match = next((f for f in filings if f.filing_date.year == year), None)
+            match = next((f for f in filings if f.filing_date.year == year), None) # type: ignore[union-attr]
             if match is None:
                 return {
                     "success": False,
@@ -241,7 +241,7 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            filing = next((f for f in filings if f.filing_date.year == year), None)
+            filing = next((f for f in filings if f.filing_date.year == year), None)  # type: ignore[union-attr]
             if filing is None:
                 return {
                     "success": False,
@@ -256,9 +256,9 @@ class EdgarAgent:
             return {
                 "success": True,
                 "data": {
-                    "income_statement": xbrl.statements.income_statement().to_dataframe().to_dict(orient="records"),
-                    "balance_sheet": xbrl.statements.balance_sheet().to_dataframe().to_dict(orient="records"),
-                    "cash_flow": xbrl.statements.cashflow_statement().to_dataframe().to_dict(orient="records"),
+                    "income_statement": xbrl.statements.income_statement().to_dataframe().to_dict(orient="records"),  # type: ignore[union-attr]
+                    "balance_sheet": xbrl.statements.balance_sheet().to_dataframe().to_dict(orient="records"),        # type: ignore[union-attr]
+                    "cash_flow": xbrl.statements.cashflow_statement().to_dataframe().to_dict(orient="records"),       # type: ignore[union-attr]
                 },
             }
         except Exception as e:
@@ -282,7 +282,7 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            years = sorted({f.filing_date.year for f in filings})
+            years = sorted({f.filing_date.year for f in filings}) # type: ignore[union-attr]
             return {"success": True, "data": years}
         except Exception as e:
             return {"success": False, "error": f"Failed to list available years: {e}"}
