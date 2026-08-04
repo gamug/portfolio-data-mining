@@ -2,4 +2,5 @@ edgartools
 finnhub-python
 beautifulsoup4
 pandas
+requests
 tqdm
