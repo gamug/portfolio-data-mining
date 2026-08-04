@@ -214,10 +214,12 @@ class GDELTNewsFetcher:
         tickers_or_queries: List[str],
         start_date: str,
         end_date: str,
-        farmed: list[str],
+        checkpoint_csv: Optional[str] = None,
+        farmed: List[str] = [],
+        farmed_path: str = '',
         verbose: bool = True,
         english_only: bool = True,
-    ) -> tuple[List[Dict], pd.DataFrame]:
+    ) -> List[Dict]:
         """
         Fetch news for multiple tickers/company names over the same date range.
         Each entry in tickers_or_queries is used as-is as the GDELT query, so
@@ -232,8 +234,12 @@ class GDELTNewsFetcher:
             Start date in YYYY-MM-DD format.
         end_date : str
             End date in YYYY-MM-DD format.
-        farmed : list[str]
+        checkpoint_csv : Optional[str]
+            Path to the CSV file to save the fetched news.
+        farmed : List[str]
             List of already-farmed queries.
+        farmed_path : str
+            Path to the CSV file containing farmed queries.
         verbose : bool
             If True (default), print progress messages.
         english_only : bool
@@ -274,16 +280,25 @@ class GDELTNewsFetcher:
                 print(msg)
 
             # Normalize and append
-            new_rows.extend(self._normalize_article(raw_query, a) for a in raw_articles)
+            articles = [self._normalize_article(raw_query, a) for a in raw_articles]
+            new_rows.extend(articles)
             company_names.append(query_identifier)
             status.append('Success' if raw_articles else 'Failed')
+            
+            # Update inventory and save to CSV if checkpointing is enabled
+            if checkpoint_csv and articles:
+                self._append_to_csv(articles, checkpoint_csv)
+                farmed_update = pd.DataFrame({"query": company_names, "status": status})
+                if not os.path.exists(farmed_path):
+                    farmed_update.to_csv(farmed_path, index=False)
+                else:
+                    farmed_update.to_csv(farmed_path, mode='a', header=False, index=False)
 
             time.sleep(self.sleep_between_calls * random.uniform(1.0, 1.3))
 
         # Update inventory
         self.articles.extend(new_rows)
-        farmed_update = pd.DataFrame({"query": company_names, "status": status})
-        return new_rows, farmed_update
+        return new_rows
 
     def inventory_control(self, checkpoint_csv: str, exclude_failed: bool = False) -> tuple[str, list[str]]:
         """
@@ -339,6 +354,8 @@ class GDELTNewsFetcher:
         
         if checkpoint_csv:
             farmed_path, farmed = self.inventory_control(checkpoint_csv, exclude_failed=exclude_failed)
+        else:
+            farmed_path, farmed = '', []
 
         if start > end:
             raise ValueError("start_date must be before end_date")
@@ -356,17 +373,13 @@ class GDELTNewsFetcher:
             if verbose:
                 print(f"\n=== Window: {from_str} -> {to_str} ===")
 
-            window_rows, farmed_update = self.fetch_many(
-                tickers_or_queries, from_str, to_str, farmed,verbose=verbose, english_only=english_only
+            window_rows = self.fetch_many(
+                tickers_or_queries, from_str, to_str,
+                checkpoint_csv=checkpoint_csv,
+                farmed_path=farmed_path, farmed=farmed,
+                verbose=verbose, english_only=english_only
             )
             all_new_rows.extend(window_rows)
-
-            if checkpoint_csv and window_rows:
-                self._append_to_csv(window_rows, checkpoint_csv)
-                if not os.path.exists(farmed_path):
-                    farmed_update.to_csv(farmed_path, index=False)
-                else:
-                    farmed_update.to_csv(farmed_path, mode='a', header=False, index=False)
 
             window_start = window_end + timedelta(days=1)
 
