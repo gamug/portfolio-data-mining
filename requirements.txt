@@ -1,6 +1,8 @@
 edgartools
+fastapi==0.141.1
 finnhub-python
 beautifulsoup4
 pandas
 requests
 tqdm
+uvicorn==0.52.1

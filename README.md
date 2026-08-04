@@ -11,6 +11,13 @@ pip install -r requirements.txt
 
 [S&P 500 companies list](https://github.com/datasets/s-and-p-500-companies/blob/main/data/constituents.csv)
 
+## FastAPI Server
+To run the FastAPI server, use the following command:
+
+```bash
+uvicorn app:app --reload
+```
+
 ## collect_historical_news.py
 This script collects historical news articles related to a list of companies or queries using the GDELT API. It fetches news articles within a specified date range and saves the results to a CSV file.
 

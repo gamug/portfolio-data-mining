@@ -23,7 +23,7 @@ if __name__ == "__main__":
     fetcher.fetch_rolling_range(
         tickers_or_queries=COMPANIES,
         start_date="2020-01-01",
-        end_date="2020-01-03",
+        end_date="2025-12-31",
         window_days=1,
         checkpoint_csv=output_path
     )
