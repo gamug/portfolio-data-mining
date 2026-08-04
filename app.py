@@ -22,7 +22,7 @@ def welcome():
 # Fetch news endpoint
 # ---------------------------------------------------------------------------
 @app.get("/fetch_news")
-def fetch_news(
+def gdelt_fetch_news(
     start_date: str = Query("2020-01-01", description="Start date in YYYY-MM-DD format"),
     end_date: str = Query("2025-12-31", description="End date in YYYY-MM-DD format"),
     window_days: int = Query(1, description="Window size in days"),
