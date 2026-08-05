@@ -7,6 +7,7 @@ Install python dependencies:
 conda create -n scraping python=3.14.6
 conda activate scraping
 pip install -r requirements.txt
+playwright install
 ```
 
 [S&P 500 companies list](https://github.com/datasets/s-and-p-500-companies/blob/main/data/constituents.csv)

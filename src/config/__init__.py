@@ -9,4 +9,8 @@ general = {
         'sec_filings': os.path.join('..', 'output', 'sec_filings'),
         'input': os.path.join('..', 'input'),
     },
+    'domains': [
+                "cnbc.com", "finance.yahoo.com", "marketwatch.com",
+                "investing.com", "bloomberg.com", "reuters.com"
+            ]
 }
