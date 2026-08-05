@@ -21,6 +21,7 @@ Design notes for whoever wires this into the agent framework:
 import os
 import logging
 from typing import Optional
+import numpy as np
 
 from edgar import set_identity, Company
 
@@ -215,6 +216,19 @@ class EdgarAgent:
         except Exception as e:
             return {"success": False, "error": f"Failed to retrieve latest filing: {e}"}
 
+    def clean_data_frame(self, df) -> list:
+        """_summary_
+
+        Args:
+            df (_type_): _description_
+
+        Returns:
+            list: _description_
+        """
+        df = df.astype(object).replace({np.nan: None})
+        income_statement = df.to_dict(orient="records")
+        return income_statement
+
     def get_financials(self, cik_or_symbol: str, form: str, year: int) -> dict:
         """
         Extract the three core financial statements (income statement, balance
@@ -256,9 +270,9 @@ class EdgarAgent:
             return {
                 "success": True,
                 "data": {
-                    "income_statement": xbrl.statements.income_statement().to_dataframe().to_dict(orient="records"),  # type: ignore[union-attr]
-                    "balance_sheet": xbrl.statements.balance_sheet().to_dataframe().to_dict(orient="records"),        # type: ignore[union-attr]
-                    "cash_flow": xbrl.statements.cashflow_statement().to_dataframe().to_dict(orient="records"),       # type: ignore[union-attr]
+                    "income_statement": self.clean_data_frame(xbrl.statements.income_statement().to_dataframe()),  # type: ignore[union-attr]
+                    "balance_sheet": self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),        # type: ignore[union-attr]
+                    "cash_flow": self.clean_data_frame(xbrl.statements.cashflow_statement().to_dataframe()),       # type: ignore[union-attr]
                 },
             }
         except Exception as e:

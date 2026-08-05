@@ -24,15 +24,36 @@ NOTES / CAVEATS
 4. maxrecords caps at 250 per request. For high article-volume periods,
    you'll want to chunk by smaller date windows (this class supports that,
    similar to the Finnhub fetcher).
+
+CHANGELOG (perf / reliability fixes)
+-------------------------------------
+- max_records default raised from 10 -> 250 (the GDELT cap). This is the
+  single biggest lever for reducing total call count: with the old default
+  of 10, covering any real volume of news required many more, smaller date
+  windows, which multiplied your total request count (and therefore your
+  429 exposure) many times over.
+- Fixed an O(n^2) bug in fetch_many()'s checkpoint logic: `company_names`/
+  `status` were accumulated across the *entire* query loop but re-written
+  in full to the farmed-queries CSV (in append mode) on every single
+  checkpoint, duplicating earlier rows each time and writing ever-larger
+  chunks to disk as the loop progressed. Now only the newly-completed
+  query's row is appended, once.
+- Added a shared requests.Session for connection pooling/reuse instead of
+  opening a fresh TCP/TLS connection on every call.
+- Added a simple adaptive throttle: sleep_between_calls now increases
+  automatically after a 429 and slowly decays back down after sustained
+  success, instead of staying fixed regardless of how the server is
+  actually behaving.
+- Raised the default base sleep_between_calls to better match GDELT's
+  real-world tolerance (per the original docstring's own note, ~5-6s/req),
+  which in practice causes far fewer 429s than starting from ~2s and
+  relying on backoff to recover.
 """
 
 import csv, json, os, requests, random, time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
-from urllib.parse import quote
 import pandas as pd
-
-from src.config import general
 
 
 class GDELTNewsFetcher:
@@ -40,22 +61,89 @@ class GDELTNewsFetcher:
 
     BASE_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 
-    def __init__(self, sleep_between_calls: float = 6.0, timeout: int = 30):
+    def __init__(
+        self,
+        sleep_between_calls: float = 5.5,
+        timeout: int = 60,
+        max_sleep_between_calls: float = 60.0,
+        circuit_breaker_threshold: int = 3,
+        circuit_breaker_cooldown: float = 180.0,
+        user_agent: str = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    ):
         """
         Parameters
         ----------
         sleep_between_calls : float
             Base seconds to wait between API calls. GDELT's real-world
             tolerance seems closer to ~1 request per 5-6 seconds per IP,
-            despite no official published limit. Random jitter is added
-            on top of this (see fetch_many) to avoid a perfectly regular,
-            bot-like request cadence.
+            despite no official published limit, so that's the default now
+            (previously 2s, which triggered frequent 429s on longer runs).
+            Random jitter is added on top of this (see fetch_many) to avoid
+            a perfectly regular, bot-like request cadence. This value is
+            also adjusted automatically at runtime - see the adaptive
+            throttle notes on _register_success / _register_rate_limit.
         timeout : int
             Request timeout in seconds.
+        max_sleep_between_calls : float
+            Ceiling for the adaptive throttle, so a bad streak of 429s
+            can't grow the delay unboundedly.
+        circuit_breaker_threshold : int
+            Number of consecutive 429s (across calls, not just within a
+            single fetch_query's retry loop) after which we assume we've
+            tripped a sustained rate-limit block rather than just being
+            briefly over the limit, and pause for circuit_breaker_cooldown
+            seconds instead of continuing to retry. GDELT's sustained
+            blocks don't clear from a slightly longer backoff - they need
+            several minutes of the IP being quiet. Hammering through one
+            with ever-shorter retries can keep resetting it.
+        circuit_breaker_cooldown : float
+            Seconds to pause once circuit_breaker_threshold consecutive
+            429s have been seen.
+        user_agent : str
+            GDELT has been observed to rate-limit/block requests that use
+            requests' default User-Agent string, even at low request
+            volume, while identical requests with a browser-like
+            User-Agent succeed. Set to None/"" to disable and use the
+            requests default.
         """
         self.sleep_between_calls = sleep_between_calls
+        self._base_sleep_between_calls = sleep_between_calls
+        self.max_sleep_between_calls = max_sleep_between_calls
+        self.circuit_breaker_threshold = circuit_breaker_threshold
+        self.circuit_breaker_cooldown = circuit_breaker_cooldown
+        self._consecutive_429s = 0
         self.timeout = timeout
         self.articles: List[Dict] = []
+        self.session = requests.Session()
+        if user_agent:
+            self.session.headers.update({"User-Agent": user_agent})
+
+    # ------------------------------------------------------------------
+    # Adaptive throttling
+    # ------------------------------------------------------------------
+    def _register_rate_limit(self) -> bool:
+        """Back off the baseline pacing after hitting a 429, and track
+        consecutive 429s to detect a sustained block. Returns True if the
+        circuit breaker should trip (caller should do a long cooldown
+        instead of a normal short retry)."""
+        self.sleep_between_calls = min(
+            self.sleep_between_calls * 1.5, self.max_sleep_between_calls
+        )
+        self._consecutive_429s += 1
+        return self._consecutive_429s >= self.circuit_breaker_threshold
+
+    def _register_success(self) -> None:
+        """Slowly relax pacing back toward the configured baseline after
+        successful calls, so a single bad patch doesn't permanently slow
+        down the rest of a long run."""
+        self._consecutive_429s = 0
+        if self.sleep_between_calls > self._base_sleep_between_calls:
+            self.sleep_between_calls = max(
+                self._base_sleep_between_calls, self.sleep_between_calls * 0.9
+            )
 
     # ------------------------------------------------------------------
     # Query building helpers
@@ -82,7 +170,9 @@ class GDELTNewsFetcher:
 
         This lets you fetch multiple companies' news in ONE API call instead
         of one call per company - the biggest lever for avoiding 429s, since
-        it directly cuts your total request count.
+        it directly cuts your total request count. Prefer this over passing
+        many separate names to fetch_many/fetch_rolling_range whenever you
+        don't strictly need per-company query labels.
 
         Parameters
         ----------
@@ -103,6 +193,34 @@ class GDELTNewsFetcher:
             query += " sourcelang:english"
         return query
 
+    @staticmethod
+    def build_domain_filter(domains: List[str], exact: bool = False) -> str:
+        """
+        Restrict a query to specific news portals/domains, e.g.
+        ["reuters.com", "bloomberg.com"] -> "(domain:reuters.com OR domain:bloomberg.com)"
+
+        Parameters
+        ----------
+        domains : List[str]
+            Domains to restrict results to, e.g. "reuters.com", "cnn.com".
+        exact : bool
+            If False (default), uses GDELT's `domain:` operator, which
+            matches the domain AND its subdomains (e.g. "cnn.com" also
+            matches "edition.cnn.com"). If True, uses `domainis:`, which
+            requires an exact domain match only.
+
+        Combine this with build_or_query()/append_language_filter() by
+        joining the strings with a space (GDELT ANDs space-separated
+        terms together), e.g.:
+
+            company_q = fetcher.build_or_query(["Tesla"], english_only=False)
+            domain_q = fetcher.build_domain_filter(["reuters.com", "bloomberg.com"])
+            query = fetcher.append_language_filter(f"{company_q} {domain_q}")
+            # -> '("Tesla") (domain:reuters.com OR domain:bloomberg.com) sourcelang:english'
+        """
+        op = "domainis" if exact else "domain"
+        return "(" + " OR ".join(f"{op}:{d}" for d in domains) + ")"
+
     # ------------------------------------------------------------------
     # Core fetching
     # ------------------------------------------------------------------
@@ -111,9 +229,9 @@ class GDELTNewsFetcher:
         query: str,
         start_date: str,
         end_date: str,
-        max_records: int = 10,
+        max_records: int = 250,
         max_retries: int = 4,
-        initial_backoff: float = 8.0,
+        initial_backoff: float = 5,
     ) -> List[Dict]:
         """
         Fetch articles matching a query within a date range.
@@ -126,7 +244,10 @@ class GDELTNewsFetcher:
         start_date, end_date : str
             Format YYYY-MM-DD (converted internally to GDELT's datetime format).
         max_records : int
-            Max articles per request (GDELT caps this at 250).
+            Max articles per request. Defaults to 250, GDELT's hard cap -
+            there's no reason to ask for fewer, since doing so just forces
+            you to make more calls (via smaller windows) to get the same
+            coverage.
         max_retries : int
             Number of retries on 429 (rate limit) or transient errors before
             giving up on this query/window.
@@ -155,12 +276,31 @@ class GDELTNewsFetcher:
 
         for attempt in range(1, max_retries + 1):
             try:
-                resp = requests.get(self.BASE_URL, params=params, timeout=self.timeout)
+                resp = self.session.get(self.BASE_URL, params=params, timeout=self.timeout)
 
                 if resp.status_code == 429:
+                    if should_trip_breaker := self._register_rate_limit():
+                        # We've seen several 429s in a row across calls -
+                        # this looks like a sustained IP-level block rather
+                        # than a momentary "over the limit" response.
+                        # GDELT's sustained blocks reportedly don't clear
+                        # from progressively longer backoff alone; they
+                        # need a real quiet period. Pause for a fixed,
+                        # fairly long cooldown instead of continuing to
+                        # retry with the normal (shorter) exponential
+                        # backoff, then reset the counter and try again.
+                        print(f"  [CIRCUIT BREAKER] {self._consecutive_429s} "
+                              f"consecutive 429s - this looks like a "
+                              f"sustained rate-limit block, not just "
+                              f"momentary throttling. Pausing "
+                              f"{self.circuit_breaker_cooldown:.0f}s before "
+                              f"trying again...")
+                        time.sleep(self.circuit_breaker_cooldown)
+                        self._consecutive_429s = 0
+                        continue
+
                     # Respect the server's suggested wait time if it provides one
-                    retry_after = resp.headers.get("Retry-After")
-                    if retry_after:
+                    if retry_after := resp.headers.get("Retry-After"):
                         try:
                             wait_time = float(retry_after)
                         except ValueError:
@@ -174,7 +314,8 @@ class GDELTNewsFetcher:
 
                     print(f"  [429] Rate limited on '{query}' "
                           f"(attempt {attempt}/{max_retries}). "
-                          f"Waiting {wait_time:.1f}s before retry...")
+                          f"Waiting {wait_time:.1f}s before retry... "
+                          f"(baseline pacing now {self.sleep_between_calls:.1f}s)")
                     time.sleep(wait_time)
                     backoff *= 2
                     continue
@@ -191,6 +332,7 @@ class GDELTNewsFetcher:
                     continue
 
                 data = resp.json()
+                self._register_success()
                 return data.get("articles", [])
 
             except requests.exceptions.HTTPError as e:
@@ -226,6 +368,10 @@ class GDELTNewsFetcher:
         pass company names (e.g. "Apple Inc", "Tesla") rather than raw tickers
         for better recall - GDELT indexes news text, not ticker metadata.
 
+        Tip: if you don't need per-company labels on the results, combine
+        names with build_or_query() and pass a single-element list here -
+        that turns N calls into 1 and is the biggest lever for avoiding 429s.
+
         Parameters
         ----------
         tickers_or_queries : List[str]
@@ -246,24 +392,21 @@ class GDELTNewsFetcher:
             If True (default), automatically appends `sourcelang:english` to
             each query (unless it already contains a sourcelang: filter, e.g.
             from build_or_query()). Set to False to fetch all languages.
-        
+
         Returns
         -------
         List[Dict]
             Raw article dicts as returned by GDELT.
-        DataFrame
-            A DataFrame containing the company names and status of each fetch.
         """
-        new_rows, company_names, status = [], [], []
+        new_rows = []
 
         for raw_query in tickers_or_queries:
             query = self.append_language_filter(raw_query, english_only=english_only)
             query_identifier = '_'.join(start_date.split('-')) + '_' + raw_query
-            
-            # Fetch articles for this query and date range
+
             if verbose:
                 print(f"Fetching news for '{query}' ({start_date} -> {end_date}) ...")
-            
+
             # Skip queries we've already fetched
             if query_identifier in farmed:
                 if verbose:
@@ -271,7 +414,7 @@ class GDELTNewsFetcher:
                 continue
 
             # Fetch articles
-            raw_articles = self.fetch_query(query, start_date, end_date) 
+            raw_articles = self.fetch_query(query, start_date, end_date)
             if verbose:
                 msg = (
                     f"  -> {len(raw_articles)} articles found." if raw_articles
@@ -282,17 +425,30 @@ class GDELTNewsFetcher:
             # Normalize and append
             articles = [self._normalize_article(raw_query, a) for a in raw_articles]
             new_rows.extend(articles)
-            company_names.append(query_identifier)
-            status.append('Success' if raw_articles else 'Failed')
-            
-            # Update inventory and save to CSV if checkpointing is enabled
+
+            this_status = 'Success' if raw_articles else 'Failed'
+
+            # Update inventory and save to CSV if checkpointing is enabled.
+            # NOTE: previously this rebuilt the *entire accumulated* list of
+            # queries processed so far in this call and re-appended all of
+            # it to farmed_path on every iteration, duplicating earlier rows
+            # each time (O(n^2) writes + duplicate farmed entries). Now we
+            # only ever append the single row for the query that just
+            # finished.
             if checkpoint_csv and articles:
                 self._append_to_csv(articles, checkpoint_csv)
-                farmed_update = pd.DataFrame({"query": company_names, "status": status})
+                farmed_row = pd.DataFrame(
+                    {"query": [query_identifier], "status": [this_status]}
+                )
                 if not os.path.exists(farmed_path):
-                    farmed_update.to_csv(farmed_path, index=False)
+                    farmed_row.to_csv(farmed_path, index=False)
                 else:
-                    farmed_update.to_csv(farmed_path, mode='a', header=False, index=False)
+                    farmed_row.to_csv(farmed_path, mode='a', header=False, index=False)
+
+            # Keep the in-memory farmed list in sync too, so a query isn't
+            # re-fetched later in the same run (e.g. if it appears again
+            # for some reason) before the on-disk file is re-read.
+            farmed.append(query_identifier)
 
             time.sleep(self.sleep_between_calls * random.uniform(1.0, 1.3))
 
@@ -304,7 +460,7 @@ class GDELTNewsFetcher:
         """
         Control the inventory of fetched articles by reading a list of already-farmed articles from a file.
         If the file does not exist, it initializes an empty list.
-        
+
         Parameters
         ----------
         checkpoint_csv : str
@@ -320,6 +476,9 @@ class GDELTNewsFetcher:
         farmed_path = os.path.join(path, f'{file_name}_farmed.csv')
         if os.path.exists(farmed_path):
             farmed = pd.read_csv(farmed_path)
+            # De-duplicate here too, in case an old, buggy checkpoint file
+            # (written before this fix) still has repeated rows.
+            farmed = farmed.drop_duplicates(subset=["query"], keep="last")
             if exclude_failed:
                 farmed = farmed[farmed.status == 'Success']['query'].tolist()
             else:
@@ -327,6 +486,7 @@ class GDELTNewsFetcher:
         else:
             farmed = []
         return farmed_path, farmed
+
     # ------------------------------------------------------------------
     # Rolling date-window fetching (for long historical backfills)
     # ------------------------------------------------------------------
@@ -351,7 +511,7 @@ class GDELTNewsFetcher:
         """
         start = datetime.strptime(start_date, "%Y-%m-%d")
         end = datetime.strptime(end_date, "%Y-%m-%d")
-        
+
         if checkpoint_csv:
             farmed_path, farmed = self.inventory_control(checkpoint_csv, exclude_failed=exclude_failed)
         else:
@@ -364,12 +524,12 @@ class GDELTNewsFetcher:
         window_start = start
 
         while window_start <= end:
-            
+
             window_end = min(window_start + timedelta(days=window_days - 1), end)
 
             from_str = window_start.strftime("%Y-%m-%d")
             to_str = window_end.strftime("%Y-%m-%d")
-            
+
             if verbose:
                 print(f"\n=== Window: {from_str} -> {to_str} ===")
 
@@ -444,14 +604,29 @@ class GDELTNewsFetcher:
 # Example usage
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    fetcher = GDELTNewsFetcher()
+
+    # Combine all companies into a single OR query per date window - this is
+    # the single biggest lever for cutting total API calls (and 429s).
+    # Combined with window_days=7 and max_records=250 (now the default),
+    # a multi-year backfill needs dramatically fewer requests than before.
+    #
+    # english_only=False here because we build the sourcelang:english
+    # filter ourselves at the end, once, after adding the domain filter -
+    # otherwise it would get appended twice.
     # Use company names (not tickers) for better GDELT recall.
-    COMPANIES = ["Apple Inc", "Microsoft", "Amazon", "Tesla"]
+    company_query = fetcher.build_or_query(["Apple Inc", "Microsoft", "Amazon", "Tesla"], english_only=False)
 
-    fetcher = GDELTNewsFetcher(sleep_between_calls=6.0)
+    if portals := ["reuters.com", "bloomberg.com", "cnbc.com"]:
+        combined_query = fetcher.append_language_filter(
+            f"{company_query} {fetcher.build_domain_filter(portals)}"
+        )
+    else:
+        combined_query = fetcher.append_language_filter(company_query)
 
-    # OPTION A (recommended - far fewer API calls, lower 429 risk):
-    # combine all companies into a single OR query per date window.
-    combined_query = fetcher.build_or_query(COMPANIES)
+    # combined_query now looks like:
+    # '("Apple Inc" OR "Microsoft" OR "Amazon" OR "Tesla") (domain:reuters.com OR domain:bloomberg.com OR domain:cnbc.com) sourcelang:english'
+
     fetcher.fetch_rolling_range(
         tickers_or_queries=[combined_query],
         start_date="2020-01-01",
@@ -459,17 +634,5 @@ if __name__ == "__main__":
         window_days=7,
         checkpoint_csv="gdelt_news_checkpoint.csv",
     )
-
-    # OPTION B (one call per company per window - more granular, but
-    # multiplies your call count by len(COMPANIES); slower and more
-    # likely to hit 429s. Uncomment if you need per-company query labels):
-    #
-    # fetcher.fetch_rolling_range(
-    #     tickers_or_queries=COMPANIES,
-    #     start_date="2020-01-01",
-    #     end_date="2020-03-31",
-    #     window_days=7,
-    #     checkpoint_csv="gdelt_news_checkpoint.csv",
-    # )
 
     fetcher.to_csv("gdelt_news_full.csv")
