@@ -12,8 +12,6 @@ from src.news.gdelt_collector import GDELTNewsFetcher
 from src.fundamental.edgar_tool import EdgarAgent
 from src.news.finnhub_collector import FinnhubNewsFetcher
 
-from dotenv import load_dotenv
-load_dotenv()
 
 class FilingForm(str, Enum):
     ten_k = "10-K"
