@@ -16,8 +16,6 @@ from src.news.finnhub_collector import FinnhubNewsFetcher
 from src.news.scraping.crawler import BulkCrawler
 from src.news.scraping.scraper import MarkdownExtractor
 
-from dotenv import load_dotenv
-load_dotenv()
 
 #defining lists to consume in swagger ui
 link_files = FileEnumFactory(general["paths"]["news_links"])
