@@ -1,18 +1,28 @@
 # app.py
-import os
+import asyncio, os, traceback
 from enum import Enum
 import pandas as pd
 from fastapi import FastAPI, Query
 from fastapi.responses import RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from crawl4ai import CrawlerRunConfig
 
 from src.config import general
+from src.commons.utils import FileEnumFactory
 from src.news.gdelt_collector import GDELTNewsFetcher
 from src.fundamental.edgar_tool import EdgarAgent
 from src.news.finnhub_collector import FinnhubNewsFetcher
+from src.news.scraping.crawler import BulkCrawler
+from src.news.scraping.scraper import MarkdownExtractor
 
 
+#defining lists to consume in swagger ui
+link_files = FileEnumFactory(general["paths"]["news_links"])
+_link_files = link_files.build_enum()
+markdown_files = FileEnumFactory(general["paths"]["news_markdown"])
+_markdown_files = markdown_files.build_enum()
+__markdown_files = markdown_files.build_enum()
 class FilingForm(str, Enum):
     ten_k = "10-K"
     ten_q = "10-Q"
@@ -38,6 +48,14 @@ app = FastAPI(
             "description": "Endpoints for Finnhub news collection. Only used to collect less that 1 year old news"
         },
         {
+            "name": "Crawler",
+            "description": "Endpoints for web crawling and data extraction"
+        },
+        {
+            "name": "Process News",
+            "description": "Endpoints for processing news Markdown data to get title and content"
+        },
+        {
             "name": "GDELT",
             "description": "Endpoints for GDELT news collection"
         }
@@ -60,8 +78,8 @@ def welcome():
 def backfill_news(
     api_key: str,
     tickers: list[str] = ["AAPL", "MSFT", "AMZN", "GOOGL", "TSLA"],
-    start_date: str = "2024-01-01",
-    end_date: str = "2024-03-31",
+    start_date: str = os.environ.get("START_DATE", "2026-01-01"),
+    end_date: str = os.environ.get("END_DATE", "2026-01-02"),
     window_days: int = 7,
     checkpoint_csv: str = "sp500_news_checkpoint.csv",
     output_csv: str = "sp500_news_full.csv"
@@ -98,8 +116,8 @@ def backfill_news(
 # ---------------------------------------------------------------------------
 @app.get("/fetch_news", tags=["GDELT"])
 def gdelt_fetch_news(
-    start_date: str = Query("2020-01-01", description="Start date in YYYY-MM-DD format"),
-    end_date: str = Query("2025-12-31", description="End date in YYYY-MM-DD format"),
+    start_date: str = Query(os.environ.get("START_DATE", "2023-01-01"), description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(os.environ.get("END_DATE", "2025-12-31"), description="End date in YYYY-MM-DD format"),
     window_days: int = Query(1, description="Window size in days"),
     sleep_between_calls: float = Query(3.0, description="Sleep time between API calls")
 ):
@@ -131,7 +149,62 @@ def gdelt_fetch_news(
         "companies_count": len(companies),
         "output_file": output_path
     }
-    
+
+#----------------------------------------------------------------------------
+# Crawler endpoints
+#----------------------------------------------------------------------------
+@app.get("/crawler", tags=["Crawler"])
+def crawl_links(file: _link_files): #type: ignore
+    """
+    Crawl links from a specified file and return the results.
+    """
+    urls = pd.read_csv(os.path.join(general["paths"]["news_links"], file.value))
+    urls = urls.url.tolist()[:100]
+    try:
+        crawler_config = CrawlerRunConfig(
+            # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            magic=True
+        )
+        crawler = BulkCrawler(
+            chunk_size=50,
+            max_concurrent=10,
+            date_identifier=file.value.split('.')[0],
+            run_config=crawler_config
+        )
+        summary = asyncio.run(crawler.run(urls))
+        return {'run_status': 'success', 'summary': summary}
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        return {"error": str(e), "traceback": tb_str}
+
+#----------------------------------------------------------------------------
+# Extract content endpoints
+#----------------------------------------------------------------------------
+@app.get("/get_available_files", tags=["Process News"])
+def get_available_files(folder: __markdown_files): #type: ignore
+    return os.listdir(os.path.join(general["paths"]["news_markdown"], folder.value))
+
+@app.get("/process_markdown", tags=["Process News"])
+def process_markdown(
+    folder: __markdown_files = Query(..., description="Markdown folder to process"), #type: ignore
+    file: str = Query(..., description="Markdown available file in the folder got from get_available_files")
+):
+    """
+    Process a markdown file and extract its title and content.
+    """
+    extractor = MarkdownExtractor()
+
+    # Extract the title and content
+    path = os.path.join(general["paths"]["news_markdown"], folder.value, file)
+    extractor = MarkdownExtractor(max_title_line_length=50000)
+    article = extractor.extract_from_text(path)
+
+    return {
+        "title": article.title,
+        "content": article.content,
+        "source_url": article.source_url,
+        "crawled_at": article.crawled_at
+    }
 
 #----------------------------------------------------------------------------
 # Edgar api endpoints

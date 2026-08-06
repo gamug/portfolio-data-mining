@@ -5,12 +5,15 @@ general = {
         'output': os.path.join('..', 'output'),
         'news': os.path.join('..', 'output', 'news'),
         'news_links': os.path.join('..', 'output', 'news', 'links'),
+        'news_markdown': os.path.join('..', 'output', 'news', 'markdown'),
+        'news_json': os.path.join('..', 'output', 'news', 'json'),
         'logs': os.path.join('..', 'output', 'logs'),
         'sec_filings': os.path.join('..', 'output', 'sec_filings'),
         'input': os.path.join('..', 'input'),
     },
     'domains': [
-                "cnbc.com", "finance.yahoo.com", "marketwatch.com",
-                "investing.com", "bloomberg.com", "reuters.com"
+                "cnbc.com", "finance.yahoo.com", "ft.com",
+                "investing.com", "Nasdaq.com", "seekingalpha.com",
+                "stocktwits.com"
             ]
 }

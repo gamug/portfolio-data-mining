@@ -1,8 +1,9 @@
 import os
+from datetime import datetime
 import pandas as pd
 
 from src.config import general
-from src.news.gdelt_collector import GDELTNewsFetcher
+from src.news.gnews_collector import SP500NewsFetcher
 
 
 # ---------------------------------------------------------------------------
@@ -11,23 +12,25 @@ from src.news.gdelt_collector import GDELTNewsFetcher
 if __name__ == "__main__":
     # Use company names (not tickers) for better GDELT recall.
     # You can also use exact-phrase queries, e.g. '"Apple Inc"'
-    COMPANIES = pd.read_csv(
+    sp500 = pd.read_csv(
         os.path.join(general["paths"]["input"], "s&p500.csv"),
         sep=";"
-    )["Security"].tolist()
-    batch_size = 2
-    COMPANIES = [COMPANIES[i:i+batch_size] for i in range(0, len(COMPANIES), batch_size)] # Split into chunks of 5 companies to avoid query length limits
-    output_path = os.path.join(general["paths"]["news_links"], "gdelt_news_full.csv")
-    
-    fetcher = GDELTNewsFetcher(sleep_between_calls=3.0)
-
-    company_q = [fetcher.build_or_query(companies) for companies in COMPANIES]
-    domain_q = fetcher.build_domain_filter(general["domains"])
-    combined_query = [f"{companies} {domain_q}" for companies in company_q]
-    fetcher.fetch_rolling_range(
-        tickers_or_queries=combined_query,
-        start_date="2020-01-01",
-        end_date="2020-03-31",
-        window_days=7,
-        checkpoint_csv=output_path,
     )
+    sp500 = dict(sp500[["Symbol", "Security"]].set_index("Symbol")["Security"].to_dict())
+    
+    # --- Rolling window over a much larger range ---
+    rolling_fetcher = SP500NewsFetcher(
+        companies=sp500,   #type: ignore
+        domains=general["domains"],
+        start_date=datetime(2022, 1, 1),
+        end_date=datetime(2026, 8, 5),
+        max_results_per_query=50,
+        request_delay_seconds=1.0,
+        identifier="historical_news",
+        window_days=30,  # one independent query plan per 7-day window
+    )
+
+    print("Rolling progress before starting:", rolling_fetcher.progress_all_windows())
+    rolling_items = rolling_fetcher.run_rolling()
+    print("Rolling progress after run:", rolling_fetcher.progress_all_windows())
+    print(rolling_fetcher.to_pandas_all_windows().head())
