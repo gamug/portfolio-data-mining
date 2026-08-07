@@ -7,24 +7,27 @@ around Google News search — no API key needed).
 combines Google's `site:` search operator with a loop over (company, domain)
 pairs, then dedupes by URL.
 
-All results across every (ticker, domain) query for a single window are
-appended to a single CSV as they come in:
+All results are appended to one CSV as queries complete. In rolling mode,
+every window for the identifier uses that same CSV:
     general['paths']['news_links']/<identifier>/news_links.csv
         (single-window mode, i.e. window_days=None)
-    general['paths']['news_links']/<identifier>/<window_start>_to_<window_end>/news_links.csv
-        (rolling-window mode, i.e. window_days is set)
+    general['paths']['news_links']/<identifier>/news_links.csv
+        (both single-window and rolling-window modes)
 
-Progress is tracked in a state file alongside each CSV, so a run spanning
-thousands of queries (optionally across many rolling windows) can be safely
-stopped (Ctrl+C) and resumed later, picking up only the queries that
-haven't completed yet.
+Progress is tracked in a state file alongside the CSV. In rolling mode the
+state keys include the window label, while URL deduplication is global to the
+identifier. A run spanning thousands of queries can be stopped (Ctrl+C) and
+resumed later without creating a directory per window.
 
     pip install gnews pandas
 """
 
-import hashlib, json, logging, os, tempfile, time
-from dataclasses import dataclass
+import csv
+import hashlib, json, logging, os, random, tempfile, time
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
+from itertools import islice
+from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 from gnews import GNews
@@ -46,37 +49,29 @@ class NewsItem:
     published_date: str | None
     publisher: str | None
 
-    def to_pandas(self) -> pd.DataFrame:
-        """Return a single-row DataFrame for this NewsItem."""
-        return pd.DataFrame([self.__dict__])
-
-
 class SP500NewsFetcher:
     """
     Searches Google News (via gnews) for each (company, domain) pair within
     a time window, and returns a deduplicated list of NewsItem results.
 
     Resumable + incrementally exported to CSV:
-        - Every (ticker, domain) query's results are appended to a
+        - Every query's results are appended to a
         news_links.csv as soon as that query completes — so you never lose
         already-fetched results even if the run is stopped partway through
         thousands of queries.
-        - A `_query_state.json` file alongside the CSV tracks which
-        (ticker, domain) pairs are done, so re-running with the same
-        `identifier` (and, for rolling runs, the same window) skips
-        completed queries automatically.
+        - A `_query_state.json` file alongside the CSV tracks which query
+        batches are done. In rolling mode each state entry includes its
+        window label, so re-running the same identifier skips only completed
+        batches for that window.
 
     Two modes:
         - Single window (default, window_days=None): behaves exactly as
         before — one CSV/state file for the whole [start_date, end_date]
         range. Use `.run()`.
         - Rolling window (window_days=N): splits [start_date, end_date] into
-        consecutive N-day windows, and runs the full (ticker, domain) query
-        plan independently for each window, each with its own CSV/state
-        file in a window-labeled subfolder. Use `.run_rolling()`. This is
-        useful for very large date ranges, since Google News search tends
-        to return incomplete results for very wide windows, and it lets you
-        resume window-by-window.
+        consecutive N-day windows and appends them all to the same CSV/state
+        files. State entries are window-scoped and URL deduplication spans
+        the whole identifier. Use `.run_rolling()`.
 
     Example (single window):
         companies = {"AAPL": "Apple", "MSFT": "Microsoft"}
@@ -121,16 +116,25 @@ class SP500NewsFetcher:
         country: str = "US",
         max_results_per_query: int = 20,
         request_delay_seconds: float = 1.0,
+        domain_batch_size: int = 4,
+        checkpoint_every: int = 25,
+        max_retries: int = 3,
+        retry_backoff_seconds: float = 2.0,
         identifier: str | None = None,
         window_days: int | None = None,
     ):
         self.companies = companies
-        self.domains = [d.lower() for d in domains]
+        self.domains = list(dict.fromkeys(d.lower().strip() for d in domains if d.strip()))
         self.start_date = start_date
         self.end_date = end_date
         self.max_results_per_query = max_results_per_query
         self.request_delay_seconds = request_delay_seconds
+        self.domain_batch_size = max(1, domain_batch_size)
+        self.checkpoint_every = max(1, checkpoint_every)
+        self.max_retries = max(0, max_retries)
+        self.retry_backoff_seconds = max(0.0, retry_backoff_seconds)
         self.window_days = window_days
+        self._current_window: str | None = None
 
         self.gnews = GNews(
             language=language,
@@ -145,9 +149,8 @@ class SP500NewsFetcher:
         self._base_output_dir = os.path.join(general["paths"]["news_links"], self.identifier)
         os.makedirs(self._base_output_dir, exist_ok=True)
 
-        # In single-window mode these point straight at the base dir, same
-        # as before. In rolling mode, run_rolling() repoints these at each
-        # window's subfolder via _switch_window() before calling run().
+        # Both modes use one identifier directory. Rolling-mode state keys
+        # are window-scoped, rather than being stored in subdirectories.
         self.output_dir = self._base_output_dir
         self.csv_path = os.path.join(self.output_dir, "news_links.csv")
         self.state_path = os.path.join(self.output_dir, "_query_state.json")
@@ -165,8 +168,8 @@ class SP500NewsFetcher:
     # the ticker x domain search space, not the crawl of individual articles)
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _query_key(ticker: str, domain: str) -> str:
-        raw = f"{ticker}|{domain}"
+    def _query_key(ticker: str, domains: tuple[str, ...], window: str | None) -> str:
+        raw = f"{window or 'single'}|{ticker}|{'|'.join(domains)}"
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
 
     def _load_state(self) -> dict:
@@ -196,19 +199,20 @@ class SP500NewsFetcher:
                 os.remove(tmp_path)
             raise
 
-    def _mark(self, ticker: str, domain: str, status: str, **extra):
-        key = self._query_key(ticker, domain)
+    def _mark(self, ticker: str, domains: tuple[str, ...], status: str, **extra):
+        key = self._query_key(ticker, domains, self._current_window)
         entry = {
             "ticker": ticker,
-            "domain": domain,
+            "domains": list(domains),
+            "window": self._current_window,
             "status": status,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         entry.update(extra)
         self.state[key] = entry
 
-    def _is_done(self, ticker: str, domain: str) -> bool:
-        entry = self.state.get(self._query_key(ticker, domain))
+    def _is_done(self, ticker: str, domains: tuple[str, ...]) -> bool:
+        entry = self.state.get(self._query_key(ticker, domains, self._current_window))
         return bool(entry and entry.get("status") == "done")
 
     # ------------------------------------------------------------------ #
@@ -218,7 +222,7 @@ class SP500NewsFetcher:
         if os.path.exists(self.csv_path):
             try:
                 existing = pd.read_csv(self.csv_path, usecols=["url"])
-                return set(existing["url"].dropna().tolist())
+                return {self._normalise_url(url) for url in existing["url"].dropna()}
             except (pd.errors.EmptyDataError, ValueError, OSError):
                 return set()
         return set()
@@ -228,31 +232,59 @@ class SP500NewsFetcher:
         the first time the file is created."""
         if not results:
             return
-        df = pd.concat([item.to_pandas() for item in results], ignore_index=True)
         write_header = not os.path.exists(self.csv_path)
-        df.to_csv(self.csv_path, mode="a", header=write_header, index=False)
+        with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=NewsItem.__dataclass_fields__.keys())
+            if write_header:
+                writer.writeheader()
+            writer.writerows(asdict(item) for item in results)
 
     # ------------------------------------------------------------------ #
-    def _search_one(self, ticker: str, company_name: str, domain: str) -> list[NewsItem]:
-        query = f'{company_name} site:{domain}'
-        try:
-            raw_results = self.gnews.get_news(query)
-        except Exception as e:
-            logger.warning(f"  query failed: {query!r} -> {e}")
-            self.errors.append({"ticker": ticker, "domain": domain, "error": str(e)})
-            return []
+    @staticmethod
+    def _normalise_url(url: str) -> str:
+        """Normalise enough for deduplication without changing exported URLs."""
+        parsed = urlsplit(url)
+        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
+
+    @staticmethod
+    def _matching_domain(url: str, domains: tuple[str, ...]) -> str | None:
+        host = (urlsplit(url).hostname or "").lower()
+        matches = [domain for domain in domains if host == domain or host.endswith(f".{domain}")]
+        return max(matches, key=len) if matches else None
+
+    def _search_one(self, ticker: str, company_name: str, domains: tuple[str, ...]) -> list[NewsItem] | None:
+        site_filter = " OR ".join(f"site:{domain}" for domain in domains)
+        query = f'"{company_name}" ({site_filter})'
+        for attempt in range(self.max_retries + 1):
+            try:
+                raw_results = self.gnews.get_news(query)
+                break
+            except Exception as e:
+                if attempt == self.max_retries:
+                    logger.warning(f"  query failed after {attempt + 1} attempt(s): {query!r} -> {e}")
+                    self.errors.append({"ticker": ticker, "domains": list(domains), "error": str(e)})
+                    return None
+                delay = self.retry_backoff_seconds * (2 ** attempt) + random.uniform(0, 0.5)
+                logger.warning(f"  query failed; retrying in {delay:.1f}s: {query!r} -> {e}")
+                time.sleep(delay)
 
         found = []
         for r in raw_results or []:
             url = r.get("url")
-            if not url or url in self._seen_urls:
+            normalised_url = self._normalise_url(url) if url else ""
+            if not url or normalised_url in self._seen_urls:
                 continue
-            self._seen_urls.add(url)
+            self._seen_urls.add(normalised_url)
+            # `gnews` can return a news.google.com redirect rather than the
+            # publisher URL. The search itself is site-restricted, so do not
+            # discard that result merely because its redirect host cannot be
+            # matched to a requested domain.
+            result_domain = self._matching_domain(url, domains) or (urlsplit(url).hostname or domains[0])
             found.append(
                 NewsItem(
                     company=company_name,
                     ticker=ticker,
-                    domain=domain,
+                    domain=result_domain,
                     title=r.get("title", ""),
                     description=r.get("description", ""),
                     url=url,
@@ -266,32 +298,31 @@ class SP500NewsFetcher:
         """
         Runs every (ticker, domain) query not already marked "done" in the
         state file for the CURRENT window (self.csv_path / self.state_path).
-        Safe to Ctrl+C at any point — each query's result is saved to CSV
-        and marked in the state file immediately after that query
-        completes, so re-running resumes from the next unfinished query
-        rather than starting over.
+        Safe to Ctrl+C at any point: results are appended to CSV immediately,
+        while state is checkpointed every `checkpoint_every` queries and on
+        interruption. Re-running resumes from the last checkpoint.
 
         In single-window mode (window_days=None) this covers the whole
         [start_date, end_date] range, same as before. In rolling mode, call
         this indirectly via run_rolling(), which repoints the fetcher at
         each window before calling this.
         """
-        all_pairs = [(t, c, d) for t, c in self.companies.items() for d in self.domains]
-
+        domain_batches = list(self._batched_domains())
+        total = len(self.companies) * len(domain_batches)
         pending = []
         skipped = 0
-        for ticker, company_name, domain in all_pairs:
-            if self._is_done(ticker, domain):
-                skipped += 1
-                continue
-            if not retry_failed and self.state.get(self._query_key(ticker, domain), {}).get("status") == "failed":
-                skipped += 1
-                continue
-            pending.append((ticker, company_name, domain))
-
-        total = len(all_pairs)
+        for ticker, company_name in self.companies.items():
+            for domains in domain_batches:
+                if self._is_done(ticker, domains):
+                    skipped += 1
+                    continue
+                entry = self.state.get(self._query_key(ticker, domains, self._current_window), {})
+                if not retry_failed and entry.get("status") == "failed":
+                    skipped += 1
+                    continue
+                pending.append((ticker, company_name, domains))
         logger.info(
-            f"Query plan: {total} total (ticker,domain) pairs, {skipped} already done/skipped, "
+            f"Query plan: {total} total (ticker,domain-batch) queries, {skipped} already done/skipped, "
             f"{len(pending)} pending. Window {self.gnews.start_date.date() if hasattr(self.gnews.start_date, 'date') else self.gnews.start_date} "  # type: ignore
             f"-> {self.gnews.end_date.date() if hasattr(self.gnews.end_date, 'date') else self.gnews.end_date}. "  # type: ignore
             f"Output: {self.output_dir}"
@@ -299,22 +330,28 @@ class SP500NewsFetcher:
 
         progress_pct = 0.0
         try:
-            for i, (ticker, company_name, domain) in enumerate(pending, start=1):
-                results = self._search_one(ticker, company_name, domain)
-                self._append_to_csv(results)
-                self.items.extend(results)
-
-                self._mark(ticker, domain, "done", result_count=len(results))
-                self._save_state()  # after every single query — cheap, and maximizes safety
+            for i, (ticker, company_name, domains) in enumerate(pending, start=1):
+                results = self._search_one(ticker, company_name, domains)
+                if results is None:
+                    self._mark(ticker, domains, "failed")
+                    result_count = 0
+                else:
+                    self._append_to_csv(results)
+                    self.items.extend(results)
+                    self._mark(ticker, domains, "done", result_count=len(results))
+                    result_count = len(results)
+                if i % self.checkpoint_every == 0:
+                    self._save_state()
 
                 progress_pct = (skipped + i) / total * 100
                 logger.info(
                     f"[{skipped + i}/{total} | {progress_pct:5.1f}%] "
-                    f"{ticker} @ {domain}: {len(results)} articles -> {self.csv_path}"
+                    f"{ticker} @ {', '.join(domains)}: {result_count} articles -> {self.csv_path}"
                 )
                 time.sleep(self.request_delay_seconds)  # be polite to Google News
 
-        except (KeyboardInterrupt,):
+        except KeyboardInterrupt:
+            self._save_state()
             logger.warning(
                 f"Interrupted at {progress_pct:5.1f}%. "
                 "State + all completed query CSVs are saved. Re-run with the same "
@@ -322,20 +359,27 @@ class SP500NewsFetcher:
             )
             raise
 
+        self._save_state()
         logger.info(
             f"Done. {len(self.items)} unique articles across {len(pending)} queries run, "
             f"{len(self.errors)} failed queries."
         )
         return self.items
 
+    def _batched_domains(self):
+        iterator = iter(self.domains)
+        while batch := tuple(islice(iterator, self.domain_batch_size)):
+            yield batch
+
     def progress(self) -> dict:
         """Quick status snapshot for the CURRENT window, without running
         anything — good for checking in on a long-running job from another
         process/notebook."""
-        total = len(self.companies) * len(self.domains)
-        done = sum(1 for v in self.state.values() if v.get("status") == "done")
-        failed = sum(1 for v in self.state.values() if v.get("status") == "failed")
-        total_articles = sum(v.get("result_count", 0) for v in self.state.values() if v.get("status") == "done")
+        total = len(self.companies) * sum(1 for _ in self._batched_domains())
+        current = [v for v in self.state.values() if v.get("window") == self._current_window]
+        done = sum(1 for v in current if v.get("status") == "done")
+        failed = sum(1 for v in current if v.get("status") == "failed")
+        total_articles = sum(v.get("result_count", 0) for v in current if v.get("status") == "done")
         return {
             "total_queries": total,
             "done": done,
@@ -367,7 +411,7 @@ class SP500NewsFetcher:
             return pd.read_csv(self.csv_path)
         if not self.items:
             return pd.DataFrame(columns=list(NewsItem.__dataclass_fields__.keys()))
-        return pd.concat([item.to_pandas() for item in self.items], ignore_index=True)
+        return pd.DataFrame.from_records(asdict(item) for item in self.items)
 
     def group_by_company(self) -> dict[str, list[NewsItem]]:
         grouped: dict[str, list[NewsItem]] = {}
@@ -401,28 +445,18 @@ class SP500NewsFetcher:
         return f"{w_start.date()}_to_{w_end.date()}"
 
     def _switch_window(self, w_start: datetime, w_end: datetime, label: str) -> None:
-        """Repoints the fetcher's gnews client, output paths, state and
-        seen-URL cache at a specific window's subfolder."""
+        """Set the active time window while retaining one output directory."""
         self.gnews.start_date = w_start
         self.gnews.end_date = w_end
 
-        # self.output_dir = os.path.join(self._base_output_dir, label)
-
-        self.csv_path = os.path.join(self._base_output_dir, "news_links.csv")
-        self.state_path = os.path.join(self._base_output_dir, "_query_state.json")
-        self.state = self._load_state()
-        self._seen_urls = self._load_seen_urls_from_csv()
+        self._current_window = label
         self.items = []
 
     def run_rolling(self, retry_failed: bool = True) -> list[NewsItem]:
         """
-        Runs the full (ticker, domain) query plan independently for every
-        window_days-sized window between start_date and end_date. Each
-        window gets its own CSV + state file (under a
-        <window_start>_to_<window_end> subfolder of the identifier's output
-        dir), so a run spanning years can be Ctrl+C'd and resumed — it will
-        pick back up on the current window's remaining queries, then
-        continue to the next window.
+        Runs the full (ticker, domain-batch) plan for every window. All
+        windows append to one CSV and share one state file in the identifier
+        directory; state entries are labelled by window for correct resume.
 
         Requires window_days to have been set on the constructor.
         """
@@ -446,48 +480,24 @@ class SP500NewsFetcher:
         self.items = all_items
         return all_items
 
-    def _window_dirs(self) -> list[str]:
-        if not os.path.isdir(self._base_output_dir):
-            return []
-        return sorted(
-            os.path.join(self._base_output_dir, d)
-            for d in os.listdir(self._base_output_dir)
-            if os.path.isdir(os.path.join(self._base_output_dir, d))
-        )
-
     def to_pandas_all_windows(self) -> pd.DataFrame:
-        """DataFrame combining news_links.csv from every window subfolder
-        found on disk under this identifier's output dir."""
-        dfs = []
-        for window_dir in self._window_dirs():
-            csv_path = os.path.join(window_dir, "news_links.csv")
-            if os.path.exists(csv_path):
-                dfs.append(pd.read_csv(csv_path))
-        if not dfs:
-            return pd.DataFrame(columns=list(NewsItem.__dataclass_fields__.keys()))
-        return pd.concat(dfs, ignore_index=True)
+        """DataFrame of all rolling-window output in the shared CSV."""
+        return self.to_pandas(from_disk=True)
 
     def progress_all_windows(self) -> dict:
         """Aggregated status snapshot across every window in the rolling
         plan, without running anything."""
         windows = self._generate_windows()
-        per_query_total = len(self.companies) * len(self.domains)
+        per_query_total = len(self.companies) * sum(1 for _ in self._batched_domains())
 
         per_window = []
         total_done = total_failed = total_articles = 0
         for w_start, w_end in windows:
             label = self._window_label(w_start, w_end)
-            state_path = os.path.join(self._base_output_dir, label, "_query_state.json")
-            done = failed = articles = 0
-            if os.path.exists(state_path):
-                try:
-                    with open(state_path, "r", encoding="utf-8") as f:
-                        state = json.load(f)
-                    done = sum(1 for v in state.values() if v.get("status") == "done")
-                    failed = sum(1 for v in state.values() if v.get("status") == "failed")
-                    articles = sum(v.get("result_count", 0) for v in state.values() if v.get("status") == "done")
-                except (json.JSONDecodeError, OSError):
-                    pass
+            state = [v for v in self.state.values() if v.get("window") == label]
+            done = sum(1 for v in state if v.get("status") == "done")
+            failed = sum(1 for v in state if v.get("status") == "failed")
+            articles = sum(v.get("result_count", 0) for v in state if v.get("status") == "done")
             per_window.append({
                 "window": label,
                 "done": done,

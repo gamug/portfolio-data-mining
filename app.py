@@ -2,7 +2,7 @@
 import asyncio, os, traceback
 from enum import Enum
 import pandas as pd
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -154,12 +154,31 @@ def gdelt_fetch_news(
 # Crawler endpoints
 #----------------------------------------------------------------------------
 @app.get("/crawler", tags=["Crawler"])
-def crawl_links(file: _link_files): #type: ignore
+def crawl_links(
+    file: _link_files,  # type: ignore
+    limit: int | None = Query(None, ge=1, description="Maximum links to crawl; omit to crawl the full exported CSV."),
+):
     """
-    Crawl links from a specified file and return the results.
+    Crawl a Google News RSS collection exported by FastSP500NewsFetcher.
+
+    Select the collection identifier (for example, ``historical_news_rss``),
+    not the CSV filename. The collector exports its links to
+    ``<identifier>/news_links.csv``.
     """
-    urls = pd.read_csv(os.path.join(general["paths"]["news_links"], file.value))
-    urls = urls.url.tolist()[:100]
+    links_path = os.path.join(general["paths"]["news_links"], file.value, "news_links.csv")
+    if not os.path.isfile(links_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"No FastSP500NewsFetcher export found at {links_path}",
+        )
+
+    links_frame = pd.read_csv(links_path, usecols=["url"]).head()
+    urls = links_frame["url"].dropna().astype(str).tolist()
+    if limit is not None:
+        urls = urls[:limit]
+    if not urls:
+        raise HTTPException(status_code=404, detail=f"No URLs found in {links_path}")
+
     try:
         crawler_config = CrawlerRunConfig(
             # user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -172,7 +191,12 @@ def crawl_links(file: _link_files): #type: ignore
             run_config=crawler_config
         )
         summary = asyncio.run(crawler.run(urls))
-        return {'run_status': 'success', 'summary': summary}
+        return {
+            "run_status": "success",
+            "source_file": links_path,
+            "urls_submitted": len(urls),
+            "summary": summary,
+        }
     except Exception as e:
         tb_str = traceback.format_exc()
         return {"error": str(e), "traceback": tb_str}
