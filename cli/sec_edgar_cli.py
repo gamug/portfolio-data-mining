@@ -27,7 +27,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from common.utils import init_repository
 from sec_edgar.agent import EdgarAgent
 
 NAME = os.environ.get("NAME", "Your Name")
@@ -123,12 +122,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-
-    # Idempotent: creates the configured output directories (including
-    # sec_filings/) -- same startup step apps/sec_edgar_api.py runs from
-    # its FastAPI lifespan.
-    init_repository()
-
     args.func(args, agent=EdgarAgent(name=NAME, email=EMAIL))
 
 

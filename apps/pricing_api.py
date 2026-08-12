@@ -18,7 +18,6 @@ Run:
 
 import os
 import sys
-from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -32,7 +31,6 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from common.errors import UpstreamDataError
 from common.portfolio import list_universe, resolve_symbol
-from common.utils import init_repository
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
@@ -44,18 +42,9 @@ load_dotenv()  # populate os.environ from .env before anything reads it
 FINNHUB_API_KEY = os.environ["FINNHUB_API_KEY"]
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Idempotent: creates the configured output directories if not already
-    # present. Explicit startup step, not an import-time side effect.
-    init_repository()
-    yield
-
-
 app = FastAPI(
     title="Portfolio Data Mining — Pricing API",
     version="1.0.0",
-    lifespan=lifespan,
     openapi_tags=[
         {"name": "Universe", "description": "Tracked S&P 500 ticker/company universe"},
         {"name": "Pricing", "description": "Daily stock price history (Finnhub, falls back to yfinance)"},

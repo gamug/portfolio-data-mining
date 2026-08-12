@@ -31,7 +31,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from common.portfolio import list_universe, resolve_symbol
-from common.utils import init_repository
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
@@ -138,10 +137,6 @@ def main() -> None:
     # Fail fast if the key is missing, rather than lazily on first call --
     # same convention as apps/pricing_api.py, just deferred past --help.
     FINNHUB_API_KEY = os.environ["FINNHUB_API_KEY"]
-
-    # Idempotent: creates the configured output directories -- same startup
-    # step apps/pricing_api.py runs from its FastAPI lifespan.
-    init_repository()
 
     args.func(
         args,

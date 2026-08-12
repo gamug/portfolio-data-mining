@@ -38,7 +38,7 @@ in-process.
 | `news_nlp/` | `news-nlp/src/` | [docs/modules/news-nlp.md](docs/modules/news-nlp.md) |
 | `pricing/` | `finhub/src/{trading,market,news}/` (finhub split #1) | [docs/modules/pricing.md](docs/modules/pricing.md) |
 | `sec_edgar/` | `finhub/src/fundamental/` (finhub split #2) | [docs/modules/sec-edgar.md](docs/modules/sec-edgar.md) |
-| `common/` | `finhub/src/{config,commons}/` | shared by `pricing` + `sec_edgar`: paths, universe loader, shared error type |
+| `common/` | `finhub/src/{config,commons}/` | shared by `pricing` + `sec_edgar`: universe loader (`portfolio.py`), shared error type (`errors.py`) |
 
 Each package kept its own project's internal import style wherever that didn't collide
 with sharing one `src/` — `news_collector` and `extractor` are untouched (their absolute

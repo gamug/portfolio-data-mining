@@ -7,13 +7,13 @@ life of the process. Single source of truth for "what tickers/companies do
 we track", used to list the universe and to resolve a ticker symbol or
 company name to a canonical row.
 
-Previously read a committed `s&p500/s&p500.csv` seeded into `input/` by
-`common.utils.init_repository()`; switched to a live fetch (same approach
-as `news_collector.sp500` and `extractor.reference`, both of which already
-source the S&P 500 constituent list from this same Wikipedia page) so the
-tracked universe doesn't silently drift from reality as index membership
-changes, and to drop a static CSV file this repo had to remember to keep
-up to date.
+Previously read a committed `s&p500/s&p500.csv` seeded into `input/` by a
+now-removed `common.utils.init_repository()`; switched to a live fetch
+(same approach as `news_collector.sp500` and `extractor.reference`, both
+of which already source the S&P 500 constituent list from this same
+Wikipedia page) so the tracked universe doesn't silently drift from
+reality as index membership changes, and to drop a static CSV file this
+repo had to remember to keep up to date.
 
 Shared by the pricing and edgar modules (both need "what tickers do we
 track"), which is why it lives in `common/` rather than either one.

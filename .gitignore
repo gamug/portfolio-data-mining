@@ -19,8 +19,10 @@ __pycache__/
 data/urls.db
 data/*.db-*
 data/urls.db.bak-*
-# finhub-derived output/input scratch dirs (seeded/populated at runtime by
-# common.utils.init_repository()).
+# finhub-derived output/input scratch dirs -- nothing currently creates or
+# writes into these (the init_repository()/check_repository() machinery
+# that used to was removed as dead code), kept ignored defensively in case
+# something drops files here by hand.
 output/
 input/
 # news-nlp: models are fetched into the local HF cache by `python -m

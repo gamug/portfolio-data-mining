@@ -15,7 +15,6 @@ Run:
 
 import os
 import sys
-from contextlib import asynccontextmanager
 from enum import Enum
 from pathlib import Path
 
@@ -26,7 +25,6 @@ from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from common.utils import init_repository
 from sec_edgar.agent import EdgarAgent
 
 load_dotenv()  # populate os.environ from .env before anything reads it
@@ -42,18 +40,9 @@ class FilingForm(str, Enum):
     s1 = "S-1"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Idempotent: creates output/input directories (including sec_filings/)
-    # if not already present.
-    init_repository()
-    yield
-
-
 app = FastAPI(
     title="Portfolio Data Mining — SEC EDGAR API",
     version="1.0.0",
-    lifespan=lifespan,
     openapi_tags=[
         {"name": "Edgar", "description": "SEC Edgar filings and financial statements"},
     ],
