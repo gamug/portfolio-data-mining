@@ -46,9 +46,8 @@ FINNHUB_API_KEY = os.environ["FINNHUB_API_KEY"]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Idempotent: creates output/input directories and seeds input/s&p500.csv
-    # if not already present. Explicit startup step, not an import-time
-    # side effect.
+    # Idempotent: creates the configured output directories if not already
+    # present. Explicit startup step, not an import-time side effect.
     init_repository()
     yield
 

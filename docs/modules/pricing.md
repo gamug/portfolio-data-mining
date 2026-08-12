@@ -15,10 +15,11 @@ Wraps the Finnhub API (with a `yfinance` fallback for pricing) — no SEC/EDGAR 
 Every method returns `{"success": bool, "data"|"error": ...}` — upstream provider
 failures (premium-gated endpoints, bad tickers) never raise; they come back as a clean,
 inspectable result. `src/common/` (shared with `sec_edgar`) holds the pieces that aren't
-Finnhub-specific: `config.py` (paths/`BASE_DIR`), `utils.py` (`init_repository` — seeds
-`input/s&p500.csv` from the committed `s&p500/s&p500.csv`), `errors.py`
-(`UpstreamDataError`), `portfolio.py` (the tracked-universe loader backing the
-`/universe` endpoints).
+Finnhub-specific: `config.py` (paths/`BASE_DIR`), `utils.py` (`init_repository` — creates
+the configured output directories), `errors.py` (`UpstreamDataError`), `portfolio.py`
+(the tracked-universe loader backing the `/universe` endpoints — fetched live from
+Wikipedia and cached in-process, the same source `news_collector`/`extractor` already use,
+rather than a committed CSV).
 
 ## Running
 
