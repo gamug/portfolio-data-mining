@@ -13,6 +13,7 @@ Usage:
 """
 import argparse
 import asyncio
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import httpx
+from dotenv import load_dotenv
 from tqdm import tqdm
 
 from extractor.db import (
@@ -34,7 +36,13 @@ from extractor.pipeline import process_one
 from extractor.reference import load_gics_map
 from extractor.scheduler import DomainScheduler
 
-DEFAULT_DB = "data/urls.db"
+load_dotenv()
+
+# $DATABASE_URL is a filesystem path today (this is still SQLite) -- kept as
+# an env var so pointing this at a real connection string later is a
+# one-line env change, not a code change. Falls back to the pre-existing
+# default when unset.
+DEFAULT_DB = os.environ.get("DATABASE_URL", "data/urls.db")
 
 
 def parse_args():

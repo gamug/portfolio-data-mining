@@ -10,7 +10,8 @@
 
 Turns [news_collector](news-collector.md)'s queue of discovered URLs into a clean,
 structured dataset of full article text + metadata: reads `discovered_urls` rows with
-`status='pending'` from the shared `data/urls.db`, fetches each with `httpx`, extracts
+`status='pending'` from the shared `data/urls.db` (override with `$DATABASE_URL`, see
+root `.env.example`), fetches each with `httpx`, extracts
 title/author/pub_date/body via JSON-LD + `trafilatura`, classifies the result
 (`ok` / `paywalled` / `thin_content` / `failed`), and writes a matching row to `articles`
 (same `id` as the source `discovered_urls` row, enforced as a `FOREIGN KEY`).

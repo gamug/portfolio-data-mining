@@ -18,6 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from dotenv import load_dotenv
+
+load_dotenv()  # populate os.environ (DATABASE_URL, etc.) before anything reads it
+
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 

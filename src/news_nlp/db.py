@@ -4,11 +4,28 @@ Reads from the existing `articles` table and writes to two new results tables,
 `article_sentiment` and `article_entities`, both keyed by article_id. Also
 provides read-only query helpers backing the FastAPI query endpoints.
 """
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
-DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "urls.db"
+from dotenv import load_dotenv
+
+# Called here (not just in apps/news_nlp_api.py) so DATABASE_URL is honored
+# by every entrypoint that imports this module -- including the standalone
+# `python -m news_nlp.setup` / `python -m news_nlp.pipeline` CLI paths,
+# which never go through the FastAPI app. Safe to call more than once.
+load_dotenv()
+
+# $DATABASE_URL is a filesystem path today (this is still SQLite) -- kept as
+# an env var, not a hardcoded literal, so pointing this at a real connection
+# string later (e.g. a hosted Postgres/libSQL DSN) is a one-line env change,
+# not a code change. Falls back to the pre-existing default when unset.
+DB_PATH = (
+    Path(os.environ["DATABASE_URL"])
+    if os.environ.get("DATABASE_URL")
+    else Path(__file__).resolve().parent.parent.parent / "data" / "urls.db"
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS article_sentiment (

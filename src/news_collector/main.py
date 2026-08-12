@@ -15,13 +15,20 @@ import argparse
 import asyncio
 import csv
 import json
+import os
 import sys
 from datetime import date
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from news_collector.config import default_end_date, default_start_date
 from news_collector.models import Company, DateRange
 from news_collector.utils.logging import setup_logging, get_logger
+
+# So `python -m news_collector.main ...` (which never goes through any
+# apps/*.py entrypoint) still picks up .env, e.g. DATABASE_URL below.
+load_dotenv()
 
 log = get_logger(__name__)
 
@@ -145,7 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="news-discovery",
         description="Hybrid news link discovery for S&P 500 companies.",
     )
-    parser.add_argument("--db", default="data/urls.db", help="SQLite database path")
+    parser.add_argument(
+        "--db",
+        default=os.environ.get("DATABASE_URL", "data/urls.db"),
+        help="SQLite database path (default: $DATABASE_URL if set, else data/urls.db)",
+    )
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     parser.add_argument(
         "--log-dir",

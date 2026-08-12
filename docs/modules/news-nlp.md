@@ -5,8 +5,9 @@
 Runs FinBERT sentiment analysis and a fine-tuned NER model (SEC-BERT-BASE trained on
 FiNER-ORD, published at
 [gamug/sec-bert-finer-ord-ner](https://huggingface.co/gamug/sec-bert-finer-ord-ner)) over
-the `articles` rows [extractor](news-crawler.md) wrote into the shared `data/urls.db`,
-writing results into two new tables it owns (`article_sentiment`, `article_entities`) and
+the `articles` rows [extractor](news-crawler.md) wrote into the shared `data/urls.db`
+(override with `$DATABASE_URL`, see root `.env.example`), writing results into two new
+tables it owns (`article_sentiment`, `article_entities`) and
 exposing everything through a FastAPI service. There is no scraper here — `articles` is
 treated as pre-populated input.
 

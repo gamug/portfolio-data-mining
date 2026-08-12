@@ -6,8 +6,8 @@ Hybrid news-link discovery for S&P 500 companies. Given a list of tickers (or no
 entire S&P 500) and a date range, it discovers article **URLs** (not full article content)
 across seven target financial-news domains (CNBC, Yahoo Finance, Financial Times,
 Investing.com, Nasdaq, Seeking Alpha, StockTwits) and persists them to a durable SQLite
-queue (`data/urls.db`, table `discovered_urls`) for [news_crawler](news-crawler.md) to
-consume.
+queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
+`.env.example`; table `discovered_urls`) for [news_crawler](news-crawler.md) to consume.
 
 ## Architecture
 
