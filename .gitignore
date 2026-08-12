@@ -34,6 +34,5 @@ train_ner.log
 .vscode/
 .idea/
 .kiro/
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+.claude/
 .log/
