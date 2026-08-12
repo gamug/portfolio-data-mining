@@ -36,9 +36,20 @@ the CUDA-matched wheel explicitly (this replaces whatever transitive build is pr
 ## Running
 
 ```bash
+# CLI (direct — no server)
+.venv\Scripts\python.exe cli\news_nlp_cli.py --limit 50
+.venv\Scripts\python.exe cli\news_nlp_cli.py   # process every pending article
+
+# API
 .venv\Scripts\python.exe apps\news_nlp_api.py
 # -> http://127.0.0.1:8003/docs
 ```
+
+`cli/news_nlp_cli.py` wraps `news_nlp.pipeline.run_pipeline()` directly with a real
+`--limit` flag. `src/news_nlp/pipeline.py` also still has its own bare
+`if __name__ == "__main__":` (usable via `python -m news_nlp.pipeline [limit]`, a
+positional arg instead of a flag) — kept for backward compatibility, but
+`cli/news_nlp_cli.py` is the documented entrypoint going forward.
 
 ## Testing
 

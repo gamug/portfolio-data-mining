@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """CLI entrypoint: extract article title/body/metadata for pending URLs —
-pipeline stage 2 (full-text extraction), batch/unattended mode. Source:
-news-crawler/run_extraction.py. See docs/modules/news-crawler.md.
+pipeline stage 2 (full-text extraction), batch/unattended mode. Runs the
+extraction pipeline directly, no FastAPI/uvicorn involved (for that, see
+apps/news_crawler_api.py instead). Source: news-crawler/run_extraction.py.
+See docs/modules/news-crawler.md.
 
 Reads rows from discovered_urls where status='pending', fetches each with
 httpx (per-domain rate limited), extracts title/author/pub_date/body via
@@ -9,7 +11,7 @@ JSON-LD + trafilatura, classifies the result, and writes it to the
 `articles` table.
 
 Usage:
-    .venv\\Scripts\\python.exe apps\\news_crawler_extract.py --limit 20
+    .venv\\Scripts\\python.exe cli\\news_crawler_cli.py --limit 20
 """
 import argparse
 import asyncio

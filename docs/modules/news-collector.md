@@ -25,13 +25,20 @@ a foreign key back to this table, rather than re-matching on the `url` string.
 ## Running
 
 ```bash
-# CLI (see src/news_collector/main.py for full flag list)
-.venv\Scripts\python.exe -m news_collector.main --tickers AAPL,MSFT --start 2024-01-01 --end 2024-06-01
+# CLI (direct — no server; see src/news_collector/main.py for the full flag list)
+.venv\Scripts\python.exe cli\news_collector_cli.py discover --tickers AAPL MSFT
+.venv\Scripts\python.exe cli\news_collector_cli.py stats
+.venv\Scripts\python.exe cli\news_collector_cli.py --help
 
 # API
 .venv\Scripts\python.exe apps\news_collector_api.py
 # -> http://127.0.0.1:8001/docs
 ```
+
+`cli/news_collector_cli.py` is a thin wrapper around `news_collector.main.main()`, which
+already had a full argparse CLI (discover/stats/export subcommands) — it's still directly
+runnable as `python -m news_collector.main ...` too; the `cli/` script just gives every
+service one consistent, discoverable place to look for its non-server entrypoint.
 
 ## Testing
 

@@ -24,14 +24,19 @@ re-running picks up exactly where it left off.
 ## Running
 
 ```bash
-# Batch/unattended (this is what actually drives a full run)
-.venv\Scripts\python.exe apps\news_crawler_extract.py --limit 20
+# Batch/unattended (this is what actually drives a full run) — direct, no server
+.venv\Scripts\python.exe cli\news_crawler_cli.py --limit 20
 
 # Dev/test API — inspect DB state, re-extract one URL, preview a parse — NOT for
 # production/public exposure (no auth, some endpoints mutate the DB)
 .venv\Scripts\python.exe apps\news_crawler_api.py
 # -> http://127.0.0.1:8002/docs
 ```
+
+`cli/news_crawler_cli.py` (was `news-crawler/run_extraction.py`, then briefly
+`apps/news_crawler_extract.py` during the initial consolidation) lives in `cli/` rather
+than `apps/` since it never raises a server — that distinction is what `cli/` vs `apps/`
+means across every service in this repo.
 
 ## Testing
 

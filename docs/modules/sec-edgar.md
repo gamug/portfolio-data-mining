@@ -21,12 +21,21 @@ original run, useful as a response-shape reference without needing a live SEC ED
 ## Running
 
 ```bash
+# API (FastAPI/uvicorn)
 .venv\Scripts\python.exe apps\sec_edgar_api.py
 # -> http://127.0.0.1:8005/docs
+
+# CLI (direct — no server), one subcommand per endpoint, prints JSON
+.venv\Scripts\python.exe cli\sec_edgar_cli.py company-info AAPL
+.venv\Scripts\python.exe cli\sec_edgar_cli.py --help   # full subcommand list
 ```
 
 Requires `NAME` and `EMAIL` in `.env` (SEC EDGAR requires a real identity string for
-programmatic access — see `.env.example`).
+programmatic access — see `.env.example`) for both.
+
+`cli/sec_edgar_cli.py` is new — `finhub` never had a CLI, only the FastAPI app and the
+fixed-ticker demo in `src/sec_edgar/examples.py`; this wraps the same `EdgarAgent` calls
+the API routes make, with real ticker/form/year arguments instead of hardcoded "AAPL".
 
 ## Endpoints
 

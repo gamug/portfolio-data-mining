@@ -24,11 +24,22 @@ rather than a committed CSV).
 ## Running
 
 ```bash
+# API (FastAPI/uvicorn)
 .venv\Scripts\python.exe apps\pricing_api.py
 # -> http://127.0.0.1:8004/docs
+
+# CLI (direct — no server), one subcommand per endpoint, prints JSON
+.venv\Scripts\python.exe cli\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
+.venv\Scripts\python.exe cli\pricing_cli.py --help   # full subcommand list
 ```
 
-Requires `FINNHUB_API_KEY` in `.env` (see `.env.example`).
+Requires `FINNHUB_API_KEY` in `.env` (see `.env.example`) for both — the CLI defers
+reading it until after argument parsing, so `--help` works without a key configured, but
+every subcommand needs one (same as the API needing it to even start).
+
+`cli/pricing_cli.py` is new — `finhub` never had a CLI, only the FastAPI app; this wraps
+the exact same `StockPriceFetcher`/`FinnhubNewsFetcher`/`MarketDataClient`/
+`common.portfolio` calls the API routes make.
 
 ## Endpoints
 

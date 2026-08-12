@@ -5,8 +5,9 @@ docs/modules/news-crawler.md.
 
 Thin FastAPI wrapper around `extractor.*` (parsing, DB, scheduling -- all
 already unit-tested, see tests/extractor) and the same logic
-`news_crawler_extract.py` drives from the CLI. Exists so individual pieces
-of the pipeline can be exercised interactively over HTTP while
+`cli/news_crawler_cli.py` drives directly (no server) for batch runs.
+Exists so individual pieces of the pipeline can be exercised interactively
+over HTTP while
 developing/debugging, without needing a full CLI run for every check -- e.g.
 re-extract one URL, preview how a raw HTML blob would be parsed, inspect DB
 state, or reset a row back to 'pending' to retry it.

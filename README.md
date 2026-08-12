@@ -48,17 +48,28 @@ repo's shared `src/`, so those imports were rewritten (`from src.X` → `from ne
 `from common.X` / `from pricing.X` / `from sec_edgar.X`) — see each module doc's source
 mapping for exactly what changed.
 
-Every service gets its own thin entrypoint under `apps/`, each bootstrapping `src/` onto
-`sys.path` so it runs standalone with no `PYTHONPATH` setup:
+Every service gets its own thin entrypoint under `apps/` (FastAPI/uvicorn) and `cli/`
+(argparse, runs the code directly — no server raised), both bootstrapping `src/` onto
+`sys.path` so they run standalone with no `PYTHONPATH` setup:
 
-| App | Module | Port |
-|---|---|---|
-| `apps/news_collector_api.py` | `news_collector` | 8001 |
-| `apps/news_crawler_api.py` (+ `news_crawler_extract.py` CLI) | `extractor` | 8002 |
-| `apps/news_nlp_api.py` | `news_nlp` | 8003 |
-| `apps/pricing_api.py` | `pricing` | 8004 |
-| `apps/sec_edgar_api.py` | `sec_edgar` | 8005 |
-| `apps/gateway.py` — all five, one process, browsing/demo only | — | 8000 |
+| Service | `apps/` (server) | `cli/` (direct/batch) | Port |
+|---|---|---|---|
+| news_collector | `news_collector_api.py` | `news_collector_cli.py` | 8001 |
+| extractor (news_crawler) | `news_crawler_api.py` (dev/test only) | `news_crawler_cli.py` | 8002 |
+| news_nlp | `news_nlp_api.py` | `news_nlp_cli.py` | 8003 |
+| pricing | `pricing_api.py` | `pricing_cli.py` | 8004 |
+| sec_edgar | `sec_edgar_api.py` | `sec_edgar_cli.py` | 8005 |
+| gateway — all five, one process, browsing/demo only | `gateway.py` | — | 8000 |
+
+`cli/*.py` print JSON to stdout, one subcommand per underlying operation (mirroring that
+service's API routes 1:1 where it has routes) — e.g.
+`pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01`,
+`sec_edgar_cli.py filings AAPL --form 10-K`. `news_collector_cli.py` and `news_nlp_cli.py`
+are thin wrappers around each module's own existing CLI
+(`news_collector.main`'s discover/stats/export subcommands;
+`news_nlp.pipeline.run_pipeline()`); `news_crawler_cli.py` is the batch extraction runner
+(was `news-crawler/run_extraction.py`). `pricing_cli.py`/`sec_edgar_cli.py` are new —
+`finhub` never had a CLI, only its FastAPI app.
 
 `apps/gateway.py` mounts the other five under one port for convenience (`/collector`,
 `/crawler`, `/nlp`, `/pricing`, `/edgar`) — each keeps its own separate `/docs`, this does

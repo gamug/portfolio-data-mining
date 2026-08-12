@@ -10,7 +10,7 @@ directly to EdgarAgent(name=..., email=...))
 """
 
 import json
-from edgar.agent import EdgarAgent
+from sec_edgar.agent import EdgarAgent
 
 
 def pretty(label, result):
