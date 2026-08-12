@@ -1,0 +1,1 @@
+"""News Collector API package."""
