@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "urls.db"
+DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "urls.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS article_sentiment (

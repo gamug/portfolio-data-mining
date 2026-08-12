@@ -51,6 +51,14 @@ Every service gets its own thin entrypoint under `apps/`, each bootstrapping `sr
 | `apps/news_nlp_api.py` | `news_nlp` | 8003 |
 | `apps/pricing_api.py` | `pricing` | 8004 |
 | `apps/sec_edgar_api.py` | `sec_edgar` | 8005 |
+| `apps/gateway.py` — all five, one process, browsing/demo only | — | 8000 |
+
+`apps/gateway.py` mounts the other five under one port for convenience (`/collector`,
+`/crawler`, `/nlp`, `/pricing`, `/edgar`) — each keeps its own separate `/docs`, this does
+**not** merge them into a single OpenAPI schema. See
+[docs/modules/gateway.md](docs/modules/gateway.md) for why, and for when to use it vs. the
+five standalone apps (production/independent-scaling deploys should use the standalone
+apps).
 
 ## Setup
 
@@ -79,9 +87,11 @@ Run any service from the repo root, e.g.:
 ```
 
 Runs `tests/news_collector`, `tests/extractor`, and `tests/news_nlp` (the latter needs
-torch installed — see Setup). `pricing`/`sec_edgar` don't have a test suite yet (`finhub`
-didn't have one either). Current status: 99/100 + 33/33 pass; one pre-existing
-Windows-only flake in `news_collector` unrelated to this consolidation — see
+torch installed — see [docs/modules/news-nlp.md](docs/modules/news-nlp.md); it's often
+already present transitively, check `pip show torch` before assuming you need the extra
+step). `pricing`/`sec_edgar` don't have a test suite yet (`finhub` didn't have one
+either). Current status: 143/144 pass; one pre-existing Windows-only flake in
+`news_collector` unrelated to this consolidation — see
 [docs/modules/news-collector.md](docs/modules/news-collector.md).
 
 ## What didn't come along
