@@ -16,6 +16,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification,
+    AutoModelForSeq2SeqLM,
 )
 from tqdm import tqdm
 
@@ -24,8 +25,20 @@ from .chunking import chunk_text, merge_char_spans
 
 SENTIMENT_MODEL = "ProsusAI/finbert"
 NER_MODEL = "gamug/sec-bert-finer-ord-ner"
+SUMMARY_MODEL = "facebook/bart-large-cnn"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# BART-large-cnn's own cap is 1024 tokens; 1000 leaves headroom for the
+# BOS/EOS tokens the tokenizer adds on top of chunk_text's count.
+SUMMARY_MAX_INPUT_TOKENS = 1000
+# Matches bart-large-cnn's published default generation config.
+SUMMARY_MAX_OUTPUT_TOKENS = 142
+SUMMARY_MIN_OUTPUT_TOKENS = 56
+# Safety valve for the recursive reduce below -- each pass's summaries are
+# far shorter than what fed them, so this converges in 1-2 passes in
+# practice; this just bounds the pathological case.
+MAX_REDUCE_PASSES = 6
 
 
 def free_gpu():
@@ -170,12 +183,124 @@ def run_ner_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
+def _summarize_one(text: str, tokenizer, model, device) -> str:
+    """Run bart-large-cnn generation on a single chunk that already fits
+    within the model's input cap. Split out as its own function so tests can
+    monkeypatch it and exercise hierarchical_summarize's chunk/reduce control
+    flow without loading a real model."""
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=1024).to(device)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            max_length=SUMMARY_MAX_OUTPUT_TOKENS,
+            min_length=SUMMARY_MIN_OUTPUT_TOKENS,
+            num_beams=4,
+        )
+    return tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+
+
+def hierarchical_summarize(text, tokenizer, model, device, max_input_tokens=SUMMARY_MAX_INPUT_TOKENS):
+    """Chunk `text` on sentence boundaries (chunk_text), summarize each
+    chunk, and if more than one chunk resulted, recursively summarize the
+    concatenated chunk-summaries until they collapse into a single pass.
+    Returns (summary_text, num_chunks) where num_chunks is the leaf-level
+    chunk count (>1 means a reduce pass happened).
+    """
+    chunks = chunk_text(text, tokenizer, max_tokens=max_input_tokens)
+    if not chunks:
+        return "", 0
+
+    num_chunks = len(chunks)
+    summaries = [_summarize_one(ch.text, tokenizer, model, device) for ch in chunks]
+
+    passes = 0
+    while len(summaries) > 1 and passes < MAX_REDUCE_PASSES:
+        combined = " ".join(summaries)
+        next_chunks = chunk_text(combined, tokenizer, max_tokens=max_input_tokens)
+        summaries = [_summarize_one(ch.text, tokenizer, model, device) for ch in next_chunks]
+        passes += 1
+
+    if len(summaries) > 1:
+        # MAX_REDUCE_PASSES exhausted without collapsing to one chunk --
+        # force a final pass; generate()'s own truncation=True keeps this
+        # bounded even though it means the tail gets dropped.
+        return _summarize_one(" ".join(summaries), tokenizer, model, device), num_chunks
+
+    return summaries[0], num_chunks
+
+
+def run_company_summary_stage(conn, limit=None, on_progress=None):
+    rows = db.fetch_pending_company_summaries(conn, limit=limit)
+    total = len(rows)
+    print(f"\n=== Company summary stage ({SUMMARY_MODEL}) on {DEVICE} ===")
+    print(f"{total} article(s) pending c_summary")
+    if on_progress:
+        on_progress("company_summary", 0, total)
+    if total == 0:
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(SUMMARY_MODEL)
+    model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARY_MODEL).to(DEVICE).eval()
+
+    for idx, row in enumerate(tqdm(rows, desc="company_summary"), start=1):
+        text = db.build_company_summary_input(row)
+        summary_text, num_chunks = hierarchical_summarize(text, tokenizer, model, DEVICE)
+        if summary_text:
+            db.write_company_summary(conn, row["article_id"], summary_text, num_chunks, SUMMARY_MODEL)
+            conn.commit()
+
+        if on_progress:
+            on_progress("company_summary", idx, total)
+
+    del model, tokenizer
+    free_gpu()
+
+
+def run_sector_summary_stage(conn, limit=None, on_progress=None):
+    groups = db.fetch_pending_sector_weeks(conn, limit=limit)
+    total = len(groups)
+    print(f"\n=== Sector summary stage ({SUMMARY_MODEL}) on {DEVICE} ===")
+    print(f"{total} sector/week group(s) pending sector_summary")
+    if on_progress:
+        on_progress("sector_summary", 0, total)
+    if total == 0:
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(SUMMARY_MODEL)
+    model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARY_MODEL).to(DEVICE).eval()
+
+    for idx, group in enumerate(tqdm(groups, desc="sector_summary"), start=1):
+        company_rows = db.fetch_company_summaries_for_sector_week(
+            conn, group["gics_sector"], group["gics_sub_industry"], group["week_start"]
+        )
+        if company_rows:
+            text = db.build_sector_summary_input(group["gics_sector"], group["gics_sub_industry"], company_rows)
+            summary_text, _ = hierarchical_summarize(text, tokenizer, model, DEVICE)
+            if summary_text:
+                db.write_sector_summary(
+                    conn, group["gics_sector"], group["gics_sub_industry"],
+                    group["week_start"], group["week_end"], summary_text,
+                    num_articles=len(company_rows),
+                    num_companies=len({r["company"] for r in company_rows}),
+                    model_name=SUMMARY_MODEL,
+                )
+                conn.commit()
+
+        if on_progress:
+            on_progress("sector_summary", idx, total)
+
+    del model, tokenizer
+    free_gpu()
+
+
 def run_pipeline(limit=None, on_progress=None):
     conn = db.connect()
     db.init_schema(conn)
     try:
         run_sentiment_stage(conn, limit=limit, on_progress=on_progress)
         run_ner_stage(conn, limit=limit, on_progress=on_progress)
+        run_company_summary_stage(conn, limit=limit, on_progress=on_progress)
+        run_sector_summary_stage(conn, limit=limit, on_progress=on_progress)
     finally:
         conn.close()
     print("\nPipeline run complete.")
