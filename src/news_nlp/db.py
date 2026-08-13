@@ -53,6 +53,28 @@ CREATE TABLE IF NOT EXISTS article_entities (
 
 CREATE INDEX IF NOT EXISTS idx_article_entities_article_id
     ON article_entities(article_id);
+
+CREATE TABLE IF NOT EXISTS article_summary (
+    article_id   INTEGER PRIMARY KEY REFERENCES articles(id),
+    summary_text TEXT NOT NULL,
+    num_chunks   INTEGER NOT NULL,
+    model_name   TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sector_summary (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    gics_sector       TEXT NOT NULL,
+    gics_sub_industry TEXT NOT NULL,
+    week_start        TEXT NOT NULL,
+    week_end          TEXT NOT NULL,
+    summary_text      TEXT NOT NULL,
+    num_articles      INTEGER NOT NULL,
+    num_companies     INTEGER NOT NULL,
+    model_name        TEXT NOT NULL,
+    processed_at      TEXT NOT NULL,
+    UNIQUE (gics_sector, gics_sub_industry, week_start)
+);
 """
 
 
@@ -129,6 +151,167 @@ def write_entities(conn: sqlite3.Connection, article_id: int, entities: list[dic
     )
 
 
+def fetch_pending_company_summaries(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    """Return raw fields for articles ready for c_summary generation: a
+    successful fetch (http_status_code=200), a computed sentiment, at least
+    one qualifying entity (score>0.8, non-numeric), and no article_summary
+    row yet. Adapts query.sql's `source_text` CTE -- the two INNER JOINs mean
+    an article with sentiment but zero qualifying entities is never selected
+    here, same as the original query.
+
+    Returns raw columns rather than the assembled template text: SQLite
+    string literals don't interpret \\n as an escape (unlike Python), so
+    template assembly happens in build_company_summary_input() instead.
+    """
+    sql = """
+        WITH entities AS (
+            SELECT article_id, GROUP_CONCAT(text, ', ') AS entities
+            FROM article_entities
+            WHERE score > 0.8 AND text NOT GLOB '[0-9]'
+            GROUP BY article_id
+        )
+        SELECT
+            a.id AS article_id, a.ticker, a.company, a.gics_sector, a.gics_sub_industry,
+            a.title, a.body_text, s.label AS sentiment_label, s.score AS sentiment_confidence,
+            e.entities
+        FROM articles a
+        INNER JOIN article_sentiment s ON s.article_id = a.id
+        INNER JOIN entities e ON e.article_id = a.id
+        LEFT JOIN article_summary asum ON asum.article_id = a.id
+        WHERE a.http_status_code = 200 AND asum.article_id IS NULL
+        ORDER BY a.id
+    """
+    params: list = []
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def build_company_summary_input(row: sqlite3.Row) -> str:
+    """Assemble the METADATA/NLP FEATURES/TEXT BODY template (query.sql's
+    intent) with real newlines, for one row from fetch_pending_company_summaries."""
+    return (
+        f"METADATA:\nTicker-{row['ticker']}\nCompany-{row['company']}\n\n"
+        f"NLP FEATURES:\nSentiment-{row['sentiment_label']} "
+        f"Confidence-{row['sentiment_confidence']}\nEntities-{row['entities']}\n\n"
+        f"TEXT BODY:\nTitle-{row['title']}\nBody-{row['body_text']}"
+    )
+
+
+def write_company_summary(conn: sqlite3.Connection, article_id: int, summary_text: str,
+                           num_chunks: int, model_name: str) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO article_summary
+           (article_id, summary_text, num_chunks, model_name, processed_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (article_id, summary_text, num_chunks, model_name, now_iso()),
+    )
+
+
+# Monday-start ISO week containing a given date, via SQLite's 'weekday N'
+# modifier (0=Sunday): shift forward to the next Sunday (a no-op if the date
+# already is one), then step back 6 days to land on that week's Monday.
+_WEEK_START_EXPR = "date({col}, 'weekday 0', '-6 days')"
+_WEEK_END_EXPR = "date({col}, 'weekday 0')"
+
+
+def fetch_pending_sector_weeks(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    """Return (gics_sector, gics_sub_industry, week_start, week_end) tuples
+    ready for sector_summary generation: closed weeks (week_end already in
+    the past, so a partial week is never summarized and later regenerated)
+    with at least one c_summary'd article, not yet in sector_summary.
+    Weeks are bucketed off pub_date, falling back to fetched_at when
+    pub_date is NULL.
+    """
+    date_col = "COALESCE(a.pub_date, a.fetched_at)"
+    week_start_expr = _WEEK_START_EXPR.format(col=date_col)
+    week_end_expr = _WEEK_END_EXPR.format(col=date_col)
+    sql = f"""
+        SELECT
+            a.gics_sector AS gics_sector,
+            a.gics_sub_industry AS gics_sub_industry,
+            {week_start_expr} AS week_start,
+            {week_end_expr} AS week_end
+        FROM article_summary asum
+        JOIN articles a ON a.id = asum.article_id
+        WHERE a.gics_sector IS NOT NULL AND a.gics_sub_industry IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM sector_summary ss
+              WHERE ss.gics_sector = a.gics_sector
+                AND ss.gics_sub_industry = a.gics_sub_industry
+                AND ss.week_start = {week_start_expr}
+          )
+        GROUP BY a.gics_sector, a.gics_sub_industry, week_start
+        HAVING week_end < date('now')
+        ORDER BY week_start, a.gics_sector, a.gics_sub_industry
+    """
+    params: list = []
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def fetch_company_summaries_for_sector_week(conn: sqlite3.Connection, gics_sector: str,
+                                             gics_sub_industry: str, week_start: str) -> list[sqlite3.Row]:
+    """Return the article_summary rows (with company/ticker) contributing to
+    one (gics_sector, gics_sub_industry, week_start) sector_summary."""
+    date_col = "COALESCE(a.pub_date, a.fetched_at)"
+    week_start_expr = _WEEK_START_EXPR.format(col=date_col)
+    sql = f"""
+        SELECT asum.article_id, asum.summary_text, a.ticker, a.company
+        FROM article_summary asum
+        JOIN articles a ON a.id = asum.article_id
+        WHERE a.gics_sector = ? AND a.gics_sub_industry = ?
+          AND {week_start_expr} = ?
+        ORDER BY a.company, asum.article_id
+    """
+    return conn.execute(sql, (gics_sector, gics_sub_industry, week_start)).fetchall()
+
+
+def build_sector_summary_input(gics_sector: str, gics_sub_industry: str, rows: list[sqlite3.Row]) -> str:
+    """Assemble the sector-level reduce input: one METADATA header for the
+    whole group (sector/subsector is constant across it) followed by each
+    contributing company's c_summary -- a deliberate deviation from
+    query.sql's per-row header repetition, agreed with the user."""
+    lines = [f"{r['ticker']} ({r['company']}): {r['summary_text']}" for r in rows]
+    return (
+        f"METADATA:\nSector-{gics_sector}\nSubsector-{gics_sub_industry}\n\n"
+        f"COMPANY SUMMARIES:\n" + "\n".join(lines)
+    )
+
+
+def write_sector_summary(conn: sqlite3.Connection, gics_sector: str, gics_sub_industry: str,
+                          week_start: str, week_end: str, summary_text: str,
+                          num_articles: int, num_companies: int, model_name: str) -> None:
+    conn.execute(
+        """INSERT OR REPLACE INTO sector_summary
+           (gics_sector, gics_sub_industry, week_start, week_end, summary_text,
+            num_articles, num_companies, model_name, processed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (gics_sector, gics_sub_industry, week_start, week_end, summary_text,
+         num_articles, num_companies, model_name, now_iso()),
+    )
+
+
+def list_sector_summaries(conn: sqlite3.Connection, sector: str | None = None,
+                           sub_industry: str | None = None, week_start: str | None = None) -> list[dict]:
+    sql = "SELECT * FROM sector_summary WHERE 1=1"
+    params: list = []
+    if sector:
+        sql += " AND gics_sector = ?"
+        params.append(sector)
+    if sub_industry:
+        sql += " AND gics_sub_industry = ?"
+        params.append(sub_industry)
+    if week_start:
+        sql += " AND week_start = ?"
+        params.append(week_start)
+    sql += " ORDER BY week_start DESC, gics_sector, gics_sub_industry"
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
 _SENTIMENT_STATS_GROUP_EXPR = {
     "company": "a.company",
     "year": "strftime('%Y', a.pub_date)",
@@ -189,10 +372,17 @@ def get_article_detail(conn: sqlite3.Connection, article_id: int) -> dict | None
         (article_id,),
     ).fetchall()
 
+    summary_row = conn.execute(
+        """SELECT summary_text, num_chunks, model_name
+           FROM article_summary WHERE article_id = ?""",
+        (article_id,),
+    ).fetchone()
+
     return {
         **dict(article),
         "sentiment": dict(sentiment_row) if sentiment_row else None,
         "entities": [dict(r) for r in entity_rows],
+        "summary": dict(summary_row) if summary_row else None,
     }
 
 

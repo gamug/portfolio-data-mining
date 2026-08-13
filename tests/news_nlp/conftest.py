@@ -10,25 +10,33 @@ CREATE TABLE articles (
     id INTEGER PRIMARY KEY,
     ticker TEXT,
     company TEXT,
+    gics_sector TEXT,
+    gics_sub_industry TEXT,
     title TEXT,
     author TEXT,
     pub_date TEXT,
+    fetched_at TEXT,
     body_text TEXT,
     word_count INTEGER,
     source_domain TEXT,
-    fetch_status TEXT
+    fetch_status TEXT,
+    http_status_code INTEGER
 )
 """
 
 
 def seed_article(conn, id, company="3M", ticker="MMM", title="Test Title",
                   pub_date="2023-01-15T00:00:00Z", body_text="Body text.",
-                  word_count=2, source_domain="example.com", fetch_status="ok"):
+                  word_count=2, source_domain="example.com", fetch_status="ok",
+                  gics_sector="Industrials", gics_sub_industry="Industrial Conglomerates",
+                  fetched_at="2023-01-15T00:00:00Z", http_status_code=200):
     conn.execute(
         """INSERT INTO articles
-           (id, ticker, company, title, author, pub_date, body_text, word_count, source_domain, fetch_status)
-           VALUES (?, ?, ?, ?, 'Author', ?, ?, ?, ?, ?)""",
-        (id, ticker, company, title, pub_date, body_text, word_count, source_domain, fetch_status),
+           (id, ticker, company, gics_sector, gics_sub_industry, title, author, pub_date,
+            fetched_at, body_text, word_count, source_domain, fetch_status, http_status_code)
+           VALUES (?, ?, ?, ?, ?, ?, 'Author', ?, ?, ?, ?, ?, ?, ?)""",
+        (id, ticker, company, gics_sector, gics_sub_industry, title, pub_date, fetched_at,
+         body_text, word_count, source_domain, fetch_status, http_status_code),
     )
 
 
