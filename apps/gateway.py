@@ -35,23 +35,13 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from contextlib import AsyncExitStack, asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 log = logging.getLogger("gateway")
 logging.basicConfig(level=logging.INFO)
-
-app = FastAPI(
-    title="Portfolio Data Mining — Gateway",
-    description=(
-        "Single-process entrypoint that mounts all five services. Each "
-        "keeps its own /docs -- see the landing page at / for links. "
-        "Production/independent-scaling deploys should still run "
-        "apps/{news_collector,news_crawler,news_nlp,pricing,sec_edgar}_api.py "
-        "separately instead of this."
-    ),
-    version="1.0.0",
-)
 
 # (url prefix, module:attr, import path, human label)
 _SERVICES = [
@@ -63,19 +53,64 @@ _SERVICES = [
 ]
 
 _mounted: list[tuple[str, str]] = []
+_mounted_apps: list[FastAPI] = []
 _skipped: list[tuple[str, str]] = []
 
 for prefix, module_name, label in _SERVICES:
     try:
         module = __import__(f"apps.{module_name}", fromlist=["app"])
-        app.mount(prefix, module.app)
         _mounted.append((prefix, label))
-        log.info("Mounted %s at %s", label, prefix)
+        _mounted_apps.append(module.app)
+        log.info("Will mount %s at %s", label, prefix)
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any one
         # service's missing env var / missing dependency shouldn't take
         # down the other four.
         _skipped.append((prefix, f"{label} -- {exc.__class__.__name__}: {exc}"))
         log.warning("Skipped %s (%s): %s", label, prefix, exc)
+
+
+@asynccontextmanager
+async def gateway_lifespan(app: FastAPI):
+    """Run every mounted sub-app's own `lifespan`.
+
+    `app.mount()` only wires up HTTP routing -- it does NOT forward the ASGI
+    lifespan protocol to the mounted sub-app. Only the outermost app that
+    the server (uvicorn) actually talks to gets startup/shutdown events; a
+    sub-app's own `lifespan=` context manager silently never runs. This bit
+    `news_collector_api.py` specifically: its lifespan builds the shared
+    `httpx.AsyncClient` into `app.state.client`, and every /collector/discover/*
+    route depends on it, so under the gateway (unlike standalone, on its own
+    port) those calls 500'd with `AttributeError: 'State' object has no
+    attribute 'client'` -- health/openapi endpoints looked fine since they
+    don't touch that dependency.
+
+    Fix: explicitly enter each mounted sub-app's `router.lifespan_context`
+    here via an AsyncExitStack, so their real startup/shutdown hooks run for
+    the gateway's process lifetime. Cheap/no-op for the sub-apps that don't
+    define a custom lifespan (Starlette falls back to a default no-op one),
+    so this is safe for all five and needs no per-service special-casing.
+    """
+    async with AsyncExitStack() as stack:
+        for sub_app in _mounted_apps:
+            await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
+        yield
+
+
+app = FastAPI(
+    title="Portfolio Data Mining — Gateway",
+    description=(
+        "Single-process entrypoint that mounts all five services. Each "
+        "keeps its own /docs -- see the landing page at / for links. "
+        "Production/independent-scaling deploys should still run "
+        "apps/{news_collector,news_crawler,news_nlp,pricing,sec_edgar}_api.py "
+        "separately instead of this."
+    ),
+    version="1.0.0",
+    lifespan=gateway_lifespan,
+)
+
+for prefix, sub_app in zip((p for p, _ in _mounted), _mounted_apps):
+    app.mount(prefix, sub_app)
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
