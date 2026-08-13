@@ -164,6 +164,16 @@ def get_entity_stats(
     return db.entity_stats(conn, company=company, entity_type=entity_type, top=top)
 
 
+@app.get("/sectors/summary")
+def get_sector_summaries(
+    sector: str | None = None,
+    sub_industry: str | None = None,
+    week_start: str | None = None,
+    conn=Depends(get_db),
+):
+    return db.list_sector_summaries(conn, sector=sector, sub_industry=sub_industry, week_start=week_start)
+
+
 class SentimentUpdateRequest(BaseModel):
     label: Literal["positive", "negative", "neutral"] | None = None
     score: float | None = Field(None, ge=0, le=1)

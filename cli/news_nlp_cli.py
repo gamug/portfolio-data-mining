@@ -1,8 +1,13 @@
 #!/usr/bin/env python
-"""CLI entrypoint: run the sentiment + NER batch pipeline directly —
-pipeline stage 3, no FastAPI/uvicorn involved (for that, see
-apps/news_nlp_api.py instead). Wraps news_nlp.pipeline.run_pipeline()
-directly with a real --limit flag; see docs/modules/news-nlp.md.
+"""CLI entrypoint: run the sentiment + NER + summarization batch pipeline
+directly, no FastAPI/uvicorn involved (for that, see apps/news_nlp_api.py
+instead). Wraps news_nlp.pipeline.run_pipeline() directly with a real
+--limit flag; see docs/modules/news-nlp.md.
+
+Four sequential stages, one model on the GPU at a time: sentiment (FinBERT)
+-> NER (SEC-BERT) -> c_summary, one bart-large-cnn summary per article
+-> sector_summary, one bart-large-cnn summary per gics_sub_industry per
+closed calendar week, reduced from that week's c_summary rows.
 
 (src/news_nlp/pipeline.py also has its own bare `if __name__ == "__main__":`
 usable via `python -m news_nlp.pipeline [limit]` — kept for backward
@@ -27,7 +32,8 @@ def parse_args() -> argparse.Namespace:
         "--limit",
         type=int,
         default=None,
-        help="Max articles to process per stage (sentiment, then NER). Default: all pending.",
+        help="Max rows to process per stage (articles for sentiment/NER/c_summary; "
+             "sector/week groups for sector_summary). Default: all pending.",
     )
     return parser.parse_args()
 

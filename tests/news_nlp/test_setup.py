@@ -1,7 +1,7 @@
 from news_nlp import setup
 
 
-def test_download_models_fetches_both_models_and_verifies_config(monkeypatch):
+def test_download_models_fetches_every_model_and_verifies_config(monkeypatch):
     snapshot_calls = []
     config_calls = []
 
