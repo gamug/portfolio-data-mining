@@ -60,12 +60,24 @@ def enable_foreign_keys(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+# This DB file is shared with news_collector and news_nlp (see CLAUDE.md).
+# Without a busy_timeout, a connection that finds the file locked by another
+# one's write transaction gets an immediate
+# `sqlite3.OperationalError: database is locked` instead of a retry -- most
+# likely here, since this stage runs a high-throughput loop of individual
+# save_article()/mark_status() commits while news_collector may still be
+# writing discovered_urls concurrently. Not persistent (like foreign_keys,
+# unlike journal_mode), so it has to be set on every connection.
+BUSY_TIMEOUT_MS = 30_000
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     """Open a connection configured the way this pipeline expects: FK
     enforcement on, rows returned as sqlite3.Row.
     """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     enable_foreign_keys(conn)
     return conn
 

@@ -79,6 +79,15 @@ class URLQueue:
         # Enable WAL for better concurrent read performance
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        # This DB file is shared with extractor and news_nlp (see CLAUDE.md) --
+        # each opens its own connection, and a writer that finds the file
+        # locked by another connection's write transaction otherwise gets an
+        # immediate `sqlite3.OperationalError: database is locked` instead of
+        # a retry. busy_timeout makes SQLite retry internally for up to this
+        # many ms before raising. Not persistent (like foreign_keys, unlike
+        # journal_mode), so every connection -- including this pipeline's own
+        # concurrent-reader connections -- needs to set it itself.
+        self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_DDL)
         self._conn.commit()
         log.info("URLQueue initialized at %s", self._db_path)

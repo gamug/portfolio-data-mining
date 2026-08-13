@@ -56,12 +56,22 @@ CREATE INDEX IF NOT EXISTS idx_article_entities_article_id
 """
 
 
+# This DB file is shared with news_collector and extractor (see CLAUDE.md).
+# Without a busy_timeout, a connection that finds the file locked by another
+# one's write transaction gets an immediate
+# `sqlite3.OperationalError: database is locked` instead of a retry. Not
+# persistent (like foreign_keys, unlike journal_mode), so it has to be set
+# on every connection.
+BUSY_TIMEOUT_MS = 30_000
+
+
 def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     # Row objects support both key access (row["col"], used by the query
     # helpers below) and positional unpacking (used by existing call sites
     # like `for article_id, body_text in fetch_pending_articles(...)`).
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
