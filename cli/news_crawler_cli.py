@@ -5,13 +5,14 @@ extraction pipeline directly, no FastAPI/uvicorn involved (for that, see
 apps/news_crawler_api.py instead). Source: news-crawler/run_extraction.py.
 See docs/modules/news-crawler.md.
 
-Reads rows from discovered_urls where status='pending', fetches each with
-httpx (per-domain rate limited), extracts title/author/pub_date/body via
-JSON-LD + trafilatura, classifies the result, and writes it to the
-`articles` table.
+Reads rows from discovered_urls where status='pending' (or, with
+--retry-failed, status='failed'), fetches each with httpx (per-domain rate
+limited), extracts title/author/pub_date/body via JSON-LD + trafilatura,
+classifies the result, and writes it to the `articles` table.
 
 Usage:
     .venv\\Scripts\\python.exe cli\\news_crawler_cli.py --limit 20
+    .venv\\Scripts\\python.exe cli\\news_crawler_cli.py --retry-failed
 """
 import argparse
 import asyncio
@@ -29,8 +30,8 @@ from tqdm import tqdm
 from extractor.db import (
     connect,
     ensure_articles_table,
-    get_pending_urls,
     get_status_counts,
+    get_urls_by_status,
     mark_status,
     save_article,
 )
@@ -51,6 +52,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--limit", type=int, default=None, help="Max URLs to process this run")
+    parser.add_argument(
+        "--retry-failed", action="store_true",
+        help="Process rows with status='failed' instead of 'pending' -- retries URLs that "
+             "previously came back with an HTTP error or a network failure (fetch_status="
+             "'failed', e.g. http_status>=400 or a connection/timeout error), without a "
+             "separate reset-to-pending step. 'paywalled'/'thin_content' rows are left alone "
+             "since re-fetching them won't change the outcome.",
+    )
     parser.add_argument("--default-concurrency", type=int, default=2)
     parser.add_argument(
         "--cnbc-concurrency", type=int, default=4,
@@ -63,11 +72,12 @@ async def run(args) -> dict:
     conn = connect(args.db)
     ensure_articles_table(conn)
 
-    rows = get_pending_urls(conn, limit=args.limit)
+    target_status = "failed" if args.retry_failed else "pending"
+    rows = get_urls_by_status(conn, [target_status], limit=args.limit)
 
     prior = get_status_counts(conn)
     already_done = sum(c for status, c in prior.items() if status != "pending")
-    print(f"Already processed: {already_done}. Pending this run: {len(rows)}.")
+    print(f"Already processed: {already_done}. {target_status.capitalize()} this run: {len(rows)}.")
 
     scheduler = DomainScheduler(
         default_concurrency=args.default_concurrency,

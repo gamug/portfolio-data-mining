@@ -105,17 +105,29 @@ def ensure_articles_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_pending_urls(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+def get_urls_by_status(
+    conn: sqlite3.Connection, statuses: list[str], limit: int | None = None
+) -> list[sqlite3.Row]:
+    """Fetch discovered_urls rows whose status is in `statuses`, e.g.
+    ['pending'] for a normal run or ['failed'] to retry previous failures --
+    no separate reset-to-pending step needed, unlike the API's
+    /discovered/{id}/reset endpoint.
+    """
     conn.row_factory = sqlite3.Row
+    placeholders = ", ".join("?" for _ in statuses)
     sql = (
-        "SELECT id, url, domain, company, ticker, source, title "
-        "FROM discovered_urls WHERE status = 'pending' ORDER BY id"
+        f"SELECT id, url, domain, company, ticker, source, title "
+        f"FROM discovered_urls WHERE status IN ({placeholders}) ORDER BY id"
     )
-    params = ()
+    params: list = list(statuses)
     if limit is not None:
         sql += " LIMIT ?"
-        params = (limit,)
+        params.append(limit)
     return conn.execute(sql, params).fetchall()
+
+
+def get_pending_urls(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    return get_urls_by_status(conn, ["pending"], limit=limit)
 
 
 def get_status_counts(conn: sqlite3.Connection) -> dict[str, int]:

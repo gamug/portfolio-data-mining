@@ -36,7 +36,14 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from extractor.db import enable_foreign_keys, ensure_articles_table, get_status_counts, mark_status, save_article
+from extractor.db import (
+    enable_foreign_keys,
+    ensure_articles_table,
+    get_status_counts,
+    get_urls_by_status,
+    mark_status,
+    save_article,
+)
 from extractor.parse import (
     extract_body_text,
     extract_jsonld_article,
@@ -279,22 +286,25 @@ async def extract_run(
         description="Capped low on purpose -- this is a test endpoint, not a batch driver. "
                      "Use run_extraction.py for full/unattended runs.",
     ),
+    status: str = Query(
+        "pending",
+        description="discovered_urls.status to select rows from -- 'pending' for a normal "
+                     "run, 'failed' to retry URLs that previously errored (http_status>=400 "
+                     "or a network failure) without a separate /discovered/{id}/reset call.",
+    ),
     conn: sqlite3.Connection = Depends(get_conn),
     gics_map: dict = Depends(get_gics_map),
 ):
-    """Same loop run_extraction.py runs, over a small number of pending rows
-    -- for exercising the batch path (scheduler + save + status flip
-    together) without kicking off a long unattended run from the API.
+    """Same loop run_extraction.py runs, over a small number of rows in the
+    given `status` -- for exercising the batch path (scheduler + save +
+    status flip together) without kicking off a long unattended run from
+    the API.
 
     Registered ABOVE /extract/{url_id} on purpose: FastAPI matches routes in
     registration order, and a literal path like /extract/run must be
     declared before the {url_id}: int catch-all or it never gets a chance to
     match (int-parsing "run" fails with a 422 instead)."""
-    rows = conn.execute(
-        "SELECT id, url, domain, company, ticker, source, title FROM discovered_urls "
-        "WHERE status = 'pending' ORDER BY id LIMIT ?",
-        (limit,),
-    ).fetchall()
+    rows = get_urls_by_status(conn, [status], limit=limit)
 
     counts: dict[str, int] = {}
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -365,8 +375,8 @@ async def parse_preview(payload: ParsePreviewRequest):
         http_status_code = response.status_code
         domain = domain or httpx.URL(payload.url).host
 
-    jsonld = extract_jsonld_article(html)
-    body_text = extract_body_text(html)
+    jsonld = extract_jsonld_article(html) # type: ignore
+    body_text = extract_body_text(html) # type: ignore
 
     return ParsePreviewResponse(
         title=jsonld["title"],
@@ -375,7 +385,7 @@ async def parse_preview(payload: ParsePreviewRequest):
         body_text=body_text,
         word_count=word_count(body_text),
         is_thin_content=is_thin_content(body_text),
-        is_probably_paywalled=is_probably_paywalled(html, domain or ""),
+        is_probably_paywalled=is_probably_paywalled(html, domain or ""), # type: ignore
         http_status_code=http_status_code,
     )
 

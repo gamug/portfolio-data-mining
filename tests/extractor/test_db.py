@@ -7,6 +7,7 @@ from extractor.db import (
     ensure_articles_table,
     get_pending_urls,
     get_status_counts,
+    get_urls_by_status,
     mark_status,
     save_article,
 )
@@ -85,6 +86,43 @@ def test_get_pending_urls_returns_only_pending_rows(conn):
     assert [row["id"] for row in pending] == [1]
     assert pending[0]["url"] == "https://cnbc.com/a"
     assert pending[0]["ticker"] == "MMM"
+
+
+def test_get_urls_by_status_filters_to_requested_statuses(conn):
+    conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
+    conn.commit()
+
+    failed = get_urls_by_status(conn, ["failed"])
+
+    assert [row["id"] for row in failed] == [2]
+    assert failed[0]["url"] == "https://cnbc.com/b"
+
+
+def test_get_urls_by_status_accepts_multiple_statuses(conn):
+    conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
+    conn.commit()
+
+    rows = get_urls_by_status(conn, ["pending", "failed"])
+
+    assert [row["id"] for row in rows] == [1, 2]
+
+
+def test_get_urls_by_status_respects_limit(conn):
+    conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
+    conn.commit()
+
+    rows = get_urls_by_status(conn, ["pending", "failed"], limit=1)
+
+    assert [row["id"] for row in rows] == [1]
+
+
+def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(conn):
+    conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
+    conn.commit()
+
+    assert [row["id"] for row in get_pending_urls(conn)] == [
+        row["id"] for row in get_urls_by_status(conn, ["pending"])
+    ]
 
 
 def test_save_article_then_mark_status_updates_discovered_urls(conn):
