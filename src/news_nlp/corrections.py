@@ -1,0 +1,64 @@
+"""Manual edit/delete operations on sentiment and entity results.
+
+Kept separate from db.py's pipeline write-path (write_sentiment/write_entities)
+since this is a distinct concern: human correction of model output rather than
+model-generated writes. Deleting a sentiment row (or all of an article's
+entities) makes that article eligible for reprocessing again, since
+db.fetch_pending_articles selects rows missing from the result table.
+"""
+import sqlite3
+from datetime import datetime, timezone
+
+_SENTIMENT_FIELDS = {"label", "score", "positive", "negative", "neutral"}
+_ENTITY_FIELDS = {"entity_type", "text", "start_char", "end_char", "score"}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def update_sentiment(conn: sqlite3.Connection, article_id: int, **fields) -> dict | None:
+    unknown = set(fields) - _SENTIMENT_FIELDS
+    if unknown:
+        raise ValueError(f"Unknown sentiment field(s): {unknown}")
+
+    if fields:
+        set_clause = ", ".join(f"{k} = ?" for k in fields) + ", processed_at = ?"
+        params = list(fields.values()) + [_now_iso(), article_id]
+        cur = conn.execute(f"UPDATE article_sentiment SET {set_clause} WHERE article_id = ?", params)
+        if cur.rowcount == 0:
+            return None
+
+    row = conn.execute("SELECT * FROM article_sentiment WHERE article_id = ?", (article_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_sentiment(conn: sqlite3.Connection, article_id: int) -> bool:
+    cur = conn.execute("DELETE FROM article_sentiment WHERE article_id = ?", (article_id,))
+    return cur.rowcount > 0
+
+
+def update_entity(conn: sqlite3.Connection, entity_id: int, **fields) -> dict | None:
+    unknown = set(fields) - _ENTITY_FIELDS
+    if unknown:
+        raise ValueError(f"Unknown entity field(s): {unknown}")
+
+    if fields:
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        params = list(fields.values()) + [entity_id]
+        cur = conn.execute(f"UPDATE article_entities SET {set_clause} WHERE id = ?", params)
+        if cur.rowcount == 0:
+            return None
+
+    row = conn.execute("SELECT * FROM article_entities WHERE id = ?", (entity_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_entity(conn: sqlite3.Connection, entity_id: int) -> bool:
+    cur = conn.execute("DELETE FROM article_entities WHERE id = ?", (entity_id,))
+    return cur.rowcount > 0
+
+
+def delete_entities_for_article(conn: sqlite3.Connection, article_id: int) -> int:
+    cur = conn.execute("DELETE FROM article_entities WHERE article_id = ?", (article_id,))
+    return cur.rowcount

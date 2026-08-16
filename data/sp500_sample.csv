@@ -1,0 +1,11 @@
+ticker,name,sector
+AAPL,Apple Inc.,Technology
+MSFT,Microsoft Corporation,Technology
+AMZN,Amazon.com Inc.,Consumer Discretionary
+GOOGL,Alphabet Inc. Class A,Communication Services
+META,Meta Platforms Inc. Class A,Communication Services
+NVDA,NVIDIA Corporation,Technology
+TSLA,Tesla Inc.,Consumer Discretionary
+BERKB,Berkshire Hathaway Inc. Class B,Financials
+JPM,JPMorgan Chase & Co.,Financials
+V,Visa Inc. Class A,Financials
