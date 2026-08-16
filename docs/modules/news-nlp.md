@@ -2,10 +2,16 @@
 
 **Source:** `news-nlp/` → `src/news_nlp/` + `apps/news_nlp_api.py` + `tests/news_nlp/`
 
-Runs four sequential batch stages over the `articles` rows [extractor](news-crawler.md)
-wrote into the shared `data/urls.db` (override with `$DATABASE_URL`, see root
-`.env.example`), each owning its own results table, and exposes everything through a
-FastAPI service. There is no scraper here — `articles` is treated as pre-populated input.
+Runs up to four sequential batch stages over the `articles` rows
+[extractor](news-crawler.md) wrote into the shared `data/urls.db` (override with
+`$DATABASE_URL`, see root `.env.example`), each owning its own results table, and exposes
+everything through a FastAPI service. There is no scraper here — `articles` is treated as
+pre-populated input.
+
+Sentiment and NER (stages 1–2) always run. `c_summary`/`sector_summary` (stages 3–4) are
+**opt-in** — pass `--summarize` on the CLI or `"summarize": true` in the API's
+`/pipeline/run` body; the default (`summarize=False`) skips them entirely, so the
+summarization model never loads and its VRAM/latency cost is never paid unless asked for.
 
 1. **Sentiment** — FinBERT (`ProsusAI/finbert`) → `article_sentiment`.
 2. **NER** — a fine-tuned SEC-BERT-BASE model trained on FiNER-ORD, published at
@@ -59,19 +65,22 @@ the CUDA-matched wheel explicitly (this replaces whatever transitive build is pr
 ```bash
 # CLI (direct — no server)
 .venv\Scripts\python.exe cli\news_nlp_cli.py --limit 50
-.venv\Scripts\python.exe cli\news_nlp_cli.py   # process every pending article
+.venv\Scripts\python.exe cli\news_nlp_cli.py   # process every pending article, sentiment + NER only
+.venv\Scripts\python.exe cli\news_nlp_cli.py --summarize   # also run c_summary/sector_summary
 
 # API
 .venv\Scripts\python.exe apps\news_nlp_api.py
 # -> http://127.0.0.1:8003/docs
+# POST /pipeline/run  {"limit": 50, "summarize": true}
 ```
 
-`cli/news_nlp_cli.py` wraps `news_nlp.pipeline.run_pipeline()` directly with a real
-`--limit` flag, driving all four stages in sequence. `src/news_nlp/pipeline.py` also
-still has its own bare `if __name__ == "__main__":` (usable via
-`python -m news_nlp.pipeline [limit]`, a positional arg instead of a flag) — kept for
-backward compatibility, but `cli/news_nlp_cli.py` is the documented entrypoint going
-forward.
+`cli/news_nlp_cli.py` wraps `news_nlp.pipeline.run_pipeline()` directly with real
+`--limit`/`--summarize` flags, driving sentiment + NER (and, with `--summarize`, `c_summary`
++ `sector_summary`) in sequence. `src/news_nlp/pipeline.py` also still has its own bare
+`if __name__ == "__main__":` (usable via `python -m news_nlp.pipeline [limit]`, a
+positional arg instead of a flag, sentiment + NER only — no way to opt into summarization
+from that entrypoint) — kept for backward compatibility, but `cli/news_nlp_cli.py` is the
+documented entrypoint going forward.
 
 Query results via the API: `GET /articles/{id}` now includes a `"summary"` key (same
 shape as `"sentiment"`/`"entities"` — `None` until stage 3 has processed that article),
@@ -84,7 +93,7 @@ and `GET /sectors/summary` (optional `sector`/`sub_industry`/`week_start` filter
 .venv\Scripts\python.exe -m pytest tests/news_nlp -q
 ```
 
-Requires torch installed (see Setup above). 71/72 pass once it's present (one previously
+Requires torch installed (see Setup above). 75/76 pass once it's present (one previously
 stale test, `test_main.py`, was removed — it exercised the old `news-nlp/main.py`
 uvicorn-launcher module, whose one line folded into `apps/news_nlp_api.py`'s
 `if __name__ == "__main__":` block during migration, so there's no separate `main` module

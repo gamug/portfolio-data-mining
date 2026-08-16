@@ -30,7 +30,7 @@ def _poll_until_not_running(client, attempts=100):
 
 
 def test_pipeline_run_completes_and_updates_status(client, monkeypatch):
-    def fake_run_pipeline(limit=None, on_progress=None):
+    def fake_run_pipeline(limit=None, summarize=False, on_progress=None):
         on_progress("sentiment", 0, 2)
         on_progress("sentiment", 1, 2)
         on_progress("sentiment", 2, 2)
@@ -49,11 +49,41 @@ def test_pipeline_run_completes_and_updates_status(client, monkeypatch):
     assert status["total"] == 2
 
 
+def test_pipeline_run_defaults_summarize_to_false(client, monkeypatch):
+    received = {}
+
+    def fake_run_pipeline(limit=None, summarize=False, on_progress=None):
+        received["summarize"] = summarize
+
+    monkeypatch.setattr(app_module.pipeline, "run_pipeline", fake_run_pipeline)
+
+    resp = client.post("/pipeline/run", json={})
+    assert resp.status_code == 202
+
+    _poll_until_not_running(client)
+    assert received["summarize"] is False
+
+
+def test_pipeline_run_passes_summarize_flag_through(client, monkeypatch):
+    received = {}
+
+    def fake_run_pipeline(limit=None, summarize=False, on_progress=None):
+        received["summarize"] = summarize
+
+    monkeypatch.setattr(app_module.pipeline, "run_pipeline", fake_run_pipeline)
+
+    resp = client.post("/pipeline/run", json={"summarize": True})
+    assert resp.status_code == 202
+
+    _poll_until_not_running(client)
+    assert received["summarize"] is True
+
+
 def test_pipeline_run_conflict_returns_409(client, monkeypatch):
     started = threading.Event()
     release = threading.Event()
 
-    def slow_run_pipeline(limit=None, on_progress=None):
+    def slow_run_pipeline(limit=None, summarize=False, on_progress=None):
         started.set()
         release.wait(timeout=5)
 
@@ -70,7 +100,7 @@ def test_pipeline_run_conflict_returns_409(client, monkeypatch):
 
 
 def test_pipeline_run_error_sets_error_status_and_allows_retry(client, monkeypatch):
-    def failing_run_pipeline(limit=None, on_progress=None):
+    def failing_run_pipeline(limit=None, summarize=False, on_progress=None):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(app_module.pipeline, "run_pipeline", failing_run_pipeline)
@@ -82,6 +112,8 @@ def test_pipeline_run_error_sets_error_status_and_allows_retry(client, monkeypat
     assert status["status"] == "error"
     assert status["error"] == "boom"
 
-    monkeypatch.setattr(app_module.pipeline, "run_pipeline", lambda limit=None, on_progress=None: None)
+    monkeypatch.setattr(
+        app_module.pipeline, "run_pipeline", lambda limit=None, summarize=False, on_progress=None: None
+    )
     resp_retry = client.post("/pipeline/run", json={})
     assert resp_retry.status_code == 202

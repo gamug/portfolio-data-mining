@@ -90,6 +90,7 @@ def get_db():
 
 class PipelineRunRequest(BaseModel):
     limit: int | None = None
+    summarize: bool = False
 
 
 @app.get("/health")
@@ -104,7 +105,9 @@ def start_pipeline(req: PipelineRunRequest):
 
     def worker():
         try:
-            pipeline.run_pipeline(limit=req.limit, on_progress=pipeline_status.update_progress)
+            pipeline.run_pipeline(
+                limit=req.limit, summarize=req.summarize, on_progress=pipeline_status.update_progress,
+            )
             pipeline_status.finish()
         except Exception as exc:
             pipeline_status.finish(error=str(exc))

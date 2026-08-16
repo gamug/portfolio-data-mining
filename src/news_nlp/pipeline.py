@@ -293,14 +293,15 @@ def run_sector_summary_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
-def run_pipeline(limit=None, on_progress=None):
+def run_pipeline(limit=None, summarize=False, on_progress=None):
     conn = db.connect()
     db.init_schema(conn)
     try:
         run_sentiment_stage(conn, limit=limit, on_progress=on_progress)
         run_ner_stage(conn, limit=limit, on_progress=on_progress)
-        run_company_summary_stage(conn, limit=limit, on_progress=on_progress)
-        run_sector_summary_stage(conn, limit=limit, on_progress=on_progress)
+        if summarize:
+            run_company_summary_stage(conn, limit=limit, on_progress=on_progress)
+            run_sector_summary_stage(conn, limit=limit, on_progress=on_progress)
     finally:
         conn.close()
     print("\nPipeline run complete.")
