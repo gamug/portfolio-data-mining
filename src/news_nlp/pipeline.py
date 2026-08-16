@@ -25,7 +25,7 @@ from .chunking import chunk_text, merge_char_spans
 
 SENTIMENT_MODEL = "ProsusAI/finbert"
 NER_MODEL = "gamug/sec-bert-finer-ord-ner"
-SUMMARY_MODEL = "facebook/bart-large-cnn"
+SUMMARY_MODEL = "sshleifer/distilbart-cnn-12-6"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
