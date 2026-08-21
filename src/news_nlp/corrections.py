@@ -10,13 +10,37 @@ select rows missing from the result table.
 import sqlite3
 from datetime import datetime, timezone
 
-_SENTIMENT_FIELDS = {"label", "score", "positive", "negative", "neutral"}
-_ENTITY_FIELDS = {"entity_type", "text", "start_char", "end_char", "score"}
+# field name -> literal "<column> = ?" SQL fragment. update_*() below select the
+# SET-clause fragments to join from these fixed maps rather than interpolating
+# the caller-supplied field name into the query string directly, so the SQL text
+# is always drawn from a hardcoded set of literals, never built from runtime
+# input, even though runtime input (validated against the same map's keys)
+# selects which fragments are used.
+_SENTIMENT_SET_CLAUSES = {
+    "label": "label = ?",
+    "score": "score = ?",
+    "positive": "positive = ?",
+    "negative": "negative = ?",
+    "neutral": "neutral = ?",
+}
+_ENTITY_SET_CLAUSES = {
+    "entity_type": "entity_type = ?",
+    "text": "text = ?",
+    "start_char": "start_char = ?",
+    "end_char": "end_char = ?",
+    "score": "score = ?",
+}
 # Deliberately excludes the 9 raw distribution columns: those exist as an
 # audit trail of what the model actually scored (for CATEGORY_CONFIDENCE_
 # THRESHOLD tuning), so a human correction only changes the winning label/
 # score, never rewrites the original NLI breakdown.
-_CATEGORY_FIELDS = {"label", "score"}
+_CATEGORY_SET_CLAUSES = {
+    "label": "label = ?",
+    "score": "score = ?",
+}
+_SENTIMENT_FIELDS = set(_SENTIMENT_SET_CLAUSES)
+_ENTITY_FIELDS = set(_ENTITY_SET_CLAUSES)
+_CATEGORY_FIELDS = set(_CATEGORY_SET_CLAUSES)
 
 
 def _now_iso() -> str:
@@ -29,7 +53,7 @@ def update_sentiment(conn: sqlite3.Connection, article_id: int, **fields) -> dic
         raise ValueError(f"Unknown sentiment field(s): {unknown}")
 
     if fields:
-        set_clause = ", ".join(f"{k} = ?" for k in fields) + ", processed_at = ?"
+        set_clause = ", ".join(_SENTIMENT_SET_CLAUSES[k] for k in fields) + ", processed_at = ?"
         params = list(fields.values()) + [_now_iso(), article_id]
         cur = conn.execute(f"UPDATE article_sentiment SET {set_clause} WHERE article_id = ?", params)
         if cur.rowcount == 0:
@@ -50,7 +74,7 @@ def update_entity(conn: sqlite3.Connection, entity_id: int, **fields) -> dict | 
         raise ValueError(f"Unknown entity field(s): {unknown}")
 
     if fields:
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        set_clause = ", ".join(_ENTITY_SET_CLAUSES[k] for k in fields)
         params = list(fields.values()) + [entity_id]
         cur = conn.execute(f"UPDATE article_entities SET {set_clause} WHERE id = ?", params)
         if cur.rowcount == 0:
@@ -76,7 +100,7 @@ def update_category(conn: sqlite3.Connection, article_id: int, **fields) -> dict
         raise ValueError(f"Unknown category field(s): {unknown}")
 
     if fields:
-        set_clause = ", ".join(f"{k} = ?" for k in fields) + ", processed_at = ?"
+        set_clause = ", ".join(_CATEGORY_SET_CLAUSES[k] for k in fields) + ", processed_at = ?"
         params = list(fields.values()) + [_now_iso(), article_id]
         cur = conn.execute(f"UPDATE article_category SET {set_clause} WHERE article_id = ?", params)
         if cur.rowcount == 0:
