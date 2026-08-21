@@ -269,10 +269,11 @@ def run_category_stage(conn, limit=None, on_progress=None):
 
 
 def _summarize_one(text: str, tokenizer, model, device) -> str:
-    """Run bart-large-cnn generation on a single chunk that already fits
-    within the model's input cap. Split out as its own function so tests can
-    monkeypatch it and exercise hierarchical_summarize's chunk/reduce control
-    flow without loading a real model."""
+    """Run SUMMARY_MODEL (distilbart-cnn-12-6) generation on a single chunk
+    that already fits within the model's input cap. Split out as its own
+    function so tests can monkeypatch it and exercise
+    hierarchical_summarize's chunk/reduce control flow without loading a
+    real model."""
     inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=1024).to(device)
     with torch.no_grad():
         output_ids = model.generate(

@@ -1,8 +1,9 @@
 """SQLite access layer: schema creation + read/write helpers for the NLP pipeline.
 
-Reads from the existing `articles` table and writes to two new results tables,
-`article_sentiment` and `article_entities`, both keyed by article_id. Also
-provides read-only query helpers backing the FastAPI query endpoints.
+Reads from the existing `articles` table and writes to three results tables --
+`article_sentiment`, `article_entities`, and `article_category` -- each keyed
+by article_id. Also provides read-only query helpers backing the FastAPI
+query endpoints.
 """
 import os
 import sqlite3
