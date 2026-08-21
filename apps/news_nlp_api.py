@@ -1,6 +1,7 @@
 """
 FastAPI app: trigger/monitor the news-nlp pipeline (FinBERT sentiment +
-SEC-BERT NER) and query/correct its results.
+SEC-BERT NER + zero-shot category classification) and query/correct its
+results.
 
 Source: news-nlp/app.py + news-nlp/main.py, merged. See docs/modules/news-nlp.md.
 
@@ -20,6 +21,9 @@ from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 
 from news_nlp import db, pipeline, corrections
+from news_nlp.categories import CATEGORY_SLUGS, OTHER_LABEL
+
+CATEGORY_LABEL_VALUES = CATEGORY_SLUGS + (OTHER_LABEL,)
 
 app = FastAPI(title="news-nlp")
 
@@ -126,6 +130,7 @@ def get_articles(
     company: str | None = None,
     ticker: str | None = None,
     sentiment: Literal["positive", "negative", "neutral"] | None = None,
+    category: Literal[CATEGORY_LABEL_VALUES] | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = Query(50, ge=1, le=200),
@@ -133,7 +138,7 @@ def get_articles(
     conn=Depends(get_db),
 ):
     return db.list_articles(
-        conn, company=company, ticker=ticker, sentiment=sentiment,
+        conn, company=company, ticker=ticker, sentiment=sentiment, category=category,
         date_from=date_from, date_to=date_to, limit=limit, offset=offset,
     )
 
@@ -167,6 +172,16 @@ def get_entity_stats(
     return db.entity_stats(conn, company=company, entity_type=entity_type, top=top)
 
 
+@app.get("/stats/categories")
+def get_category_stats(
+    company: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    conn=Depends(get_db),
+):
+    return db.category_stats(conn, company=company, date_from=date_from, date_to=date_to)
+
+
 @app.get("/sectors/summary")
 def get_sector_summaries(
     sector: str | None = None,
@@ -190,6 +205,11 @@ class EntityUpdateRequest(BaseModel):
     text: str | None = None
     start_char: int | None = None
     end_char: int | None = None
+    score: float | None = Field(None, ge=0, le=1)
+
+
+class CategoryUpdateRequest(BaseModel):
+    label: Literal[CATEGORY_LABEL_VALUES] | None = None
     score: float | None = Field(None, ge=0, le=1)
 
 
@@ -234,6 +254,24 @@ def remove_article_entities(article_id: int, conn=Depends(get_db)):
     count = corrections.delete_entities_for_article(conn, article_id)
     conn.commit()
     return {"deleted": count}
+
+
+@app.patch("/articles/{article_id}/category")
+def patch_category(article_id: int, req: CategoryUpdateRequest, conn=Depends(get_db)):
+    fields = req.model_dump(exclude_unset=True)
+    updated = corrections.update_category(conn, article_id, **fields)
+    conn.commit()
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Category not found for article")
+    return updated
+
+
+@app.delete("/articles/{article_id}/category", status_code=204)
+def remove_category(article_id: int, conn=Depends(get_db)):
+    deleted = corrections.delete_category(conn, article_id)
+    conn.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Category not found for article")
 
 
 if __name__ == "__main__":

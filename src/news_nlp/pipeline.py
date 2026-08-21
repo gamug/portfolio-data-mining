@@ -1,12 +1,14 @@
-"""One-shot batch pipeline: FinBERT sentiment + fine-tuned NER over `articles`.
+"""One-shot batch pipeline: FinBERT sentiment + fine-tuned NER + zero-shot
+category classification over `articles`.
 
 Run manually whenever new articles need processing:
     .venv/Scripts/python.exe -m news_nlp.pipeline
 
 Idempotent/resumable: only processes articles missing from the results
-tables. Loads one model onto the GPU at a time (sentiment, then NER) to stay
-well within a 6GB VRAM budget, and frees each model before loading the next.
-If a stage has nothing pending, it skips loading that stage's model entirely.
+tables. Loads one model onto the GPU at a time (sentiment, then NER, then
+category) to stay well within a 6GB VRAM budget, and frees each model before
+loading the next. If a stage has nothing pending, it skips loading that
+stage's model entirely.
 """
 import gc
 import sys
@@ -21,13 +23,29 @@ from transformers import (
 from tqdm import tqdm
 
 from . import db
+from .categories import CATEGORY_LABELS, OTHER_LABEL
 from .chunking import chunk_text, merge_char_spans
 
 SENTIMENT_MODEL = "ProsusAI/finbert"
 NER_MODEL = "gamug/sec-bert-finer-ord-ner"
+CATEGORY_MODEL = "MoritzLaurer/deberta-v3-base-zeroshot-v2.0"
 SUMMARY_MODEL = "sshleifer/distilbart-cnn-12-6"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# 9 mutually-exclusive labels via softmax over entailment logits gives a
+# uniform-chance baseline of ~0.11; requiring the winner to clear 0.4
+# (~3.6x baseline) routes genuinely ambiguous/generic articles to "other"
+# without being so strict that on-topic articles with modest lexical overlap
+# to their hypothesis get miscategorized. Named constant specifically so
+# it's cheap to retune later using article_category's stored per-label score
+# distribution -- see docs/category-taxonomy.md.
+CATEGORY_CONFIDENCE_THRESHOLD = 0.4
+# Tighter than the 510 used by sentiment/NER's single-sequence chunking:
+# this stage tokenizes (premise, hypothesis) *pairs*, so the premise needs
+# to leave headroom for the hypothesis text plus special tokens within the
+# model's 512-token cap.
+CATEGORY_PREMISE_MAX_TOKENS = 460
 
 # BART-large-cnn's own cap is 1024 tokens; 1000 leaves headroom for the
 # BOS/EOS tokens the tokenizer adds on top of chunk_text's count.
@@ -183,6 +201,73 @@ def run_ner_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
+def classify_category_scores(entail_logits: list[float]) -> tuple[str, float, dict]:
+    """Turn 9 entailment logits (one per CATEGORY_LABELS slug, same order)
+    into (label, winning_score, {slug: prob}). Split out from
+    run_category_stage so the classification math is testable without a
+    real model, same spirit as merge_bio_predictions being split out of
+    run_ner_stage.
+
+    `winning_score` always reflects the best-scoring slug's probability,
+    even when the returned label is OTHER_LABEL -- that's what makes
+    low-confidence "other" picks auditable (label='other' with a score just
+    under the threshold is a near-miss; a low score alongside a flat
+    distribution is not).
+    """
+    probs = torch.softmax(torch.tensor(entail_logits), dim=0).tolist()
+    scores = {slug: p for (slug, _, _), p in zip(CATEGORY_LABELS, probs)}
+    winner_slug = max(scores, key=scores.get)
+    winner_score = scores[winner_slug]
+    label = winner_slug if winner_score >= CATEGORY_CONFIDENCE_THRESHOLD else OTHER_LABEL
+    return label, winner_score, scores
+
+
+def run_category_stage(conn, limit=None, on_progress=None):
+    rows = db.fetch_pending_category_articles(conn, limit=limit)
+    total = len(rows)
+    print(f"\n=== Category stage ({CATEGORY_MODEL}) on {DEVICE} ===")
+    print(f"{total} article(s) pending category classification")
+    if on_progress:
+        on_progress("category", 0, total)
+    if total == 0:
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(CATEGORY_MODEL)
+    model = AutoModelForSequenceClassification.from_pretrained(CATEGORY_MODEL).to(DEVICE).eval()
+    entailment_id = next(v for k, v in model.config.label2id.items() if k.lower() == "entailment")
+
+    hypotheses = [f"This example is about {phrase}." for _, _, phrase in CATEGORY_LABELS]
+
+    for idx, (article_id, title, body_text) in enumerate(tqdm(rows, desc="category"), start=1):
+        # Title + lead chunk of body, not full-article chunking: each label
+        # needs its own (premise, hypothesis) forward pass, so chunking the
+        # whole article the way sentiment/NER do would cost 9x per chunk --
+        # unaffordable for a stage that now runs on every article. News is
+        # inverted-pyramid, so the opening sentences almost always establish
+        # the dominant topic.
+        chunks = chunk_text(f"{title}. {body_text}", tokenizer, max_tokens=CATEGORY_PREMISE_MAX_TOKENS)
+        premise = chunks[0].text if chunks else title
+
+        inputs = tokenizer(
+            [premise] * len(hypotheses), hypotheses,
+            return_tensors="pt", truncation="only_first", padding=True, max_length=512,
+        ).to(DEVICE)
+        with torch.no_grad():
+            logits = model(**inputs).logits
+
+        entail_logits = logits[:, entailment_id].tolist()
+        label, score, scores = classify_category_scores(entail_logits)
+
+        db.write_category(conn, article_id, label=label, score=score, scores=scores, model_name=CATEGORY_MODEL)
+        conn.commit()
+
+        if on_progress:
+            on_progress("category", idx, total)
+
+    del model, tokenizer
+    free_gpu()
+
+
 def _summarize_one(text: str, tokenizer, model, device) -> str:
     """Run bart-large-cnn generation on a single chunk that already fits
     within the model's input cap. Split out as its own function so tests can
@@ -299,6 +384,7 @@ def run_pipeline(limit=None, summarize=False, on_progress=None):
     try:
         run_sentiment_stage(conn, limit=limit, on_progress=on_progress)
         run_ner_stage(conn, limit=limit, on_progress=on_progress)
+        run_category_stage(conn, limit=limit, on_progress=on_progress)
         if summarize:
             run_company_summary_stage(conn, limit=limit, on_progress=on_progress)
             run_sector_summary_stage(conn, limit=limit, on_progress=on_progress)

@@ -2,6 +2,12 @@ from conftest import seed_article
 
 from news_nlp import db
 
+_CATEGORY_SCORES = {
+    "earnings_performance": 0.5, "mergers_acquisitions": 0.05, "leadership_governance": 0.05,
+    "legal_regulatory": 0.05, "product_innovation": 0.05, "capital_shareholder_returns": 0.05,
+    "labor_human_capital": 0.05, "market_analyst_sentiment": 0.1, "partnerships_business_dev": 0.1,
+}
+
 
 def test_list_articles_filters_by_company(conn):
     seed_article(conn, id=1, company="3M")
@@ -35,6 +41,20 @@ def test_get_article_detail_sentiment_none_when_unprocessed(conn):
     detail = db.get_article_detail(conn, 1)
     assert detail["sentiment"] is None
     assert detail["entities"] == []
+    assert detail["category"] is None
+
+
+def test_get_article_detail_includes_category(conn):
+    seed_article(conn, id=1, company="3M")
+    conn.commit()
+    db.write_category(conn, 1, label="earnings_performance", score=0.5,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    conn.commit()
+
+    detail = db.get_article_detail(conn, 1)
+    assert detail["category"]["label"] == "earnings_performance"
+    assert detail["category"]["score"] == 0.5
+    assert detail["category"]["earnings_performance"] == 0.5
 
 
 def test_get_article_detail_includes_sentiment_and_entities(conn):
@@ -91,6 +111,54 @@ def test_sentiment_stats_grouped_by_year(conn):
     by_year = {r["group_key"]: r for r in result}
     assert by_year["2022"]["positive"] == 1
     assert by_year["2023"]["negative"] == 1
+
+
+def test_list_articles_filters_by_category(conn):
+    seed_article(conn, id=1, company="3M")
+    seed_article(conn, id=2, company="Apple")
+    conn.commit()
+    db.write_category(conn, 1, label="earnings_performance", score=0.5,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    db.write_category(conn, 2, label="other", score=0.2,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    conn.commit()
+
+    result = db.list_articles(conn, category="earnings_performance")
+    assert [a["id"] for a in result] == [1]
+
+
+def test_category_stats_counts_per_label(conn):
+    seed_article(conn, id=1, company="3M")
+    seed_article(conn, id=2, company="3M")
+    seed_article(conn, id=3, company="Apple")
+    conn.commit()
+    db.write_category(conn, 1, label="earnings_performance", score=0.5,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    db.write_category(conn, 2, label="earnings_performance", score=0.6,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    db.write_category(conn, 3, label="other", score=0.2,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    conn.commit()
+
+    result = db.category_stats(conn)
+    by_label = {r["label"]: r["count"] for r in result}
+    assert by_label["earnings_performance"] == 2
+    assert by_label["other"] == 1
+
+
+def test_category_stats_filters_by_company(conn):
+    seed_article(conn, id=1, company="3M")
+    seed_article(conn, id=2, company="Apple")
+    conn.commit()
+    db.write_category(conn, 1, label="earnings_performance", score=0.5,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    db.write_category(conn, 2, label="other", score=0.2,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    conn.commit()
+
+    result = db.category_stats(conn, company="3M")
+    assert len(result) == 1
+    assert result[0]["label"] == "earnings_performance"
 
 
 def test_entity_stats_orders_by_count_desc(conn):

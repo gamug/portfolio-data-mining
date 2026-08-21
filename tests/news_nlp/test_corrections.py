@@ -1,6 +1,19 @@
+import pytest
 from conftest import seed_article
 
 from news_nlp import corrections, db
+
+_CATEGORY_SCORES = {
+    "earnings_performance": 0.5, "mergers_acquisitions": 0.05, "leadership_governance": 0.05,
+    "legal_regulatory": 0.05, "product_innovation": 0.05, "capital_shareholder_returns": 0.05,
+    "labor_human_capital": 0.05, "market_analyst_sentiment": 0.1, "partnerships_business_dev": 0.1,
+}
+
+
+def _seed_category(conn, article_id=1):
+    db.write_category(conn, article_id, label="earnings_performance", score=0.5,
+                       scores=_CATEGORY_SCORES, model_name="test-model")
+    conn.commit()
 
 
 def _seed_sentiment(conn, article_id=1):
@@ -116,3 +129,73 @@ def test_delete_entities_for_article_removes_all_and_returns_count(conn):
 
     assert count == 2
     assert conn.execute("SELECT COUNT(*) FROM article_entities WHERE article_id = 1").fetchone()[0] == 0
+
+
+def test_update_category_changes_label_and_refreshes_timestamp(conn):
+    seed_article(conn, id=1)
+    conn.commit()
+    _seed_category(conn)
+
+    before = conn.execute(
+        "SELECT processed_at FROM article_category WHERE article_id = 1"
+    ).fetchone()["processed_at"]
+
+    updated = corrections.update_category(conn, 1, label="mergers_acquisitions")
+    conn.commit()
+
+    assert updated["label"] == "mergers_acquisitions"
+    assert updated["processed_at"] != before
+
+
+def test_update_category_does_not_touch_raw_distribution_columns(conn):
+    seed_article(conn, id=1)
+    conn.commit()
+    _seed_category(conn)
+
+    corrections.update_category(conn, 1, label="mergers_acquisitions")
+    conn.commit()
+
+    row = conn.execute("SELECT * FROM article_category WHERE article_id = 1").fetchone()
+    assert row["earnings_performance"] == 0.5  # untouched audit trail
+
+
+def test_update_category_rejects_unknown_field(conn):
+    seed_article(conn, id=1)
+    conn.commit()
+    _seed_category(conn)
+
+    with pytest.raises(ValueError):
+        corrections.update_category(conn, 1, earnings_performance=0.99)
+
+
+def test_update_category_returns_none_for_missing_article(conn):
+    assert corrections.update_category(conn, 999, label="mergers_acquisitions") is None
+
+
+def test_delete_category_removes_row_and_returns_true(conn):
+    seed_article(conn, id=1)
+    conn.commit()
+    _seed_category(conn)
+
+    assert corrections.delete_category(conn, 1) is True
+    conn.commit()
+    assert conn.execute("SELECT * FROM article_category WHERE article_id = 1").fetchone() is None
+
+
+def test_delete_category_returns_false_when_missing(conn):
+    assert corrections.delete_category(conn, 999) is False
+
+
+def test_deleted_category_reappears_in_pending_articles(conn):
+    seed_article(conn, id=1, fetch_status="ok", body_text="Body text.")
+    conn.commit()
+    _seed_category(conn)
+
+    assert db.fetch_pending_category_articles(conn) == []
+
+    corrections.delete_category(conn, 1)
+    conn.commit()
+
+    rows = db.fetch_pending_category_articles(conn)
+    assert len(rows) == 1
+    assert rows[0][0] == 1

@@ -22,3 +22,34 @@ def test_fetch_pending_articles_unpacks_as_two_tuple(conn):
     article_id, body_text = rows[0]
     assert article_id == 1
     assert body_text == "Body text."
+
+
+def test_fetch_pending_category_articles_unpacks_as_three_tuple(conn):
+    from conftest import seed_article
+    seed_article(conn, id=1, title="Test Title", body_text="Body text.")
+    conn.commit()
+
+    rows = db.fetch_pending_category_articles(conn)
+    assert len(rows) == 1
+    article_id, title, body_text = rows[0]
+    assert article_id == 1
+    assert title == "Test Title"
+    assert body_text == "Body text."
+
+
+def test_fetch_pending_category_articles_excludes_already_categorized(conn):
+    from conftest import seed_article
+    seed_article(conn, id=1, body_text="Body text.")
+    conn.commit()
+    db.write_category(
+        conn, 1, label="other", score=0.2,
+        scores={
+            "earnings_performance": 0.1, "mergers_acquisitions": 0.1, "leadership_governance": 0.1,
+            "legal_regulatory": 0.1, "product_innovation": 0.1, "capital_shareholder_returns": 0.2,
+            "labor_human_capital": 0.1, "market_analyst_sentiment": 0.1, "partnerships_business_dev": 0.1,
+        },
+        model_name="test-model",
+    )
+    conn.commit()
+
+    assert db.fetch_pending_category_articles(conn) == []

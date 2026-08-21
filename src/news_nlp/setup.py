@@ -11,9 +11,9 @@ skips files that are already cached.
 from huggingface_hub import snapshot_download
 from transformers import AutoConfig
 
-from .pipeline import SENTIMENT_MODEL, NER_MODEL, SUMMARY_MODEL
+from .pipeline import SENTIMENT_MODEL, NER_MODEL, CATEGORY_MODEL, SUMMARY_MODEL
 
-MODELS = (SENTIMENT_MODEL, NER_MODEL, SUMMARY_MODEL)
+MODELS = (SENTIMENT_MODEL, NER_MODEL, CATEGORY_MODEL, SUMMARY_MODEL)
 
 
 def download_models():
