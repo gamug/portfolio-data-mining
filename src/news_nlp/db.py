@@ -1,8 +1,9 @@
 """SQLite access layer: schema creation + read/write helpers for the NLP pipeline.
 
-Reads from the existing `articles` table and writes to two new results tables,
-`article_sentiment` and `article_entities`, both keyed by article_id. Also
-provides read-only query helpers backing the FastAPI query endpoints.
+Reads from the existing `articles` table and writes to three results tables --
+`article_sentiment`, `article_entities`, and `article_category` -- each keyed
+by article_id. Also provides read-only query helpers backing the FastAPI
+query endpoints.
 """
 import os
 import sqlite3
@@ -75,6 +76,28 @@ CREATE TABLE IF NOT EXISTS sector_summary (
     processed_at      TEXT NOT NULL,
     UNIQUE (gics_sector, gics_sub_industry, week_start)
 );
+
+-- One row per article: the winning category (or 'other') plus the full
+-- 9-way NLI score distribution, so low-confidence 'other' picks are
+-- auditable and CATEGORY_CONFIDENCE_THRESHOLD can be retuned later without
+-- reprocessing. See docs/category-taxonomy.md for what each column means
+-- and where the taxonomy came from.
+CREATE TABLE IF NOT EXISTS article_category (
+    article_id INTEGER PRIMARY KEY REFERENCES articles(id),
+    label TEXT NOT NULL,   -- winning category slug, or 'other'
+    score REAL NOT NULL,   -- winning slug's NLI entailment probability (pre-threshold)
+    earnings_performance REAL NOT NULL,
+    mergers_acquisitions REAL NOT NULL,
+    leadership_governance REAL NOT NULL,
+    legal_regulatory REAL NOT NULL,
+    product_innovation REAL NOT NULL,
+    capital_shareholder_returns REAL NOT NULL,
+    labor_human_capital REAL NOT NULL,
+    market_analyst_sentiment REAL NOT NULL,
+    partnerships_business_dev REAL NOT NULL,
+    model_name TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+);
 """
 
 
@@ -121,6 +144,27 @@ def fetch_pending_articles(conn: sqlite3.Connection, table: str, limit: int | No
     return conn.execute(sql).fetchall()
 
 
+def fetch_pending_category_articles(conn: sqlite3.Connection, limit: int | None = None):
+    """Return (id, title, body_text) rows from `articles` not yet present in
+    article_category, same eligibility filter as fetch_pending_articles. A
+    dedicated query (not a widened fetch_pending_articles) since that
+    function's (id, body_text) two-tuple shape is unpacked directly at the
+    sentiment/NER call sites -- widening it would break those."""
+    sql = """
+        SELECT a.id, a.title, a.body_text
+        FROM articles a
+        LEFT JOIN article_category r ON r.article_id = a.id
+        WHERE r.article_id IS NULL
+          AND a.fetch_status = 'ok'
+          AND a.body_text IS NOT NULL
+          AND TRIM(a.body_text) != ''
+        ORDER BY a.id
+    """
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return conn.execute(sql).fetchall()
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -132,6 +176,30 @@ def write_sentiment(conn: sqlite3.Connection, article_id: int, label: str, score
            (article_id, label, score, positive, negative, neutral, model_name, processed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (article_id, label, score, positive, negative, neutral, model_name, now_iso()),
+    )
+
+
+def write_category(conn: sqlite3.Connection, article_id: int, label: str, score: float,
+                    scores: dict[str, float], model_name: str) -> None:
+    """`scores` must have one entry per src.news_nlp.categories.CATEGORY_SLUGS
+    slug (the full 9-way distribution) -- `label`/`score` are the winning
+    slug (or 'other') and its probability, kept separately from the raw
+    distribution so a human correction (see corrections.update_category) can
+    change the winner without touching the audit trail."""
+    conn.execute(
+        """INSERT OR REPLACE INTO article_category
+           (article_id, label, score, earnings_performance, mergers_acquisitions,
+            leadership_governance, legal_regulatory, product_innovation,
+            capital_shareholder_returns, labor_human_capital, market_analyst_sentiment,
+            partnerships_business_dev, model_name, processed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (article_id, label, score,
+         scores["earnings_performance"], scores["mergers_acquisitions"],
+         scores["leadership_governance"], scores["legal_regulatory"],
+         scores["product_innovation"], scores["capital_shareholder_returns"],
+         scores["labor_human_capital"], scores["market_analyst_sentiment"],
+         scores["partnerships_business_dev"],
+         model_name, now_iso()),
     )
 
 
@@ -320,14 +388,17 @@ _SENTIMENT_STATS_GROUP_EXPR = {
 
 
 def list_articles(conn: sqlite3.Connection, company: str | None = None, ticker: str | None = None,
-                   sentiment: str | None = None, date_from: str | None = None, date_to: str | None = None,
+                   sentiment: str | None = None, category: str | None = None,
+                   date_from: str | None = None, date_to: str | None = None,
                    limit: int = 50, offset: int = 0) -> list[dict]:
     sql = """
         SELECT a.id, a.company, a.ticker, a.title, a.pub_date,
                s.label AS sentiment_label, s.score AS sentiment_score,
+               c.label AS category_label,
                (SELECT COUNT(*) FROM article_entities e WHERE e.article_id = a.id) AS entity_count
         FROM articles a
         LEFT JOIN article_sentiment s ON s.article_id = a.id
+        LEFT JOIN article_category c ON c.article_id = a.id
         WHERE 1=1
     """
     params = []
@@ -340,6 +411,9 @@ def list_articles(conn: sqlite3.Connection, company: str | None = None, ticker: 
     if sentiment:
         sql += " AND s.label = ?"
         params.append(sentiment)
+    if category:
+        sql += " AND c.label = ?"
+        params.append(category)
     if date_from:
         sql += " AND a.pub_date >= ?"
         params.append(date_from)
@@ -378,11 +452,20 @@ def get_article_detail(conn: sqlite3.Connection, article_id: int) -> dict | None
         (article_id,),
     ).fetchone()
 
+    category_row = conn.execute(
+        """SELECT label, score, earnings_performance, mergers_acquisitions, leadership_governance,
+                  legal_regulatory, product_innovation, capital_shareholder_returns,
+                  labor_human_capital, market_analyst_sentiment, partnerships_business_dev, model_name
+           FROM article_category WHERE article_id = ?""",
+        (article_id,),
+    ).fetchone()
+
     return {
         **dict(article),
         "sentiment": dict(sentiment_row) if sentiment_row else None,
         "entities": [dict(r) for r in entity_rows],
         "summary": dict(summary_row) if summary_row else None,
+        "category": dict(category_row) if category_row else None,
     }
 
 
@@ -432,4 +515,30 @@ def entity_stats(conn: sqlite3.Connection, company: str | None = None, entity_ty
         params.append(entity_type)
     sql += " GROUP BY e.text, e.entity_type ORDER BY count DESC LIMIT ?"
     params.append(top)
+    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def category_stats(conn: sqlite3.Connection, company: str | None = None,
+                    date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+    """Per-label article counts. Unlike sentiment_stats' fixed 3-way pivot
+    (justified there by sentiment's permanently-fixed 3-class contract), 10
+    label values read better as label/count rows -- same shape as
+    entity_stats."""
+    sql = """
+        SELECT c.label, COUNT(*) AS count
+        FROM article_category c
+        JOIN articles a ON a.id = c.article_id
+        WHERE 1=1
+    """
+    params = []
+    if company:
+        sql += " AND a.company = ?"
+        params.append(company)
+    if date_from:
+        sql += " AND a.pub_date >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND a.pub_date <= ?"
+        params.append(date_to)
+    sql += " GROUP BY c.label ORDER BY count DESC"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]

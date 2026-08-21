@@ -18,3 +18,4 @@ def test_download_models_fetches_every_model_and_verifies_config(monkeypatch):
 
     assert snapshot_calls == list(setup.MODELS)
     assert config_calls == list(setup.MODELS)
+    assert setup.CATEGORY_MODEL in setup.MODELS
