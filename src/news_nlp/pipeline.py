@@ -46,6 +46,13 @@ CATEGORY_CONFIDENCE_THRESHOLD = 0.4
 # to leave headroom for the hypothesis text plus special tokens within the
 # model's 512-token cap.
 CATEGORY_PREMISE_MAX_TOKENS = 460
+# Articles classified per forward pass, not just labels-per-article: each
+# article already batches its own 9 (premise, hypothesis) pairs in one call,
+# but 9 rows is too small a batch to keep a GPU busy. Grouping
+# CATEGORY_BATCH_SIZE articles' pairs into one call (8 * 9 = 72 rows) gets
+# real throughput out of the GPU without materially raising peak VRAM --
+# still one model on the card at a time, just a wider batch through it.
+CATEGORY_BATCH_SIZE = 8
 
 # BART-large-cnn's own cap is 1024 tokens; 1000 leaves headroom for the
 # BOS/EOS tokens the tokenizer adds on top of chunk_text's count.
@@ -237,32 +244,52 @@ def run_category_stage(conn, limit=None, on_progress=None):
     entailment_id = next(v for k, v in model.config.label2id.items() if k.lower() == "entailment")
 
     hypotheses = [f"This example is about {phrase}." for _, _, phrase in CATEGORY_LABELS]
+    n_labels = len(hypotheses)
 
-    for idx, (article_id, title, body_text) in enumerate(tqdm(rows, desc="category"), start=1):
-        # Title + lead chunk of body, not full-article chunking: each label
-        # needs its own (premise, hypothesis) forward pass, so chunking the
-        # whole article the way sentiment/NER do would cost 9x per chunk --
-        # unaffordable for a stage that now runs on every article. News is
-        # inverted-pyramid, so the opening sentences almost always establish
-        # the dominant topic.
-        chunks = chunk_text(f"{title}. {body_text}", tokenizer, max_tokens=CATEGORY_PREMISE_MAX_TOKENS)
-        premise = chunks[0].text if chunks else title
+    idx = 0
+    with tqdm(total=total, desc="category") as pbar:
+        for batch_start in range(0, total, CATEGORY_BATCH_SIZE):
+            batch_rows = rows[batch_start:batch_start + CATEGORY_BATCH_SIZE]
 
-        inputs = tokenizer(
-            [premise] * len(hypotheses), hypotheses,
-            return_tensors="pt", truncation="only_first", padding=True, max_length=512,
-        ).to(DEVICE)
-        with torch.no_grad():
-            logits = model(**inputs).logits
+            # Title + lead chunk of body, not full-article chunking: each
+            # label needs its own (premise, hypothesis) forward pass, so
+            # chunking the whole article the way sentiment/NER do would cost
+            # 9x per chunk -- unaffordable for a stage that now runs on every
+            # article. News is inverted-pyramid, so the opening sentences
+            # almost always establish the dominant topic.
+            premises = []
+            for article_id, title, body_text in batch_rows:
+                chunks = chunk_text(f"{title}. {body_text}", tokenizer, max_tokens=CATEGORY_PREMISE_MAX_TOKENS)
+                premises.append(chunks[0].text if chunks else title)
 
-        entail_logits = logits[:, entailment_id].tolist()
-        label, score, scores = classify_category_scores(entail_logits)
+            # Flatten to one (premise, hypothesis) pair per label per article
+            # in the batch, so one forward pass classifies every article in
+            # `batch_rows` at once -- the whole point of batching across
+            # articles instead of just across an article's own 9 labels.
+            batch_premises = [p for p in premises for _ in range(n_labels)]
+            batch_hypotheses = hypotheses * len(premises)
 
-        db.write_category(conn, article_id, label=label, score=score, scores=scores, model_name=CATEGORY_MODEL)
-        conn.commit()
+            inputs = tokenizer(
+                batch_premises, batch_hypotheses,
+                return_tensors="pt", truncation="only_first", padding=True, max_length=512,
+            ).to(DEVICE)
+            with torch.no_grad():
+                logits = model(**inputs).logits
 
-        if on_progress:
-            on_progress("category", idx, total)
+            # reshape, not view: the entailment column is a strided slice of
+            # `logits`, not contiguous, and view() requires contiguity.
+            entail_logits = logits[:, entailment_id].reshape(len(premises), n_labels)
+
+            for (article_id, _, _), article_logits in zip(batch_rows, entail_logits):
+                label, score, scores = classify_category_scores(article_logits.tolist())
+                db.write_category(conn, article_id, label=label, score=score, scores=scores, model_name=CATEGORY_MODEL)
+
+                idx += 1
+                pbar.update(1)
+                if on_progress:
+                    on_progress("category", idx, total)
+
+            conn.commit()
 
     del model, tokenizer
     free_gpu()
