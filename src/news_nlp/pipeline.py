@@ -33,6 +33,35 @@ SUMMARY_MODEL = "sshleifer/distilbart-cnn-12-6"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+def _warn_if_cpu() -> None:
+    """Print a hard-to-miss banner when DEVICE resolved to CPU. Each stage's
+    own "=== ... on {DEVICE} ===" banner already says so, but that's easy to
+    miss in the moment -- the usual symptom is just "the pipeline seems to be
+    hanging", discovered hours into a run, not a line read at the top. Called
+    once from run_pipeline() (not at import time) so importing this module
+    without running it stays silent.
+
+    A CPU fallback here isn't a driver/GPU problem -- torch.cuda.is_available()
+    is False whenever the installed torch build has no CUDA support compiled
+    in at all, which is what a plain `pip install torch` (or a transitive
+    dependency pulling it in) gives you. The fix is reinstalling torch from
+    the CUDA-specific index documented in requirements.txt, not anything
+    driver-side.
+    """
+    if DEVICE.type == "cpu":
+        print(
+            "\n" + "!" * 78 +
+            "\n! WARNING: CUDA is not available -- this run will use the CPU.\n"
+            "! Sentiment/NER/category/summarization models are dramatically slower\n"
+            "! on CPU. If this machine has an NVIDIA GPU, torch is very likely\n"
+            "! installed as the plain CPU-only wheel instead of a CUDA build --\n"
+            "! reinstall it with:\n"
+            "!     .venv\\Scripts\\python.exe -m pip install torch "
+            "--index-url https://download.pytorch.org/whl/cu124\n" +
+            "!" * 78 + "\n"
+        )
+
 # 9 mutually-exclusive labels via softmax over entailment logits gives a
 # uniform-chance baseline of ~0.11; requiring the winner to clear 0.4
 # (~3.6x baseline) routes genuinely ambiguous/generic articles to "other"
@@ -407,6 +436,7 @@ def run_sector_summary_stage(conn, limit=None, on_progress=None):
 
 
 def run_pipeline(limit=None, summarize=False, on_progress=None):
+    _warn_if_cpu()
     conn = db.connect()
     db.init_schema(conn)
     try:

@@ -34,3 +34,35 @@ def test_run_pipeline_runs_summary_stages_when_summarize_true(monkeypatch):
     pipeline.run_pipeline(summarize=True)
 
     assert calls == ["sentiment", "ner", "category", "company_summary", "sector_summary"]
+
+
+# --- _warn_if_cpu -------------------------------------------------------
+
+
+def test_warn_if_cpu_prints_banner_when_device_is_cpu(monkeypatch, capsys):
+    monkeypatch.setattr(pipeline, "DEVICE", pipeline.torch.device("cpu"))
+
+    pipeline._warn_if_cpu()
+
+    out = capsys.readouterr().out
+    assert "CUDA is not available" in out
+    assert "cu124" in out
+
+
+def test_warn_if_cpu_silent_when_device_is_cuda(monkeypatch, capsys):
+    monkeypatch.setattr(pipeline, "DEVICE", pipeline.torch.device("cuda"))
+
+    pipeline._warn_if_cpu()
+
+    assert capsys.readouterr().out == ""
+
+
+def test_run_pipeline_warns_once_on_cpu(monkeypatch, capsys):
+    calls = []
+    _stub_out_stages(monkeypatch, calls)
+    monkeypatch.setattr(pipeline, "DEVICE", pipeline.torch.device("cpu"))
+
+    pipeline.run_pipeline()
+
+    out = capsys.readouterr().out
+    assert out.count("CUDA is not available") == 1
