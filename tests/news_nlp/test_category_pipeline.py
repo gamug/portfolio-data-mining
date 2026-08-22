@@ -110,6 +110,76 @@ def test_run_category_stage_writes_winning_label_and_full_distribution(conn, mon
         assert slug in detail["category"]
 
 
+class BatchAwareTokenizer:
+    """Like WordCountTokenizer, but the batch encoding it returns carries how
+    many (premise, hypothesis) pairs it was actually given -- lets the fake
+    model below assert it received every article's pairs in one call."""
+
+    def encode(self, text, add_special_tokens=False):
+        return text.split()
+
+    def __call__(self, premises, hypotheses, **kwargs):
+        assert len(premises) == len(hypotheses)
+        return FakeBatchEncoding({"n_pairs": len(premises)})
+
+
+class FakeBatchAwareCategoryModel:
+    """entail_matrix: one 9-length entailment-logit list per article, in
+    fetch order. Flattened once; each call consumes exactly as many entries
+    as the pair count it's told about, so a real cross-article batch (one
+    call covering several articles) gets the right slice for each of them,
+    and call_count proves how many forward passes it actually took."""
+
+    def __init__(self, entail_matrix):
+        flat = [v for row in entail_matrix for v in row]
+        self._flat = torch.tensor(flat)
+        self._consumed = 0
+        self.call_count = 0
+        self.config = type("Config", (), {"label2id": {"contradiction": 0, "neutral": 1, "entailment": 2}})()
+
+    def to(self, device):
+        return self
+
+    def eval(self):
+        return self
+
+    def __call__(self, **kwargs):
+        self.call_count += 1
+        n_pairs = kwargs["n_pairs"]
+        entail = self._flat[self._consumed:self._consumed + n_pairs]
+        self._consumed += n_pairs
+        logits = torch.zeros(n_pairs, 3)
+        logits[:, 2] = entail
+        return type("Output", (), {"logits": logits})()
+
+
+def test_run_category_stage_batches_multiple_articles_in_one_forward_pass(conn, monkeypatch):
+    seed_article(conn, id=1, title="Deal News", body_text="Company X announced a merger today.")
+    seed_article(conn, id=2, title="Earnings Beat", body_text="Company Y reported record quarterly earnings.")
+    seed_article(conn, id=3, title="Roundup", body_text="Markets were mixed today across sectors.")
+    conn.commit()
+
+    entail_matrix = [[0.0] * 9 for _ in range(3)]
+    entail_matrix[0][1] = 5.0  # article 1 -> mergers_acquisitions
+    entail_matrix[1][0] = 5.0  # article 2 -> earnings_performance
+    # article 3 left uniform -> falls back to "other"
+
+    monkeypatch.setattr(pipeline.AutoTokenizer, "from_pretrained", lambda *_a, **_k: BatchAwareTokenizer())
+    fake_model = FakeBatchAwareCategoryModel(entail_matrix)
+    monkeypatch.setattr(pipeline.AutoModelForSequenceClassification, "from_pretrained", lambda *_a, **_k: fake_model)
+
+    assert pipeline.CATEGORY_BATCH_SIZE >= 3, "test assumes all 3 seeded articles land in a single batch"
+    pipeline.run_category_stage(conn)
+
+    # All 3 articles fit under CATEGORY_BATCH_SIZE, so this must be exactly
+    # one forward pass covering all of them, not one call per article.
+    assert fake_model.call_count == 1
+
+    assert db.get_article_detail(conn, 1)["category"]["label"] == "mergers_acquisitions"
+    assert db.get_article_detail(conn, 2)["category"]["label"] == "earnings_performance"
+    assert db.get_article_detail(conn, 3)["category"]["label"] == "other"
+
+
 def test_run_category_stage_assigns_other_below_threshold(conn, monkeypatch):
     seed_article(conn, id=1, title="Roundup", body_text="Markets were mixed today across sectors.")
     conn.commit()
