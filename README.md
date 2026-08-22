@@ -81,37 +81,53 @@ apps).
 
 ## Setup
 
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) — a single `pyproject.toml` +
+`uv.lock` replace the old `requirements.txt`. `torch` isn't declared as a bare/unbounded
+dependency: it's pinned to the `cu124` wheel index in `[tool.uv.sources]`/`[[tool.uv.index]]`
+in `pyproject.toml`, the same CUDA build the project always used, so `uv sync` alone
+reproduces it — no separate manual `pip install torch --index-url ...` step needed anymore.
+
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+uv sync   # creates .venv (Python 3.11, pinned via .python-version) and installs everything,
+          # including the dev tools (pytest, ruff, mypy, pre-commit) from the dev dependency group
 
-pip install -r requirements.txt
-# news_nlp only — not in requirements.txt because the wheel depends on your CUDA version:
-.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu124
-
-copy .env.example .env
+cp .env.example .env
 # then fill in FINNHUB_API_KEY, NAME, EMAIL (see .env.example for what each is for)
+
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 ```
 
 Run any service from the repo root, e.g.:
 
 ```bash
-.venv\Scripts\python.exe apps\pricing_api.py
+uv run apps/pricing_api.py
+```
+
+### Code quality
+
+`ruff` and `mypy` config live under `.code_quality/` (`ruff.toml`, `mypy.ini`) rather than
+inline in `pyproject.toml`; a root-level `ruff.toml` with `extend = ".code_quality/ruff.toml"`
+lets bare `ruff` invocations (editor integrations, `uv run ruff check .`) resolve the same
+settings without needing `--config` on every call. `.pre-commit-config.yaml` runs `ruff-check`,
+`ruff-format`, `mypy`, and `commitizen` on every commit once hooks are installed (see above).
+
+```bash
+uv run ruff check .      # lint
+uv run ruff format .     # format
+uv run pre-commit run --all-files   # everything the git hook runs, on demand
 ```
 
 ## Testing
 
 ```bash
-.venv\Scripts\python.exe -m pytest
+uv run pytest
 ```
 
 Runs `tests/news_collector`, `tests/extractor`, and `tests/news_nlp` (the latter needs
-torch installed — see [docs/modules/news-nlp.md](docs/modules/news-nlp.md); it's often
-already present transitively, check `pip show torch` before assuming you need the extra
-step). `pricing`/`sec_edgar` don't have a test suite yet (`finhub` didn't have one
-either). Current status: 143/144 pass; one pre-existing Windows-only flake in
-`news_collector` unrelated to this consolidation — see
-[docs/modules/news-collector.md](docs/modules/news-collector.md).
+torch — see [docs/modules/news-nlp.md](docs/modules/news-nlp.md) — which `uv sync`
+installs automatically as a transitive `accelerate` dependency, pinned to the cu124 build
+per the Setup section above). `pricing`/`sec_edgar` don't have a test suite yet (`finhub`
+didn't have one either).
 
 ## What didn't come along
 
