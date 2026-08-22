@@ -33,12 +33,12 @@ cached in-process — same source `news_collector`/`extractor` use).
 
 ```bash
 # setup (uv manages the venv + lockfile from pyproject.toml/uv.lock; Python version
-# pinned via .python-version). torch isn't a bare/unbounded dependency - it comes in
-# transitively (accelerate requires it) and is pinned to the cu124 wheel index in
-# pyproject.toml's [tool.uv.sources]/[[tool.uv.index]], so `uv sync` alone reproduces
-# the same CUDA build the old manual `pip install torch --index-url .../cu124` step did.
+# pinned via .python-version). torch is a direct (not transitive) dependency, and is
+# pinned to the cu124 wheel index in pyproject.toml's [tool.uv.sources]/[[tool.uv.index]],
+# so `uv sync` alone reproduces the same CUDA build the old manual
+# `pip install torch --index-url .../cu124` step did.
 uv sync
-cp .env.example .env   # then fill in FINNHUB_API_KEY, NAME, EMAIL
+cp .env.example .env   # Windows Command Prompt: copy .env.example .env — then fill in FINNHUB_API_KEY, NAME, EMAIL
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 
 # run the full test suite (from repo root; pytest.ini sets pythonpath = src .)

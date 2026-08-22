@@ -59,10 +59,9 @@ dev = [
 [tool.uv]
 package = false
 
-# torch isn't listed directly under [project] dependencies - it comes in
-# transitively (accelerate requires it) - but `uv sync` still needs to know
-# which wheel to fetch. This pins it to the same cu124 build the old
-# `pip install torch --index-url https://download.pytorch.org/whl/cu124`
+# torch is listed directly under [project] dependencies, but `uv sync` still
+# needs to know which wheel to fetch. This pins it to the same cu124 build the
+# old `pip install torch --index-url https://download.pytorch.org/whl/cu124`
 # manual step used, so `uv sync`/`uv lock` alone reproduce it exactly.
 [tool.uv.sources]
 torch = { index = "pytorch-cu124" }

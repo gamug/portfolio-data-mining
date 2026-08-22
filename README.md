@@ -91,7 +91,7 @@ reproduces it — no separate manual `pip install torch --index-url ...` step ne
 uv sync   # creates .venv (Python 3.11, pinned via .python-version) and installs everything,
           # including the dev tools (pytest, ruff, mypy, pre-commit) from the dev dependency group
 
-cp .env.example .env
+cp .env.example .env   # Windows Command Prompt: copy .env.example .env
 # then fill in FINNHUB_API_KEY, NAME, EMAIL (see .env.example for what each is for)
 
 uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
