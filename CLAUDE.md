@@ -32,38 +32,45 @@ cached in-process — same source `news_collector`/`extractor` use).
 ## Commands
 
 ```bash
-# setup
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-# news_nlp only (CUDA-version-specific, not in requirements.txt):
-.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu124
-copy .env.example .env   # then fill in FINNHUB_API_KEY, NAME, EMAIL
+# setup (uv manages the venv + lockfile from pyproject.toml/uv.lock; Python version
+# pinned via .python-version). torch is a direct (not transitive) dependency, and is
+# pinned to the cu124 wheel index in pyproject.toml's [tool.uv.sources]/[[tool.uv.index]],
+# so `uv sync` alone reproduces the same CUDA build the old manual
+# `pip install torch --index-url .../cu124` step did.
+uv sync
+cp .env.example .env   # Windows Command Prompt: copy .env.example .env — then fill in FINNHUB_API_KEY, NAME, EMAIL
+uv run pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
 
 # run the full test suite (from repo root; pytest.ini sets pythonpath = src .)
-.venv\Scripts\python.exe -m pytest
+uv run pytest
 
 # run one module's tests
-.venv\Scripts\python.exe -m pytest tests/news_collector -q
-.venv\Scripts\python.exe -m pytest tests/extractor -q
-.venv\Scripts\python.exe -m pytest tests/news_nlp -q      # needs torch installed
+uv run pytest tests/news_collector -q
+uv run pytest tests/extractor -q
+uv run pytest tests/news_nlp -q      # needs torch, installed automatically by `uv sync`
 
 # run a single test
-.venv\Scripts\python.exe -m pytest tests/extractor/test_pipeline.py::test_name -v
+uv run pytest tests/extractor/test_pipeline.py::test_name -v
 
 # run a service as an API (FastAPI/uvicorn)
-.venv\Scripts\python.exe apps\pricing_api.py       # -> :8004/docs
-.venv\Scripts\python.exe apps\gateway.py           # all 5 mounted at :8000 (demo only)
+uv run apps/pricing_api.py       # -> :8004/docs
+uv run apps/gateway.py           # all 5 mounted at :8000 (demo only)
 
 # run a service as a direct batch job (no server)
-.venv\Scripts\python.exe cli\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
-.venv\Scripts\python.exe cli\<service>_cli.py --help   # full subcommand list per service
+uv run cli/pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
+uv run cli/<service>_cli.py --help   # full subcommand list per service
+
+# lint / format / type-check (config lives under .code_quality/, not pyproject.toml;
+# root ruff.toml `extend`s .code_quality/ruff.toml so bare `ruff` invocations resolve it too)
+uv run ruff check .
+uv run ruff format .
+uv run pre-commit run --all-files   # everything .pre-commit-config.yaml wires up on commit
 ```
 
-`pricing`/`sec_edgar` have no test suite (`finhub` never had one either). Current baseline:
-143/144 passing repo-wide — one pre-existing Windows-only flake in
-`tests/news_collector` (`test_enqueue_inserts_at_most_len_input`, a hypothesis property
-test racing a temp-SQLite-file cleanup against an open connection), not a logic bug.
+`pricing`/`sec_edgar` have no test suite (`finhub` never had one either). Baseline
+includes one pre-existing Windows-only flake in `tests/news_collector`
+(`test_enqueue_inserts_at_most_len_input`, a hypothesis property test racing a
+temp-SQLite-file cleanup against an open connection), not a logic bug.
 
 ## Architecture
 

@@ -1,0 +1,5 @@
+# Root pointer so bare `ruff`/`uvx ruff` invocations and editor integrations
+# resolve settings without needing `--config` on the command line every time.
+# .code_quality/ruff.toml is the actual source of truth (also what
+# .pre-commit-config.yaml points ruff-pre-commit at explicitly).
+extend = ".code_quality/ruff.toml"
