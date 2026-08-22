@@ -3,6 +3,7 @@
 .venv/
 venv/
 env/
+.venv-stale-windows-do-not-use/
 
 # --- Byte-compiled / caches --------------------------------------------
 __pycache__/
