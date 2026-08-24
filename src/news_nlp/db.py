@@ -23,10 +23,20 @@ load_dotenv()
 # an env var, not a hardcoded literal, so pointing this at a real connection
 # string later (e.g. a hosted Postgres/libSQL DSN) is a one-line env change,
 # not a code change. Falls back to the pre-existing default when unset.
+#
+# A relative value (the .env.example default, "data/urls.db") is resolved
+# against the project root rather than left relative to the process's CWD --
+# unlike the other DATABASE_URL call sites (extractor/, news_collector/),
+# this module gets imported by standalone CLI entrypoints
+# (`python -m news_nlp.setup`/`.pipeline`) that aren't guaranteed to be
+# launched from the repo root, so a CWD-relative path would silently point
+# at the wrong file depending on where the command was run from.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_db_path_env = os.environ.get("DATABASE_URL")
 DB_PATH = (
-    Path(os.environ["DATABASE_URL"])
-    if os.environ.get("DATABASE_URL")
-    else Path(__file__).resolve().parent.parent.parent / "data" / "urls.db"
+    (Path(_db_path_env) if Path(_db_path_env).is_absolute() else _PROJECT_ROOT / _db_path_env)
+    if _db_path_env
+    else _PROJECT_ROOT / "data" / "urls.db"
 )
 
 SCHEMA = """

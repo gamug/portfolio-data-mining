@@ -10,6 +10,32 @@
     },
     // Use 'forwardPorts' to make a list of ports inside the container available locally.
     // "forwardPorts": [],
+    // GPU passthrough for news_nlp's torch (pinned to cu124 wheels in pyproject.toml -
+    // those wheels already bundle the CUDA runtime, so the base image doesn't need to be
+    // CUDA-based; only the NVIDIA driver + devices need to reach the container).
+    // hostRequirements.gpu alone is enough for GitHub Codespaces / other cloud backends to
+    // pick GPU hardware, but on local Docker (esp. Windows 11 + WSL2 + Docker Desktop) the
+    // Dev Containers extension's auto-detection is unreliable, so runArgs --gpus=all is
+    // also set explicitly - this is the documented workaround
+    // (https://github.com/microsoft/vscode-remote-release/issues/9385). Trade-off: unlike
+    // hostRequirements alone, an explicit runArgs --gpus=all makes the container FAIL TO
+    // START on a machine with no NVIDIA Container Toolkit installed at all (not just "no
+    // GPU") - acceptable here since this devcontainer is only used on this project's own
+    // GPU-equipped WSL2 host; drop the runArgs entry if this ever needs to run on a
+    // CPU-only machine instead.
+    // Requires, on the HOST (not in this config): an NVIDIA driver, and either the NVIDIA
+    // Container Toolkit configured for Docker (`nvidia-ctk runtime configure
+    // --runtime=docker` + restarting Docker), or - on Windows/WSL2 with Docker Desktop -
+    // just "Use the WSL 2 based engine" plus GPU support enabled in Docker Desktop
+    // settings, backed by a WSL2-capable NVIDIA driver on the Windows side. After editing
+    // this file, do a full "Dev Containers: Rebuild Container" (not just reload) - GPU
+    // passthrough is only wired up at container creation.
+    "hostRequirements": {
+        "gpu": "optional"
+    },
+    "runArgs": [
+        "--gpus=all"
+    ],
     // Use 'postCreateCommand' to run commands after the container is created.
     "postCreateCommand": "uv sync || source .venv/bin/activate"
     // Configure tool-specific properties.
