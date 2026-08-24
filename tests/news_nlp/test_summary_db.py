@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import date
 
 from conftest import seed_article
 
@@ -163,7 +164,10 @@ def test_fetch_pending_sector_weeks_includes_closed_week(conn: sqlite3.Connectio
 
 
 def test_fetch_pending_sector_weeks_excludes_open_week(conn: sqlite3.Connection) -> None:
-    seed_article(conn, id=1, pub_date="2026-08-11T00:00:00Z")  # inside the still-open current week
+    # Today, not a hardcoded date -- the "current week" is only still open
+    # relative to whenever this test actually runs.
+    today = date.today().isoformat()
+    seed_article(conn, id=1, pub_date=f"{today}T00:00:00Z")  # inside the still-open current week
     seed_company_summary(conn, 1)
     conn.commit()
 
