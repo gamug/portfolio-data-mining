@@ -2,10 +2,14 @@
 live from Wikipedia's "List of S&P 500 companies" page. See CLAUDE.md for
 why this replaced the old data/sp500_sample.csv-based sector lookup.
 """
+
 import warnings
 
 import httpx
 from bs4 import BeautifulSoup
+
+# Constituents table columns used below: [0]=ticker [2]=GICS sector [3]=GICS sub-industry
+_MIN_CONSTITUENTS_COLUMNS = 4
 
 WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 WIKIPEDIA_HEADERS = {
@@ -34,7 +38,7 @@ def parse_gics_table(html: str) -> dict[str, dict[str, str]]:
     rows = table.find_all("tr")[1:]  # skip header row
     for row in rows:
         cells = row.find_all("td")
-        if len(cells) < 4:
+        if len(cells) < _MIN_CONSTITUENTS_COLUMNS:
             continue
         ticker = cells[0].get_text(strip=True).upper()
         if not ticker:
@@ -48,9 +52,11 @@ def parse_gics_table(html: str) -> dict[str, dict[str, str]]:
 
 async def fetch_wikipedia_sp500_html(client: httpx.AsyncClient) -> str:
     """Thin I/O wrapper: GET the Wikipedia S&P 500 constituents page."""
-    response = await client.get(WIKIPEDIA_SP500_URL, headers=WIKIPEDIA_HEADERS, follow_redirects=True)
+    response = await client.get(
+        WIKIPEDIA_SP500_URL, headers=WIKIPEDIA_HEADERS, follow_redirects=True
+    )
     response.raise_for_status()
-    return response.text
+    return str(response.text)
 
 
 async def load_gics_map(client: httpx.AsyncClient) -> dict[str, dict[str, str]]:
@@ -66,5 +72,7 @@ async def load_gics_map(client: httpx.AsyncClient) -> dict[str, dict[str, str]]:
         html = await fetch_wikipedia_sp500_html(client)
         return parse_gics_table(html)
     except (httpx.HTTPError, ValueError) as exc:
-        warnings.warn(f"Failed to load GICS sector/sub-industry map from Wikipedia: {exc}")
+        warnings.warn(
+            f"Failed to load GICS sector/sub-industry map from Wikipedia: {exc}", stacklevel=2
+        )
         return {}

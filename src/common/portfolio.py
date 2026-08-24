@@ -21,7 +21,6 @@ track"), which is why it lives in `common/` rather than either one.
 
 import functools
 import re
-from typing import Optional
 
 import httpx
 import pandas as pd
@@ -36,8 +35,14 @@ WIKIPEDIA_HEADERS = {
 }
 
 COLUMNS = [
-    "Symbol", "Security", "GICS Sector", "GICS Sub-Industry",
-    "Headquarters Location", "Date added", "CIK", "Founded",
+    "Symbol",
+    "Security",
+    "GICS Sector",
+    "GICS Sub-Industry",
+    "Headquarters Location",
+    "Date added",
+    "CIK",
+    "Founded",
 ]
 
 
@@ -68,13 +73,12 @@ def _parse_constituents_table(page_html: str) -> pd.DataFrame:
         # never legitimate content in any of these 8 columns, so strip it
         # rather than trust the raw scrape.
         values = [
-            re.sub(r"\s*\|\s*", "", c.get_text(strip=True)).strip()
-            for c in cells[: len(COLUMNS)]
+            re.sub(r"\s*\|\s*", "", c.get_text(strip=True)).strip() for c in cells[: len(COLUMNS)]
         ]
         if not values[0]:
             continue
         values[0] = values[0].upper()  # Symbol
-        records.append(dict(zip(COLUMNS, values)))
+        records.append(dict(zip(COLUMNS, values, strict=False)))
 
     if not records:
         raise ValueError(
@@ -106,15 +110,17 @@ def load_universe() -> pd.DataFrame:
     return _fetch_universe_from_wikipedia()
 
 
-def list_universe(sector: Optional[str] = None) -> list[dict]:
+def list_universe(sector: str | None = None) -> list[dict]:
     """Return the tracked universe as a list of row dicts, optionally filtered
     by GICS Sector (case-insensitive exact match)."""
     df = load_universe()
     if sector:
         df = df[df["GICS Sector"].str.lower() == sector.lower()]
-    return df.to_dict(orient="records")
+    rows: list[dict] = df.to_dict(orient="records")
+    return rows
 
-def resolve_symbol(query: str) -> Optional[dict]:
+
+def resolve_symbol(query: str) -> dict | None:
     """
     Resolve a ticker symbol OR company name (case-insensitive, partial match
     on name) to a single canonical universe row, or None if nothing matches.
@@ -126,11 +132,13 @@ def resolve_symbol(query: str) -> Optional[dict]:
 
     exact = df[df["Symbol"].str.upper() == q.upper()]
     if not exact.empty:
-        return exact.iloc[0].to_dict()
+        exact_row: dict = exact.iloc[0].to_dict()
+        return exact_row
 
     name_match = df[df["Security"].str.contains(q, case=False, na=False, regex=False)]
     if not name_match.empty:
-        return name_match.iloc[0].to_dict()
+        name_row: dict = name_match.iloc[0].to_dict()
+        return name_row
 
     return None
 

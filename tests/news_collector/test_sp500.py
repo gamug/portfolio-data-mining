@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from news_collector.models import Company
@@ -83,8 +84,8 @@ def test_parse_constituents_skips_short_rows() -> None:
     assert companies == [Company(ticker="MMM", name="3M", sector="Industrials")]
 
 
-async def test_fetch_sp500_companies_uses_fetch_text(monkeypatch) -> None:
-    async def fake_fetch_text(client, url, **kwargs):
+async def test_fetch_sp500_companies_uses_fetch_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_fetch_text(client: httpx.AsyncClient, url: str, **kwargs: object) -> str:
         assert "List_of_S" in url
         return _VALID_TABLE_HTML
 

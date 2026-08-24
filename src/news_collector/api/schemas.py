@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated
 
 from pydantic import BaseModel, Field
 
@@ -56,8 +55,12 @@ class RunAllRequest(BaseModel):
             "Ignored when tickers is omitted (Wikipedia already supplies full company names)."
         ),
     )
-    start_date: date | None = Field(default=None, description="Inclusive start date." + _DATE_DEFAULT_NOTE)
-    end_date: date | None = Field(default=None, description="Inclusive end date." + _DATE_DEFAULT_NOTE)
+    start_date: date | None = Field(
+        default=None, description="Inclusive start date." + _DATE_DEFAULT_NOTE
+    )
+    end_date: date | None = Field(
+        default=None, description="Inclusive end date." + _DATE_DEFAULT_NOTE
+    )
     domains: list[str] | None = Field(
         default=None,
         description="Subset of the 7 supported domains. None means all.",
@@ -124,7 +127,8 @@ class RunAllResponse(BaseModel):
     errors: list[str]
     elapsed_seconds: float
     skipped_pairs: int = Field(
-        default=0, description="(ticker, domain) pairs skipped because resume=True and already completed"
+        default=0,
+        description="(ticker, domain) pairs skipped because resume=True and already completed",
     )
 
 

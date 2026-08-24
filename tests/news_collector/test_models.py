@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 import pytest
-from datetime import date
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from news_collector.models import DateRange, Company, DiscoveryStats, PartialStats
-
+from news_collector.models import Company, DateRange, DiscoveryStats, PartialStats
 
 # ---------------------------------------------------------------------------
 # DateRange
@@ -35,7 +35,6 @@ def test_date_range_invalid() -> None:
 )
 @settings(max_examples=200)
 def test_date_range_contains_consistency(start: date, delta: int) -> None:
-    from datetime import timedelta
     end = start + timedelta(days=delta)
     dr = DateRange(start=start, end=end)
     mid = start + timedelta(days=delta // 2)

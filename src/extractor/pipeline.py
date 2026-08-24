@@ -4,6 +4,9 @@ See CLAUDE.md for the hybrid strategy this implements: httpx + trafilatura
 is the default path; Crawl4AI is only invoked as a fallback for URLs whose
 default-path result comes back thin/empty.
 """
+
+from http import HTTPStatus
+
 import httpx
 
 from extractor.parse import (
@@ -14,6 +17,7 @@ from extractor.parse import (
     is_thin_content,
     word_count,
 )
+from extractor.scheduler import DomainScheduler
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -41,7 +45,7 @@ def classify_and_build_article(
 
     title = jsonld["title"] or row.get("title")
 
-    if http_status is not None and http_status >= 400:
+    if http_status is not None and http_status >= HTTPStatus.BAD_REQUEST:
         fetch_status = "failed"
     elif is_probably_paywalled(html, domain):
         fetch_status = "paywalled"
@@ -82,7 +86,7 @@ async def fetch_html(client: httpx.AsyncClient, url: str) -> tuple[str, int]:
 
 async def process_one(
     client: httpx.AsyncClient,
-    scheduler,
+    scheduler: DomainScheduler,
     row: dict,
     gics_sector: str | None,
     gics_sub_industry: str | None,
@@ -99,14 +103,19 @@ async def process_one(
             html, status = await fetch_html(client, row["url"])
         except httpx.HTTPError:
             return classify_and_build_article(
-                row, "", http_status=599,
-                gics_sector=gics_sector, gics_sub_industry=gics_sub_industry,
+                row,
+                "",
+                http_status=599,
+                gics_sector=gics_sector,
+                gics_sub_industry=gics_sub_industry,
                 fetched_at=fetched_at,
             )
 
     return classify_and_build_article(
-        row, html, http_status=status,
-        gics_sector=gics_sector, gics_sub_industry=gics_sub_industry,
+        row,
+        html,
+        http_status=status,
+        gics_sector=gics_sector,
+        gics_sub_industry=gics_sub_industry,
         fetched_at=fetched_at,
     )
-

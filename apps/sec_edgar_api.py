@@ -15,7 +15,7 @@ Run:
 
 import os
 import sys
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -33,7 +33,7 @@ NAME = os.environ.get("NAME", "Your Name")
 EMAIL = os.environ.get("EMAIL", "your.email@example.com")
 
 
-class FilingForm(str, Enum):
+class FilingForm(StrEnum):
     ten_k = "10-K"
     ten_q = "10-Q"
     eight_k = "8-K"
@@ -53,38 +53,38 @@ edgar_agent = EdgarAgent(name=NAME, email=EMAIL)
 
 
 @app.get("/")
-def welcome():
+def welcome() -> RedirectResponse:
     """Redirect root URL to the interactive docs."""
     return RedirectResponse(url="/docs")
 
 
 @app.get("/edgar/company_info/{ticker}", tags=["Edgar"])
-def edgar_company_info(ticker: str):
+def edgar_company_info(ticker: str) -> dict:
     return edgar_agent.get_company_info(ticker)
 
 
 @app.get("/edgar/filings/{ticker}", tags=["Edgar"])
-def edgar_filings(ticker: str, form: FilingForm, limit: int = 5):
+def edgar_filings(ticker: str, form: FilingForm, limit: int = 5) -> dict:
     return edgar_agent.get_filings(ticker, form=form.value, limit=limit)
 
 
 @app.get("/edgar/years_available/{ticker}", tags=["Edgar"])
-def edgar_years_available(ticker: str, form: FilingForm):
+def edgar_years_available(ticker: str, form: FilingForm) -> dict:
     return edgar_agent.list_years_available(ticker, form=form.value)
 
 
 @app.get("/edgar/filing_by_year/{ticker}", tags=["Edgar"])
-def edgar_filing_by_year(ticker: str, form: FilingForm, year: int):
+def edgar_filing_by_year(ticker: str, form: FilingForm, year: int) -> dict:
     return edgar_agent.get_filing_by_year(ticker, form=form.value, year=year)
 
 
 @app.get("/edgar/latest_filing/{ticker}", tags=["Edgar"])
-def edgar_latest_filing(ticker: str, form: FilingForm):
+def edgar_latest_filing(ticker: str, form: FilingForm) -> dict:
     return edgar_agent.get_latest_filing(ticker, form=form.value)
 
 
 @app.get("/edgar/financials/{ticker}", tags=["Edgar"])
-def edgar_financials(ticker: str, form: FilingForm, year: int):
+def edgar_financials(ticker: str, form: FilingForm, year: int) -> JSONResponse:
     result = edgar_agent.get_financials(ticker, form=form.value, year=year)
     return JSONResponse(content=jsonable_encoder(result))
 
@@ -95,7 +95,7 @@ def edgar_search_filings(
     keyword: str,
     form: FilingForm,
     max_filings_to_search: int = 5,
-):
+) -> dict:
     return edgar_agent.search_filings(
         ticker,
         keyword=keyword,

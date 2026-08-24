@@ -5,23 +5,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import AsyncIterator
 
 import httpx
 
 from news_collector.connectors.base import BaseConnector, ConnectorConfig
 from news_collector.models import DateRange, DiscoveredURL, SitemapEntry
+from news_collector.utils.url import normalize_url
 
 log = logging.getLogger(__name__)
 
 # StockTwits article/post URL pattern
-_POST_RE = re.compile(
-    r"https?://(?:www\.)?stocktwits\.com/[a-zA-Z0-9_]+/message/\d+"
-)
+_POST_RE = re.compile(r"https?://(?:www\.)?stocktwits\.com/[a-zA-Z0-9_]+/message/\d+")
 # API endpoint for symbol stream
 _API_BASE = "https://api.stocktwits.com/api/2/streams/symbol/{ticker}.json"
-_MAX_PAGES = 30  # safeguard: 30 pages × 30 messages = 900 messages per ticker
+_MAX_PAGES = 30  # safeguard: 30 pages x 30 messages = 900 messages per ticker
 
 
 class StockTwitsConnector(BaseConnector):
@@ -47,9 +46,7 @@ class StockTwitsConnector(BaseConnector):
             client=client,
         )
 
-    def build_ddg_queries(
-        self, company: str, ticker: str, date_range: DateRange
-    ) -> list[str]:
+    def build_ddg_queries(self, company: str, ticker: str, date_range: DateRange) -> list[str]:
         return [
             f"site:stocktwits.com {ticker} {year}"
             for year in range(date_range.start.year, date_range.end.year + 1)
@@ -59,9 +56,7 @@ class StockTwitsConnector(BaseConnector):
         return
         yield
 
-    async def fetch_via_api(
-        self, ticker: str, date_range: DateRange
-    ) -> list[DiscoveredURL]:
+    async def fetch_via_api(self, ticker: str, date_range: DateRange) -> list[DiscoveredURL]:
         """
         Paginate through the public StockTwits stream for a ticker.
 
@@ -94,42 +89,10 @@ class StockTwitsConnector(BaseConnector):
             if not messages:
                 break
 
-            reached_before_range = False
-            for msg in messages:
-                created_at_str = msg.get("created_at", "")
-                pub_date = None
-                try:
-                    pub_dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
-                    pub_date = pub_dt.date()
-                except Exception:
-                    pass
-
-                if pub_date and pub_date < date_range.start:
-                    reached_before_range = True
-                    break
-
-                if pub_date and not date_range.contains(pub_date):
-                    continue
-
-                msg_id = msg.get("id")
-                user = msg.get("user", {}).get("username", "unknown")
-                msg_url = f"https://stocktwits.com/{user}/message/{msg_id}"
-
-                from news_collector.utils.url import normalize_url
-
-                results.append(
-                    DiscoveredURL(
-                        url=normalize_url(msg_url),
-                        domain="stocktwits.com",
-                        company="",  # filled by orchestrator
-                        ticker=ticker,
-                        source="api",
-                        discovered_at=datetime.utcnow(),
-                        pub_date=pub_date,
-                        title=msg.get("body", "")[:200] or None,
-                    )
-                )
-
+            page_results, reached_before_range = self._messages_to_urls(
+                messages, ticker, date_range
+            )
+            results.extend(page_results)
             if reached_before_range:
                 break
 
@@ -144,12 +107,52 @@ class StockTwitsConnector(BaseConnector):
         log.info("StockTwits API fetched %d messages for %s", len(results), ticker)
         return results
 
+    def _messages_to_urls(
+        self, messages: list[dict], ticker: str, date_range: DateRange
+    ) -> tuple[list[DiscoveredURL], bool]:
+        """Convert one page of StockTwits messages to DiscoveredURLs.
+
+        Returns (urls, reached_before_range) -- reached_before_range signals
+        the caller to stop paginating once a message predates date_range.start.
+        """
+        results: list[DiscoveredURL] = []
+        for msg in messages:
+            created_at_str = msg.get("created_at", "")
+            pub_date = None
+            try:
+                pub_dt = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                pub_date = pub_dt.date()
+            except Exception:
+                log.debug("Unparseable created_at %r, treating as undated", created_at_str)
+
+            if pub_date and pub_date < date_range.start:
+                return results, True
+
+            if pub_date and not date_range.contains(pub_date):
+                continue
+
+            msg_id = msg.get("id")
+            user = msg.get("user", {}).get("username", "unknown")
+            msg_url = f"https://stocktwits.com/{user}/message/{msg_id}"
+
+            results.append(
+                DiscoveredURL(
+                    url=normalize_url(msg_url),
+                    domain="stocktwits.com",
+                    company="",  # filled by orchestrator
+                    ticker=ticker,
+                    source="api",
+                    discovered_at=datetime.utcnow(),
+                    pub_date=pub_date,
+                    title=msg.get("body", "")[:200] or None,
+                )
+            )
+        return results, False
+
     def is_article_url(self, url: str) -> bool:
         return bool(_POST_RE.match(url))
 
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         # StockTwits messages are already ticker-specific from the API
         if ticker.lower() in url.lower():
             return True

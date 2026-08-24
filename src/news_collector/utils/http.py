@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import random
 from typing import Any
 
 import httpx
 from tenacity import (
+    before_sleep_log,
     retry,
     retry_if_exception,
     stop_after_attempt,
     wait_exponential,
     wait_random,
-    before_sleep_log,
 )
-import logging
 
 log = logging.getLogger(__name__)
 
@@ -31,15 +30,12 @@ _USER_AGENTS: list[str] = [
         "AppleWebKit/605.1.15 (KHTML, like Gecko) "
         "Version/17.4.1 Safari/605.1.15"
     ),
-    (
-        "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) "
-        "Gecko/20100101 Firefox/125.0"
-    ),
+    ("Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"),
 ]
 
 
 def random_user_agent() -> str:
-    return random.choice(_USER_AGENTS)
+    return random.choice(_USER_AGENTS)  # noqa: S311 - request variety, not crypto
 
 
 def build_client(
@@ -78,8 +74,7 @@ def make_retry_decorator(max_attempts: int = 5, base_wait: float = 2.0) -> Any:
     return retry(
         retry=retry_if_exception(_is_retryable),
         stop=stop_after_attempt(max_attempts),
-        wait=wait_exponential(multiplier=base_wait, min=base_wait, max=60.0)
-        + wait_random(0, 2),
+        wait=wait_exponential(multiplier=base_wait, min=base_wait, max=60.0) + wait_random(0, 2),
         before_sleep=before_sleep_log(log, logging.WARNING),
         reraise=True,
     )
@@ -101,6 +96,6 @@ async def fetch_text(
         if response.status_code in (403, 404, 410):
             response.raise_for_status()
         response.raise_for_status()
-        return response.text
+        return str(response.text)
 
-    return await _inner()
+    return str(await _inner())

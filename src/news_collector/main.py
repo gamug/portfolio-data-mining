@@ -24,7 +24,11 @@ from dotenv import load_dotenv
 
 from news_collector.config import default_end_date, default_start_date
 from news_collector.models import Company, DateRange
-from news_collector.utils.logging import setup_logging, get_logger
+from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
+from news_collector.sp500 import fetch_sp500_companies
+from news_collector.storage.queue import URLQueue
+from news_collector.utils.http import build_client
+from news_collector.utils.logging import get_logger, setup_logging
 
 # So `python -m news_collector.main ...` (which never goes through any
 # apps/*.py entrypoint) still picks up .env, e.g. DATABASE_URL below.
@@ -55,11 +59,6 @@ def _load_sp500_csv(path: str) -> list[Company]:
 
 
 async def cmd_discover(args: argparse.Namespace) -> None:
-    from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
-    from news_collector.sp500 import fetch_sp500_companies
-    from news_collector.storage.queue import URLQueue
-    from news_collector.utils.http import build_client
-
     log_path = setup_logging(args.log_level, log_dir=args.log_dir, run_name="discover")
     if log_path:
         log.info("Logging this run to %s", log_path)
@@ -85,8 +84,8 @@ async def cmd_discover(args: argparse.Namespace) -> None:
             log.info("No --tickers/--sp500 given - fetching the full S&P 500 list from Wikipedia")
             try:
                 companies = await fetch_sp500_companies(client)
-            except ValueError as exc:
-                log.error("Failed to fetch S&P 500 list from Wikipedia: %s", exc)
+            except ValueError:
+                log.exception("Failed to fetch S&P 500 list from Wikipedia")
                 sys.exit(1)
 
         connectors = build_connectors(client)
@@ -129,8 +128,6 @@ async def cmd_discover(args: argparse.Namespace) -> None:
 
 def cmd_stats(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
-    from news_collector.storage.queue import URLQueue
-
     queue = URLQueue(args.db)
     queue.initialize()
     stats = queue.stats()
@@ -139,8 +136,6 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 def cmd_export(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
-    from news_collector.storage.queue import URLQueue
-
     queue = URLQueue(args.db)
     queue.initialize()
     count = queue.export_pending_csv(args.output)
@@ -157,7 +152,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("DATABASE_URL", "data/urls.db"),
         help="SQLite database path (default: $DATABASE_URL if set, else data/urls.db)",
     )
-    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
     parser.add_argument(
         "--log-dir",
         default=".log",
@@ -173,7 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     # discover
     disc = sub.add_parser("discover", help="Run link discovery")
     disc.add_argument(
-        "--sp500", help="Path to S&P 500 CSV (ticker, name, sector) — offline alternative to Wikipedia"
+        "--sp500",
+        help="Path to S&P 500 CSV (ticker, name, sector) — offline alternative to Wikipedia",
     )
     disc.add_argument(
         "--tickers",
@@ -220,7 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     disc.add_argument("--export", help="Export pending URLs to CSV after discovery")
 
     # stats
-    stats_p = sub.add_parser("stats", help="Show queue statistics")
+    sub.add_parser("stats", help="Show queue statistics")
 
     # export
     exp = sub.add_parser("export", help="Export pending URLs to CSV")

@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Callable
+from collections.abc import Callable
 
 import httpx
 from fastapi import HTTPException
 
-from news_collector.api.schemas import DiscoverRequest, DiscoverResponse, DiscoveredURLOut, RunAllRequest
+from news_collector.api.schemas import (
+    DiscoveredURLOut,
+    DiscoverRequest,
+    DiscoverResponse,
+    RunAllRequest,
+)
 from news_collector.config import default_end_date, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
@@ -48,8 +53,8 @@ async def resolve_companies(
 
     names = req.company_names or []
     companies = []
-    for i, ticker in enumerate(req.tickers):
-        ticker = ticker.upper().strip()
+    for i, raw_ticker in enumerate(req.tickers):
+        ticker = raw_ticker.upper().strip()
         name = names[i].strip() if i < len(names) else ticker
         companies.append(Company(ticker=ticker, name=name))
     return companies
@@ -89,7 +94,9 @@ async def _discover_one_ticker(
     ddg_task = ddg_strategy.discover(company.name, company.ticker, date_range)
     sitemap_task = sitemap_strategy.discover(company.name, company.ticker, date_range)
 
-    ddg_result, sitemap_result = await asyncio.gather(ddg_task, sitemap_task, return_exceptions=True)
+    ddg_result, sitemap_result = await asyncio.gather(
+        ddg_task, sitemap_task, return_exceptions=True
+    )
 
     ddg_urls: list[DiscoveredURL] = []
     if isinstance(ddg_result, Exception):
@@ -178,7 +185,7 @@ async def run_domain_discovery(
     results = await asyncio.gather(*[_handle(c) for c in companies], return_exceptions=True)
 
     responses: list[DiscoverResponse] = []
-    for company, result in zip(companies, results):
+    for company, result in zip(companies, results, strict=False):
         if isinstance(result, Exception):
             log.error("Discovery failed for %s/%s: %s", company.ticker, domain, result)
             responses.append(

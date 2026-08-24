@@ -13,10 +13,10 @@ error. Test with a recent date range first to confirm your key/setup works.
 Docs: https://finnhub.io/docs/api/company-news
 """
 
-import time
 import csv
+import os
+import time
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
 
 import finnhub
 
@@ -24,7 +24,7 @@ import finnhub
 class FinnhubNewsFetcher:
     """Fetch and manage company news from the Finnhub API."""
 
-    def __init__(self, api_key: str, sleep_between_calls: float = 1.1):
+    def __init__(self, api_key: str, sleep_between_calls: float = 1.1) -> None:
         """
         Parameters
         ----------
@@ -36,37 +36,39 @@ class FinnhubNewsFetcher:
         """
         self.client = finnhub.Client(api_key=api_key)
         self.sleep_between_calls = sleep_between_calls
-        self.articles: List[Dict] = []  # accumulated results live here
+        self.articles: list[dict] = []  # accumulated results live here
 
     # ------------------------------------------------------------------
     # Core fetching
     # ------------------------------------------------------------------
-    def fetch_ticker_news(self, ticker: str, from_date: str, to_date: str) -> List[Dict]:
+    def fetch_ticker_news(self, ticker: str, from_date: str, to_date: str) -> list[dict]:
         """
         Fetch news for a single ticker between from_date and to_date
         (format YYYY-MM-DD). Returns a list of raw article dicts from Finnhub.
         """
         try:
-            return self.client.company_news(ticker, _from=from_date, to=to_date)
-        except finnhub.exceptions.FinnhubAPIException as e: # type: ignore[union-attr]
+            news: list[dict] = self.client.company_news(ticker, _from=from_date, to=to_date)
+        except finnhub.exceptions.FinnhubAPIException as e:  # type: ignore[union-attr]
             print(f"[ERROR] {ticker}: {e}")
             return []
         except Exception as e:
             print(f"[UNEXPECTED ERROR] {ticker}: {e}")
             return []
+        else:
+            return news
 
     def fetch_many(
         self,
-        tickers: List[str],
+        tickers: list[str],
         from_date: str,
         to_date: str,
         verbose: bool = True,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Fetch news for multiple tickers over the same date range.
         Appends normalized rows to self.articles and also returns them.
         """
-        new_rows = []
+        new_rows: list[dict] = []
 
         for ticker in tickers:
             if verbose:
@@ -87,7 +89,7 @@ class FinnhubNewsFetcher:
         self.articles.extend(new_rows)
         return new_rows
 
-    def fetch_general_news(self, category: str = "general", min_id: int = 0) -> List[Dict]:
+    def fetch_general_news(self, category: str = "general", min_id: int = 0) -> list[dict]:
         """
         General market news (not ticker-specific), via Finnhub's /news
         endpoint.
@@ -111,7 +113,7 @@ class FinnhubNewsFetcher:
             return []
         return [self._normalize_article(None, a) for a in raw]
 
-    def fetch_news_sentiment(self, ticker: str) -> Dict:
+    def fetch_news_sentiment(self, ticker: str) -> dict:
         """
         Finnhub's news-sentiment score for a ticker (buzz + bullish/bearish
         split). A cheap sentiment signal available today, ahead of a future
@@ -128,22 +130,23 @@ class FinnhubNewsFetcher:
                     "success": False,
                     "error": f"No sentiment data for '{ticker}' (may require a paid Finnhub plan).",
                 }
-            return {"success": True, "data": data}
         except Exception as e:
             return {"success": False, "error": f"Failed to fetch sentiment for '{ticker}': {e}"}
+        else:
+            return {"success": True, "data": data}
 
     # ------------------------------------------------------------------
     # Rolling date-window fetching
     # ------------------------------------------------------------------
     def fetch_rolling_range(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: str,
         end_date: str,
         window_days: int = 7,
         verbose: bool = True,
-        checkpoint_csv: Optional[str] = None,
-    ) -> List[Dict]:
+        checkpoint_csv: str | None = None,
+    ) -> list[dict]:
         """
         Fetch news for a long date range by automatically chunking it into
         smaller windows (e.g., 7-day chunks) and looping fetch_many() over
@@ -202,10 +205,8 @@ class FinnhubNewsFetcher:
 
         return all_new_rows
 
-    def _append_to_csv(self, rows: List[Dict], filepath: str) -> None:
+    def _append_to_csv(self, rows: list[dict], filepath: str) -> None:
         """Append rows to a CSV, writing the header only if the file is new."""
-        import os
-
         fieldnames = ["ticker", "datetime", "headline", "summary", "source", "url", "category"]
         file_exists = os.path.isfile(filepath)
 
@@ -219,7 +220,7 @@ class FinnhubNewsFetcher:
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
-    def _normalize_article(ticker: Optional[str], article: Dict) -> Dict:
+    def _normalize_article(ticker: str | None, article: dict) -> dict:
         """Convert a raw Finnhub article dict into a flat, consistent row."""
         return {
             "ticker": ticker,
@@ -252,7 +253,7 @@ class FinnhubNewsFetcher:
 
         print(f"Saved {len(self.articles)} rows to {filepath}")
 
-    def to_list(self) -> List[Dict]:
+    def to_list(self) -> list[dict]:
         """Return accumulated articles as a list of dicts."""
         return self.articles
 

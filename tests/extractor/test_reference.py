@@ -21,7 +21,7 @@ CONSTITUENTS_HTML = """
 NO_TABLE_HTML = "<html><body><p>Page structure changed, no table here.</p></body></html>"
 
 
-def test_parse_gics_table_maps_ticker_to_sector_and_sub_industry():
+def test_parse_gics_table_maps_ticker_to_sector_and_sub_industry() -> None:
     result = parse_gics_table(CONSTITUENTS_HTML)
 
     assert result["MMM"] == {"sector": "Industrials", "sub_industry": "Industrial Conglomerates"}
@@ -29,13 +29,13 @@ def test_parse_gics_table_maps_ticker_to_sector_and_sub_industry():
     assert len(result) == 3
 
 
-def test_parse_gics_table_raises_value_error_when_constituents_table_missing():
+def test_parse_gics_table_raises_value_error_when_constituents_table_missing() -> None:
     with pytest.raises(ValueError):
         parse_gics_table(NO_TABLE_HTML)
 
 
-async def test_load_gics_map_returns_parsed_map_on_success():
-    def handler(request):
+async def test_load_gics_map_returns_parsed_map_on_success() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=CONSTITUENTS_HTML)
 
     transport = httpx.MockTransport(handler)
@@ -45,8 +45,8 @@ async def test_load_gics_map_returns_parsed_map_on_success():
     assert result["MMM"] == {"sector": "Industrials", "sub_industry": "Industrial Conglomerates"}
 
 
-async def test_load_gics_map_returns_empty_dict_on_network_error():
-    def handler(request):
+async def test_load_gics_map_returns_empty_dict_on_network_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom", request=request)
 
     transport = httpx.MockTransport(handler)
@@ -57,8 +57,8 @@ async def test_load_gics_map_returns_empty_dict_on_network_error():
     assert result == {}
 
 
-async def test_load_gics_map_returns_empty_dict_when_table_missing():
-    def handler(request):
+async def test_load_gics_map_returns_empty_dict_when_table_missing() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text=NO_TABLE_HTML)
 
     transport = httpx.MockTransport(handler)

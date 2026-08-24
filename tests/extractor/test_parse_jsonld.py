@@ -1,7 +1,7 @@
 from extractor.parse import extract_jsonld_article
 
 
-def test_extracts_headline_date_and_string_author_from_newsarticle_jsonld():
+def test_extracts_headline_date_and_string_author_from_newsarticle_jsonld() -> None:
     html = """
     <html><head>
     <script type="application/ld+json">
@@ -23,7 +23,7 @@ def test_extracts_headline_date_and_string_author_from_newsarticle_jsonld():
     assert result["author"] == "Zacks Equity Research"
 
 
-def test_extracts_author_name_from_object_and_from_graph_wrapper():
+def test_extracts_author_name_from_object_and_from_graph_wrapper() -> None:
     html = """
     <html><head>
     <script type="application/ld+json">
@@ -49,7 +49,7 @@ def test_extracts_author_name_from_object_and_from_graph_wrapper():
     assert result["author"] == "Jane Reporter"
 
 
-def test_falls_back_to_meta_tags_when_no_jsonld_present():
+def test_falls_back_to_meta_tags_when_no_jsonld_present() -> None:
     html = """
     <html><head>
     <meta property="og:title" content="Apple beats estimates" />
@@ -65,7 +65,7 @@ def test_falls_back_to_meta_tags_when_no_jsonld_present():
     assert result["pub_date"] == "2024-05-02T08:00:00Z"
 
 
-def test_malformed_jsonld_does_not_crash_and_falls_back_to_meta():
+def test_malformed_jsonld_does_not_crash_and_falls_back_to_meta() -> None:
     html = """
     <html><head>
     <script type="application/ld+json">{ not valid json </script>

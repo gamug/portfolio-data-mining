@@ -7,16 +7,20 @@ classification head, and saves the checkpoint to models/sec-bert-base-finer-ord/
 
 Run once, offline, before the batch pipeline. Not part of run_pipeline.py.
 """
-import numpy as np
-from datasets import load_dataset
-from transformers import (
-    AutoTokenizer,
-    AutoModelForTokenClassification,
-    DataCollatorForTokenClassification,
-    TrainingArguments,
-    Trainer,
-)
+
+from collections.abc import Callable
+from typing import Any
+
 import evaluate
+import numpy as np
+from datasets import Dataset, load_dataset
+from transformers import (
+    AutoModelForTokenClassification,
+    AutoTokenizer,
+    DataCollatorForTokenClassification,
+    Trainer,
+    TrainingArguments,
+)
 
 MODEL_NAME = "nlpaueb/sec-bert-base"
 OUTPUT_DIR = "models/sec-bert-base-finer-ord"
@@ -29,8 +33,12 @@ LABEL_LIST = ["O", "B-PER", "I-PER", "B-LOC", "I-LOC", "B-ORG", "I-ORG"]
 ID2LABEL = dict(enumerate(LABEL_LIST))
 LABEL2ID = {v: k for k, v in ID2LABEL.items()}
 
+# HuggingFace's standard "ignore this token" sentinel for token classification
+# labels (subword continuations, padding) -- excluded from loss and metrics.
+IGNORED_LABEL_ID = -100
 
-def group_into_sentences(hf_split):
+
+def group_into_sentences(hf_split: Any) -> list[dict[str, Any]]:
     """Regroup token-level rows into per-sentence {tokens, ner_tags} examples,
     preserving original row order within each (doc_idx, sent_idx) group."""
     df = hf_split.to_pandas()
@@ -39,24 +47,25 @@ def group_into_sentences(hf_split):
     df = df.dropna(subset=["gold_token"])
     sentences = []
     for _, g in df.groupby(["doc_idx", "sent_idx"], sort=False):
-        sentences.append({
-            "tokens": g["gold_token"].tolist(),
-            "ner_tags": g["gold_label"].tolist(),
-        })
+        sentences.append(
+            {
+                "tokens": g["gold_token"].tolist(),
+                "ner_tags": g["gold_label"].tolist(),
+            }
+        )
     return sentences
 
 
-def build_dataset():
+def build_dataset() -> dict[str, Any]:
     raw = load_dataset("gtfintechlab/finer-ord")
-    from datasets import Dataset
     return {
         split: Dataset.from_list(group_into_sentences(raw[split]))
         for split in ("train", "validation", "test")
     }
 
 
-def make_tokenize_fn(tokenizer):
-    def tokenize_and_align_labels(batch):
+def make_tokenize_fn(tokenizer: Any) -> Callable[[dict[str, Any]], Any]:
+    def tokenize_and_align_labels(batch: dict[str, Any]) -> Any:
         tokenized = tokenizer(
             batch["tokens"], is_split_into_words=True, truncation=True, max_length=512
         )
@@ -67,32 +76,33 @@ def make_tokenize_fn(tokenizer):
             label_ids = []
             for word_id in word_ids:
                 if word_id is None:
-                    label_ids.append(-100)  # special tokens ([CLS]/[SEP]/pad)
+                    label_ids.append(IGNORED_LABEL_ID)  # special tokens ([CLS]/[SEP]/pad)
                 elif word_id != prev_word_id:
                     label_ids.append(labels[word_id])  # first subword of a token
                 else:
-                    label_ids.append(-100)  # subsequent subwords: ignored in loss
+                    label_ids.append(IGNORED_LABEL_ID)  # subsequent subwords: ignored in loss
                 prev_word_id = word_id
             all_labels.append(label_ids)
         tokenized["labels"] = all_labels
         return tokenized
+
     return tokenize_and_align_labels
 
 
-def make_compute_metrics():
+def make_compute_metrics() -> Callable[[Any], dict[str, float]]:
     seqeval = evaluate.load("seqeval")
 
-    def compute_metrics(eval_pred):
+    def compute_metrics(eval_pred: Any) -> dict[str, float]:
         predictions, labels = eval_pred
         predictions = np.argmax(predictions, axis=2)
 
         true_predictions = [
-            [ID2LABEL[p] for p, l in zip(pred, label) if l != -100]
-            for pred, label in zip(predictions, labels)
+            [ID2LABEL[p] for p, lbl in zip(pred, label, strict=False) if lbl != IGNORED_LABEL_ID]
+            for pred, label in zip(predictions, labels, strict=False)
         ]
         true_labels = [
-            [ID2LABEL[l] for p, l in zip(pred, label) if l != -100]
-            for pred, label in zip(predictions, labels)
+            [ID2LABEL[lbl] for p, lbl in zip(pred, label, strict=False) if lbl != IGNORED_LABEL_ID]
+            for pred, label in zip(predictions, labels, strict=False)
         ]
         results = seqeval.compute(predictions=true_predictions, references=true_labels)
         return {
@@ -101,10 +111,11 @@ def make_compute_metrics():
             "f1": results["overall_f1"],
             "accuracy": results["overall_accuracy"],
         }
+
     return compute_metrics
 
 
-def main():
+def main() -> None:
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForTokenClassification.from_pretrained(
         MODEL_NAME, num_labels=len(LABEL_LIST), id2label=ID2LABEL, label2id=LABEL2ID

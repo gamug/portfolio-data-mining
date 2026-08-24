@@ -15,16 +15,16 @@ repos:
     # Ruff version.
     rev: v0.16.3
     hooks:
-      # Run the linter
+      # No explicit --config here on purpose: pre-commit runs hooks from the
+      # repo root, so plain `ruff check`/`ruff format` auto-discover the root
+      # ruff.toml pointer the same way a bare `uv run ruff check .` does (see
+      # that file's own comment). Passing --config .code_quality/ruff.toml
+      # directly here would skip that root file and resolve this file's
+      # relative per-file-ignores globs against the wrong base directory.
       - id: ruff-check
         args:
           - --fix
-          - --config
-          - .code_quality/ruff.toml # Run the formatter.
       - id: ruff-format
-        args:
-          - --config
-          - .code_quality/ruff.toml
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v2.3.1

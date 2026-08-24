@@ -5,8 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Sequence
+from collections.abc import Sequence
 
 import httpx
 
@@ -23,7 +22,6 @@ from news_collector.models import Company, DateRange, DiscoveredURL, DiscoverySt
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy
-from news_collector.utils.http import build_client
 
 log = logging.getLogger(__name__)
 # Separate logger name so progress/ETA lines can be filtered independently
@@ -137,7 +135,7 @@ class DiscoveryOrchestrator:
             "\n\n======================================================================\n"
             "Discovery run starting\n"
             "  Domains          : %d (%s)\n"
-            "  Companies        : %d\n" 
+            "  Companies        : %d\n"
             "  Date range       : %s -> %s\n"
             "  Queries to run   : %d\n"
             "  Advance so far   : %d/%d (%.1f%%) already completed in a prior run%s\n"
@@ -278,33 +276,10 @@ class DiscoveryOrchestrator:
             sitemap_urls = sitemap_results  # type: ignore[assignment]
 
         # StockTwits and Yahoo Finance have API fetch methods — use them too
-        api_urls: list[DiscoveredURL] = []
-        if domain == "stocktwits.com" and isinstance(connector, StockTwitsConnector):
-            try:
-                api_urls = await connector.fetch_via_api(company.ticker, date_range)
-                for u in api_urls:
-                    u.company = company.name
-            except Exception as exc:
-                log.warning("StockTwits API failed for %s: %s", company.ticker, exc)
-
-        if domain == "finance.yahoo.com" and isinstance(connector, YahooFinanceConnector):
-            try:
-                api_urls = await connector.fetch_via_yfinance(company.ticker, date_range)
-                for u in api_urls:
-                    u.company = company.name
-            except Exception as exc:
-                log.warning("yfinance failed for %s: %s", company.ticker, exc)
+        api_urls = await self._fetch_via_extra_api(connector, domain, company, date_range)
 
         # Merge and deduplicate by normalized URL
-        all_urls = ddg_urls + sitemap_urls + api_urls
-        seen: set[str] = set()
-        deduped: list[DiscoveredURL] = []
-        for u in all_urls:
-            if u.url not in seen:
-                seen.add(u.url)
-                deduped.append(u)
-
-        duplicate_count = len(all_urls) - len(deduped)
+        deduped, duplicate_count = self._merge_and_dedupe(ddg_urls, sitemap_urls, api_urls)
 
         # Persist to queue
         inserted = self._queue.enqueue_batch(deduped)
@@ -331,3 +306,49 @@ class DiscoveryOrchestrator:
             duplicate_count,
         )
         return partial
+
+    async def _fetch_via_extra_api(
+        self,
+        connector: BaseConnector,
+        domain: str,
+        company: Company,
+        date_range: DateRange,
+    ) -> list[DiscoveredURL]:
+        """StockTwits and Yahoo Finance have dedicated API fetch methods on
+        top of the DDG/sitemap strategies -- use them when available."""
+        api_urls: list[DiscoveredURL] = []
+        if domain == "stocktwits.com" and isinstance(connector, StockTwitsConnector):
+            try:
+                api_urls = await connector.fetch_via_api(company.ticker, date_range)
+            except Exception as exc:
+                log.warning("StockTwits API failed for %s: %s", company.ticker, exc)
+                return api_urls
+        elif domain == "finance.yahoo.com" and isinstance(connector, YahooFinanceConnector):
+            try:
+                api_urls = await connector.fetch_via_yfinance(company.ticker, date_range)
+            except Exception as exc:
+                log.warning("yfinance failed for %s: %s", company.ticker, exc)
+                return api_urls
+        else:
+            return api_urls
+
+        for u in api_urls:
+            u.company = company.name
+        return api_urls
+
+    @staticmethod
+    def _merge_and_dedupe(
+        ddg_urls: list[DiscoveredURL],
+        sitemap_urls: list[DiscoveredURL],
+        api_urls: list[DiscoveredURL],
+    ) -> tuple[list[DiscoveredURL], int]:
+        """Merge results from all strategies and dedupe by normalized URL.
+        Returns (deduped urls, duplicate count)."""
+        all_urls = ddg_urls + sitemap_urls + api_urls
+        seen: set[str] = set()
+        deduped: list[DiscoveredURL] = []
+        for u in all_urls:
+            if u.url not in seen:
+                seen.add(u.url)
+                deduped.append(u)
+        return deduped, len(all_urls) - len(deduped)

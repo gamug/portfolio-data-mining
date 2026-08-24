@@ -21,6 +21,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\news_nlp_cli.py   # process every pending article
     .venv\\Scripts\\python.exe cli\\news_nlp_cli.py --summarize   # also run c_summary/sector_summary
 """
+
 import argparse
 import sys
 from pathlib import Path
@@ -37,13 +38,14 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Max rows to process per stage (articles for sentiment/NER/category/c_summary; "
-             "sector/week groups for sector_summary). Default: all pending.",
+        "sector/week groups for sector_summary). Default: all pending.",
     )
     parser.add_argument(
-        "--summarize", action="store_true",
+        "--summarize",
+        action="store_true",
         help="Also run the c_summary/sector_summary stages. Off by default -- "
-             "these stages load their own summarization model in addition to "
-             "the sentiment/NER models.",
+        "these stages load their own summarization model in addition to "
+        "the sentiment/NER models.",
     )
     return parser.parse_args()
 

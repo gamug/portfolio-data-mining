@@ -5,8 +5,10 @@ so both the sentiment and NER stages need chunking. Chunks are built by packing
 whole sentences (never splitting a sentence mid-way) so entity spans are never
 cut in half by a chunk boundary in the common case.
 """
+
 import re
 from dataclasses import dataclass
+from typing import Any
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'])")
 
@@ -33,7 +35,7 @@ def split_sentences(text: str) -> list[tuple[str, int, int]]:
     return sentences
 
 
-def chunk_text(text: str, tokenizer, max_tokens: int = 510) -> list[Chunk]:
+def chunk_text(text: str, tokenizer: Any, max_tokens: int = 510) -> list[Chunk]:
     """Pack sentences into chunks whose tokenized length stays under max_tokens
     (leaving room for [CLS]/[SEP]). A single sentence longer than max_tokens is
     hard-split at the token level as a fallback.
@@ -46,7 +48,7 @@ def chunk_text(text: str, tokenizer, max_tokens: int = 510) -> list[Chunk]:
     cur_sentences: list[tuple[str, int, int]] = []
     cur_len = 0
 
-    def flush():
+    def flush() -> None:
         nonlocal cur_sentences, cur_len
         if cur_sentences:
             start = cur_sentences[0][1]
@@ -65,7 +67,7 @@ def chunk_text(text: str, tokenizer, max_tokens: int = 510) -> list[Chunk]:
             enc = tokenizer(sent, add_special_tokens=False, return_offsets_mapping=True)
             offsets = enc["offset_mapping"]
             for i in range(0, len(offsets), max_tokens):
-                window = offsets[i:i + max_tokens]
+                window = offsets[i : i + max_tokens]
                 if not window:
                     continue
                 w_start = s_start + window[0][0]

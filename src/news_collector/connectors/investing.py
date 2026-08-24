@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -39,9 +39,7 @@ class InvestingConnector(BaseConnector):
             client=client,
         )
 
-    def build_ddg_queries(
-        self, company: str, ticker: str, date_range: DateRange
-    ) -> list[str]:
+    def build_ddg_queries(self, company: str, ticker: str, date_range: DateRange) -> list[str]:
         queries = []
         for year in range(date_range.start.year, date_range.end.year + 1):
             queries.append(f"site:investing.com/news {ticker} {year}")
@@ -57,8 +55,6 @@ class InvestingConnector(BaseConnector):
     def is_article_url(self, url: str) -> bool:
         return bool(_ARTICLE_RE.match(url))
 
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         pattern = self._company_pattern(company, ticker)
         return self._matches_any(pattern, title, url)

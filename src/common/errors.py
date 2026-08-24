@@ -17,7 +17,7 @@ class UpstreamDataError(Exception):
     gated, rate limited, bad ticker) and the caller wants a clean,
     explanatory JSON error instead of a generic 500."""
 
-    def __init__(self, message: str, status_code: int = 502, provider: str = "unknown"):
+    def __init__(self, message: str, status_code: int = 502, provider: str = "unknown") -> None:
         self.message = message
         self.status_code = status_code
         self.provider = provider

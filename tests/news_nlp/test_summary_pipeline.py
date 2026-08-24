@@ -1,6 +1,15 @@
+import sqlite3
+from typing import Any
+
+import pytest
+import torch
 from conftest import seed_article
 
-from news_nlp import pipeline, db
+from news_nlp import db, pipeline
+
+# hierarchical_summarize()/_summarize_one() are always monkeypatched below, so
+# these tests never touch a real device -- this stands in for the type only.
+_FAKE_DEVICE = torch.device("cpu")
 
 
 class WordCountTokenizer:
@@ -9,20 +18,22 @@ class WordCountTokenizer:
     text used in these tests has a single "sentence" long enough to trigger
     chunk_text's hard-split fallback (which needs return_offsets_mapping)."""
 
-    def encode(self, text, add_special_tokens=False):
+    def encode(self, text: str, add_special_tokens: bool = False) -> list[str]:
         return text.split()
 
 
-def make_recording_summarizer(monkeypatch, replies=None):
+def make_recording_summarizer(
+    monkeypatch: pytest.MonkeyPatch, replies: list[str] | None = None
+) -> list[str]:
     """Monkeypatch pipeline._summarize_one to avoid loading a real model,
     and record every call. `replies` (if given) is consumed one-per-call;
     otherwise every call returns a fixed placeholder."""
-    calls = []
-    replies = iter(replies) if replies is not None else None
+    calls: list[str] = []
+    replies_iter = iter(replies) if replies is not None else None
 
-    def fake(text, tokenizer, model, device):
+    def fake(text: str, tokenizer: Any, model: Any, device: torch.device) -> str:
         calls.append(text)
-        return next(replies) if replies is not None else "X"
+        return next(replies_iter) if replies_iter is not None else "X"
 
     monkeypatch.setattr(pipeline, "_summarize_one", fake)
     return calls
@@ -31,11 +42,17 @@ def make_recording_summarizer(monkeypatch, replies=None):
 # --- hierarchical_summarize -----------------------------------------------
 
 
-def test_hierarchical_summarize_single_chunk_is_a_passthrough(monkeypatch):
+def test_hierarchical_summarize_single_chunk_is_a_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = make_recording_summarizer(monkeypatch, replies=["Short summary."])
 
     summary, num_chunks = pipeline.hierarchical_summarize(
-        "One short sentence.", WordCountTokenizer(), model=None, device=None, max_input_tokens=100
+        "One short sentence.",
+        WordCountTokenizer(),
+        model=None,
+        device=_FAKE_DEVICE,
+        max_input_tokens=100,
     )
 
     assert summary == "Short summary."
@@ -43,11 +60,13 @@ def test_hierarchical_summarize_single_chunk_is_a_passthrough(monkeypatch):
     assert len(calls) == 1
 
 
-def test_hierarchical_summarize_empty_text_returns_no_chunks(monkeypatch):
+def test_hierarchical_summarize_empty_text_returns_no_chunks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = make_recording_summarizer(monkeypatch)
 
     summary, num_chunks = pipeline.hierarchical_summarize(
-        "", WordCountTokenizer(), model=None, device=None, max_input_tokens=100
+        "", WordCountTokenizer(), model=None, device=_FAKE_DEVICE, max_input_tokens=100
     )
 
     assert summary == ""
@@ -55,7 +74,9 @@ def test_hierarchical_summarize_empty_text_returns_no_chunks(monkeypatch):
     assert calls == []
 
 
-def test_hierarchical_summarize_multi_chunk_triggers_a_reduce_pass(monkeypatch):
+def test_hierarchical_summarize_multi_chunk_triggers_a_reduce_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Each 3-word sentence is exactly one chunk at max_input_tokens=3 --
     # 3 sentences -> 3 leaf chunks -> 3 first-pass summaries -> those get
     # joined ("X X X") and summarized once more since len(summaries) > 1.
@@ -63,20 +84,22 @@ def test_hierarchical_summarize_multi_chunk_triggers_a_reduce_pass(monkeypatch):
     text = "AAA BBB CCC. DDD EEE FFF. GGG HHH III."
 
     summary, num_chunks = pipeline.hierarchical_summarize(
-        text, WordCountTokenizer(), model=None, device=None, max_input_tokens=3
+        text, WordCountTokenizer(), model=None, device=_FAKE_DEVICE, max_input_tokens=3
     )
 
-    assert num_chunks == 3          # leaf-level chunk count, not the reduced count
-    assert len(calls) == 4          # 3 leaf summaries + 1 reduce pass
-    assert summary == "X"           # the reduce pass's own (stubbed) output
+    assert num_chunks == 3  # leaf-level chunk count, not the reduced count
+    assert len(calls) == 4  # 3 leaf summaries + 1 reduce pass
+    assert summary == "X"  # the reduce pass's own (stubbed) output
 
 
-def test_hierarchical_summarize_reduce_pass_summarizes_the_joined_chunk_summaries(monkeypatch):
+def test_hierarchical_summarize_reduce_pass_summarizes_the_joined_chunk_summaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = make_recording_summarizer(monkeypatch, replies=["S1", "S2", "S3", "final"])
     text = "AAA BBB CCC. DDD EEE FFF. GGG HHH III."
 
     summary, num_chunks = pipeline.hierarchical_summarize(
-        text, WordCountTokenizer(), model=None, device=None, max_input_tokens=3
+        text, WordCountTokenizer(), model=None, device=_FAKE_DEVICE, max_input_tokens=3
     )
 
     assert num_chunks == 3
@@ -87,8 +110,10 @@ def test_hierarchical_summarize_reduce_pass_summarizes_the_joined_chunk_summarie
 # --- run_company_summary_stage --------------------------------------------
 
 
-def test_run_company_summary_stage_skips_loading_model_when_nothing_pending(conn, monkeypatch):
-    def fail_if_called(*args, **kwargs):
+def test_run_company_summary_stage_skips_loading_model_when_nothing_pending(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_if_called(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("model should not be loaded when there is nothing to process")
 
     monkeypatch.setattr(pipeline.AutoTokenizer, "from_pretrained", fail_if_called)
@@ -100,7 +125,9 @@ def test_run_company_summary_stage_skips_loading_model_when_nothing_pending(conn
     assert calls == [("company_summary", 0, 0)]
 
 
-def test_run_company_summary_stage_writes_a_summary_per_pending_article(conn, monkeypatch):
+def test_run_company_summary_stage_writes_a_summary_per_pending_article(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seed_article(conn, id=1)
     conn.execute(
         """INSERT INTO article_sentiment (article_id, label, score, positive, negative, neutral, model_name, processed_at)
@@ -112,30 +139,37 @@ def test_run_company_summary_stage_writes_a_summary_per_pending_article(conn, mo
     )
     conn.commit()
 
-    monkeypatch.setattr(pipeline.AutoTokenizer, "from_pretrained", lambda *_a, **_k: WordCountTokenizer())
-    monkeypatch.setattr(pipeline.AutoModelForSeq2SeqLM, "from_pretrained", lambda *_a, **_k: FakeModel())
+    monkeypatch.setattr(
+        pipeline.AutoTokenizer, "from_pretrained", lambda *_a, **_k: WordCountTokenizer()
+    )
+    monkeypatch.setattr(
+        pipeline.AutoModelForSeq2SeqLM, "from_pretrained", lambda *_a, **_k: FakeModel()
+    )
     make_recording_summarizer(monkeypatch, replies=["Generated summary."])
 
     pipeline.run_company_summary_stage(conn)
 
     detail = db.get_article_detail(conn, 1)
+    assert detail is not None
     assert detail["summary"]["summary_text"] == "Generated summary."
     assert detail["summary"]["model_name"] == pipeline.SUMMARY_MODEL
 
 
 class FakeModel:
-    def to(self, device):
+    def to(self, device: Any) -> "FakeModel":
         return self
 
-    def eval(self):
+    def eval(self) -> "FakeModel":
         return self
 
 
 # --- run_sector_summary_stage ----------------------------------------------
 
 
-def test_run_sector_summary_stage_skips_loading_model_when_nothing_pending(conn, monkeypatch):
-    def fail_if_called(*args, **kwargs):
+def test_run_sector_summary_stage_skips_loading_model_when_nothing_pending(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_if_called(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("model should not be loaded when there is nothing to process")
 
     monkeypatch.setattr(pipeline.AutoTokenizer, "from_pretrained", fail_if_called)
@@ -147,13 +181,19 @@ def test_run_sector_summary_stage_skips_loading_model_when_nothing_pending(conn,
     assert calls == [("sector_summary", 0, 0)]
 
 
-def test_run_sector_summary_stage_writes_one_summary_per_group(conn, monkeypatch):
+def test_run_sector_summary_stage_writes_one_summary_per_group(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seed_article(conn, id=1, company="3M", ticker="MMM", pub_date="2026-08-03T00:00:00Z")
     db.write_company_summary(conn, 1, "3M did well this week.", 1, "facebook/bart-large-cnn")
     conn.commit()
 
-    monkeypatch.setattr(pipeline.AutoTokenizer, "from_pretrained", lambda *_a, **_k: WordCountTokenizer())
-    monkeypatch.setattr(pipeline.AutoModelForSeq2SeqLM, "from_pretrained", lambda *_a, **_k: FakeModel())
+    monkeypatch.setattr(
+        pipeline.AutoTokenizer, "from_pretrained", lambda *_a, **_k: WordCountTokenizer()
+    )
+    monkeypatch.setattr(
+        pipeline.AutoModelForSeq2SeqLM, "from_pretrained", lambda *_a, **_k: FakeModel()
+    )
     make_recording_summarizer(monkeypatch, replies=["Sector did well this week."])
 
     pipeline.run_sector_summary_stage(conn)

@@ -3,22 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 from datetime import date, datetime
-from typing import AsyncIterator
 from xml.etree import ElementTree as ET
 
+import feedparser  # type: ignore
 import httpx
+from defusedxml import ElementTree as DefusedET
+from defusedxml.common import DefusedXmlException
 
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, DiscoveredURL, SitemapEntry
-from news_collector.utils.url import normalize_url, is_valid_http_url
+from news_collector.utils.http import fetch_text
+from news_collector.utils.url import is_valid_http_url, normalize_url
 
 log = logging.getLogger(__name__)
 
 # XML namespace constants
 _NS_SITEMAP = "http://www.sitemaps.org/schemas/sitemap/0.9"
 _NS_NEWS = "http://www.google.com/schemas/sitemap-news/0.9"
+
+# Wayback CDX API rows are [original, timestamp, statuscode]; we only read
+# the first two fields, so anything shorter than that is unusable.
+_MIN_CDX_ROW_FIELDS = 2
 
 
 class SitemapRSSStrategy:
@@ -65,8 +74,7 @@ class SitemapRSSStrategy:
             try:
                 feed_entries = await self._parse_rss(feed_url)
                 entries.extend(
-                    e for e in feed_entries
-                    if e.lastmod is None or date_range.contains(e.lastmod)
+                    e for e in feed_entries if e.lastmod is None or date_range.contains(e.lastmod)
                 )
             except Exception as exc:
                 log.warning("RSS feed failed %s: %s", feed_url, exc)
@@ -74,16 +82,27 @@ class SitemapRSSStrategy:
         # 3. Optional Wayback CDX fallback
         if self._connector.config.wayback_fallback:
             try:
-                cdx_entries = await self._wayback_cdx(
-                    self._connector.config.domain, date_range
-                )
+                cdx_entries = await self._wayback_cdx(self._connector.config.domain, date_range)
                 entries.extend(cdx_entries)
             except Exception as exc:
-                log.warning(
-                    "Wayback CDX failed for %s: %s", self._connector.config.domain, exc
-                )
+                log.warning("Wayback CDX failed for %s: %s", self._connector.config.domain, exc)
 
         # 4. Deduplicate and filter by company relevance
+        results = self._dedupe_and_filter(entries, company, ticker)
+
+        log.info(
+            "Sitemap/RSS discovered %d URLs for %s/%s",
+            len(results),
+            ticker,
+            self._connector.config.domain,
+        )
+        return results
+
+    def _dedupe_and_filter(
+        self, entries: list[SitemapEntry], company: str, ticker: str
+    ) -> list[DiscoveredURL]:
+        """Normalize/dedupe raw sitemap+RSS+CDX entries, drop non-article and
+        company-irrelevant URLs, and convert what's left to DiscoveredURL."""
         seen: set[str] = set()
         results: list[DiscoveredURL] = []
         for entry in entries:
@@ -94,9 +113,7 @@ class SitemapRSSStrategy:
                 continue
             if not self._connector.is_article_url(url):
                 continue
-            if not self._connector.url_matches_company(
-                url, entry.title or "", company, ticker
-            ):
+            if not self._connector.url_matches_company(url, entry.title or "", company, ticker):
                 continue
             seen.add(url)
             src = "sitemap" if not getattr(entry, "_from_rss", False) else "rss"
@@ -112,22 +129,13 @@ class SitemapRSSStrategy:
                     title=entry.title,
                 )
             )
-
-        log.info(
-            "Sitemap/RSS discovered %d URLs for %s/%s",
-            len(results),
-            ticker,
-            self._connector.config.domain,
-        )
         return results
 
     # ------------------------------------------------------------------
     # Sitemap traversal
     # ------------------------------------------------------------------
 
-    async def _crawl_sitemaps(
-        self, roots: list[str], date_range: DateRange
-    ) -> list[SitemapEntry]:
+    async def _crawl_sitemaps(self, roots: list[str], date_range: DateRange) -> list[SitemapEntry]:
         """BFS over sitemap index tree; collect leaf entries within date range."""
         visited: set[str] = set()
         pending: list[str] = list(roots)
@@ -146,8 +154,11 @@ class SitemapRSSStrategy:
                 continue
 
             try:
-                root = ET.fromstring(text)
-            except ET.ParseError as exc:
+                # defusedxml guards against XXE/entity-expansion attacks --
+                # sitemap XML is fetched from whatever domain is being
+                # scraped, so it's untrusted input.
+                root = DefusedET.fromstring(text)
+            except (ET.ParseError, DefusedXmlException) as exc:
                 log.warning("Sitemap XML parse error %s: %s", url, exc)
                 continue
 
@@ -164,8 +175,6 @@ class SitemapRSSStrategy:
 
     async def _parse_rss(self, feed_url: str) -> list[SitemapEntry]:
         """Parse RSS 2.0 or Atom feed and return entries."""
-        import feedparser  # type: ignore
-
         text = await self._fetch(feed_url)
         # feedparser is synchronous; run in executor for large feeds
         loop = asyncio.get_event_loop()
@@ -178,12 +187,9 @@ class SitemapRSSStrategy:
                 continue
             pub_date: date | None = None
             if item.get("published_parsed"):
-                import time
                 t = item["published_parsed"]
-                try:
+                with contextlib.suppress(Exception):
                     pub_date = date(t.tm_year, t.tm_mon, t.tm_mday)
-                except Exception:
-                    pass
             entry = SitemapEntry(
                 url=link,
                 lastmod=pub_date,
@@ -193,9 +199,7 @@ class SitemapRSSStrategy:
             entries.append(entry)
         return entries
 
-    async def _wayback_cdx(
-        self, domain: str, date_range: DateRange
-    ) -> list[SitemapEntry]:
+    async def _wayback_cdx(self, domain: str, date_range: DateRange) -> list[SitemapEntry]:
         """
         Query Wayback Machine CDX API for snapshots of a domain within date range.
         Returns SitemapEntry list with source metadata.
@@ -213,8 +217,6 @@ class SitemapRSSStrategy:
             f"&limit=5000"
         )
         text = await self._fetch(cdx_url)
-        import json
-
         try:
             rows = json.loads(text)
         except json.JSONDecodeError:
@@ -222,7 +224,7 @@ class SitemapRSSStrategy:
 
         entries: list[SitemapEntry] = []
         for row in rows[1:]:  # first row is header
-            if len(row) < 2:
+            if len(row) < _MIN_CDX_ROW_FIELDS:  # need at least [original, timestamp]
                 continue
             original_url = row[0]
             timestamp = row[1]
@@ -234,8 +236,6 @@ class SitemapRSSStrategy:
         return entries
 
     async def _fetch(self, url: str) -> str:
-        from news_collector.utils.http import fetch_text
-
         return await fetch_text(self._client, url)
 
 
@@ -249,9 +249,7 @@ def _ns(tag: str) -> str:
     return f"{{{_NS_SITEMAP}}}{tag}"
 
 
-def _parse_sitemap_index(
-    root: ET.Element, date_range: DateRange
-) -> list[str]:
+def _parse_sitemap_index(root: ET.Element, date_range: DateRange) -> list[str]:
     """Return child sitemap URLs from a <sitemapindex>; skip by lastmod if possible."""
     urls: list[str] = []
     for sitemap_el in root.iter(_ns("sitemap")):
@@ -265,14 +263,14 @@ def _parse_sitemap_index(
                 if lm and lm < date_range.start:
                     continue  # entire child sitemap is too old
             except Exception:
-                pass
+                log.debug(
+                    "Unparseable child sitemap lastmod %r, not filtering by date", lastmod_el.text
+                )
         urls.append(loc_el.text.strip())
     return urls
 
 
-def _parse_sitemap_leaf(
-    root: ET.Element, date_range: DateRange
-) -> list[SitemapEntry]:
+def _parse_sitemap_leaf(root: ET.Element, date_range: DateRange) -> list[SitemapEntry]:
     """Return SitemapEntry list from a <urlset> leaf sitemap."""
     entries: list[SitemapEntry] = []
     for url_el in root.iter(_ns("url")):
@@ -284,10 +282,8 @@ def _parse_sitemap_leaf(
         lastmod: date | None = None
         lastmod_el = url_el.find(_ns("lastmod"))
         if lastmod_el is not None and lastmod_el.text:
-            try:
+            with contextlib.suppress(Exception):
                 lastmod = _parse_date(lastmod_el.text.strip())
-            except Exception:
-                pass
 
         if lastmod and not date_range.contains(lastmod):
             continue
@@ -306,7 +302,7 @@ def _parse_date(text: str) -> date | None:
     """Parse ISO-8601 date string (YYYY-MM-DD or YYYY-MM-DDThh:mm:ssZ)."""
     for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y-%m"):
         try:
-            dt = datetime.strptime(text[:len(fmt)], fmt)
+            dt = datetime.strptime(text[: len(fmt)], fmt)
             return dt.date()
         except ValueError:
             continue

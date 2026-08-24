@@ -7,8 +7,10 @@ an article's entities, or its category) makes that article eligible for
 reprocessing again, since db.fetch_pending_articles/fetch_pending_category_articles
 select rows missing from the result table.
 """
+
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 # field name -> literal "<column> = ?" SQL fragment. update_*() below select the
 # SET-clause fragments to join from these fixed maps rather than interpolating
@@ -44,22 +46,30 @@ _CATEGORY_FIELDS = set(_CATEGORY_SET_CLAUSES)
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def update_sentiment(conn: sqlite3.Connection, article_id: int, **fields) -> dict | None:
+def update_sentiment(conn: sqlite3.Connection, article_id: int, **fields: Any) -> dict | None:
     unknown = set(fields) - _SENTIMENT_FIELDS
     if unknown:
         raise ValueError(f"Unknown sentiment field(s): {unknown}")
 
     if fields:
+        # S608: `fields` is checked against _SENTIMENT_FIELDS above, and
+        # set_clause is built only from the fixed _SENTIMENT_SET_CLAUSES
+        # "col = ?" fragments -- values are always bound as query params.
         set_clause = ", ".join(_SENTIMENT_SET_CLAUSES[k] for k in fields) + ", processed_at = ?"
-        params = list(fields.values()) + [_now_iso(), article_id]
-        cur = conn.execute(f"UPDATE article_sentiment SET {set_clause} WHERE article_id = ?", params)
+        params = [*list(fields.values()), _now_iso(), article_id]
+        cur = conn.execute(
+            f"UPDATE article_sentiment SET {set_clause} WHERE article_id = ?",  # noqa: S608
+            params,
+        )
         if cur.rowcount == 0:
             return None
 
-    row = conn.execute("SELECT * FROM article_sentiment WHERE article_id = ?", (article_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM article_sentiment WHERE article_id = ?", (article_id,)
+    ).fetchone()
     return dict(row) if row else None
 
 
@@ -68,15 +78,18 @@ def delete_sentiment(conn: sqlite3.Connection, article_id: int) -> bool:
     return cur.rowcount > 0
 
 
-def update_entity(conn: sqlite3.Connection, entity_id: int, **fields) -> dict | None:
+def update_entity(conn: sqlite3.Connection, entity_id: int, **fields: Any) -> dict | None:
     unknown = set(fields) - _ENTITY_FIELDS
     if unknown:
         raise ValueError(f"Unknown entity field(s): {unknown}")
 
     if fields:
+        # S608: `fields` is checked against _ENTITY_FIELDS above, and
+        # set_clause is built only from the fixed _ENTITY_SET_CLAUSES
+        # "col = ?" fragments -- values are always bound as query params.
         set_clause = ", ".join(_ENTITY_SET_CLAUSES[k] for k in fields)
-        params = list(fields.values()) + [entity_id]
-        cur = conn.execute(f"UPDATE article_entities SET {set_clause} WHERE id = ?", params)
+        params = [*list(fields.values()), entity_id]
+        cur = conn.execute(f"UPDATE article_entities SET {set_clause} WHERE id = ?", params)  # noqa: S608
         if cur.rowcount == 0:
             return None
 
@@ -94,19 +107,24 @@ def delete_entities_for_article(conn: sqlite3.Connection, article_id: int) -> in
     return cur.rowcount
 
 
-def update_category(conn: sqlite3.Connection, article_id: int, **fields) -> dict | None:
+def update_category(conn: sqlite3.Connection, article_id: int, **fields: Any) -> dict | None:
     unknown = set(fields) - _CATEGORY_FIELDS
     if unknown:
         raise ValueError(f"Unknown category field(s): {unknown}")
 
     if fields:
+        # S608: `fields` is checked against _CATEGORY_FIELDS above, and
+        # set_clause is built only from the fixed _CATEGORY_SET_CLAUSES
+        # "col = ?" fragments -- values are always bound as query params.
         set_clause = ", ".join(_CATEGORY_SET_CLAUSES[k] for k in fields) + ", processed_at = ?"
-        params = list(fields.values()) + [_now_iso(), article_id]
-        cur = conn.execute(f"UPDATE article_category SET {set_clause} WHERE article_id = ?", params)
+        params = [*list(fields.values()), _now_iso(), article_id]
+        cur = conn.execute(f"UPDATE article_category SET {set_clause} WHERE article_id = ?", params)  # noqa: S608
         if cur.rowcount == 0:
             return None
 
-    row = conn.execute("SELECT * FROM article_category WHERE article_id = ?", (article_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM article_category WHERE article_id = ?", (article_id,)
+    ).fetchone()
     return dict(row) if row else None
 
 

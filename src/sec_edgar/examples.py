@@ -10,10 +10,12 @@ directly to EdgarAgent(name=..., email=...))
 """
 
 import json
+from typing import Any
+
 from sec_edgar.agent import EdgarAgent
 
 
-def pretty(label, result):
+def pretty(label: str, result: Any) -> None:
     print(f"\n--- {label} ---")
     print(json.dumps(result, indent=2, default=str)[:1500])  # truncate long output
 
@@ -42,10 +44,7 @@ pretty("get_filings('AAPL', form='10-K', limit=5)", result)
 # ---------------------------------------------------------------------
 result = agent.list_years_available("AAPL", form="10-K")
 pretty("list_years_available('AAPL', '10-K')", result)
-if result["success"] and result["data"]:
-    latest_year = max(result["data"])
-else:
-    latest_year = 2023  # fallback
+latest_year = max(result["data"]) if result["success"] and result["data"] else 2023  # fallback
 
 
 # ---------------------------------------------------------------------
@@ -91,8 +90,10 @@ pretty("search_filings('AAPL', 'climate', form='10-K', max_filings_to_search=5)"
 if result["success"]:
     if result["data"]:
         for match in result["data"]:
-            print(f"  Found in {match['form']} filed {match['filing_date']} "
-                  f"(accession {match['accession_number']})")
+            print(
+                f"  Found in {match['form']} filed {match['filing_date']} "
+                f"(accession {match['accession_number']})"
+            )
     else:
         print("  No matches found (this is a normal result, not an error).")
 

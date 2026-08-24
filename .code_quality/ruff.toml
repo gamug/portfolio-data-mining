@@ -91,5 +91,38 @@ docstring-code-format = true
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
 
+[lint.pylint]
+# Default max-args (5) is too strict for this codebase's routine patterns:
+# FastAPI query-param endpoints (each filter is its own Query(...) parameter
+# so it shows up in the OpenAPI schema), SQLite row-shaped read/write
+# functions (one arg per column), and test fixtures/helpers that take one
+# kwarg per seeded field. 15 comfortably covers the widest current offender
+# (a 14-kwarg test fixture) while still catching genuinely runaway signatures.
+max-args = 15
+
 [lint.isort]
 known-third-party = ["fastapi", "pydantic"]
+
+[lint.per-file-ignores]
+# B008: FastAPI's dependency-injection idiom is exactly `= Depends(...)` /
+# `= Query(...)` in a parameter default -- that's the framework calling
+# convention, not the mutable-default-argument bug B008 exists to catch.
+# Patterns are relative to this file's own directory (.code_quality/), which
+# is how Ruff resolves per-file-ignores globs from a config reached via
+# another file's `extend`, not relative to the repo root -- hence `../`.
+"../apps/*_api.py" = ["B008"]
+"../apps/gateway.py" = ["B008"]
+"../src/*/api/**/*.py" = ["B008"]
+
+# E402: every apps/*.py and cli/*.py entrypoint does
+# `sys.path.insert(0, str(Path(__file__)... / "src"))` before its first
+# local import so it can run standalone with no PYTHONPATH setup (see
+# CLAUDE.md's "apps/ vs cli/" section) -- imports genuinely can't move above
+# that line without breaking the bootstrap.
+"../apps/*.py" = ["E402"]
+"../cli/*.py" = ["E402"]
+
+# PLR2004: in tests, literal expected values (HTTP status codes, row counts,
+# scores) *are* the spec being asserted -- naming each one as a constant
+# would just move the magic number one line up, not remove it.
+"../tests/**/*.py" = ["PLR2004"]

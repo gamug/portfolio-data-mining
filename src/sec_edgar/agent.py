@@ -18,12 +18,12 @@ Design notes for whoever wires this into the agent framework:
     default, to keep tool calls fast and predictable.
 """
 
-import os
 import logging
-from typing import Optional
-import numpy as np
+import os
+from typing import Any
 
-from edgar import set_identity, Company
+import numpy as np
+from edgar import Company, set_identity
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class EdgarAgent:
         4. search_filings(...)          -- find filings mentioning a keyword
     """
 
-    def __init__(self, name: Optional[str] = None, email: Optional[str] = None):
+    def __init__(self, name: str | None = None, email: str | None = None) -> None:
         """
         Initialize the tool. The SEC requires a real identity (name + email)
         for programmatic access to EDGAR; this is configured once here and
@@ -97,7 +97,7 @@ class EdgarAgent:
             raise ValueError("cik_or_symbol must be a non-empty ticker symbol or CIK number.")
         return Company(cik_or_symbol.strip())
 
-    def _filing_to_dict(self, f) -> dict:
+    def _filing_to_dict(self, f: Any) -> dict:
         return {
             "form": getattr(f, "form", None),
             "filing_date": str(getattr(f, "filing_date", "")),
@@ -142,7 +142,7 @@ class EdgarAgent:
         except Exception as e:
             return {"success": False, "error": f"Could not find company '{cik_or_symbol}': {e}"}
 
-    def get_filings(self, cik_or_symbol: str, form: Optional[str] = None, limit: int = 20) -> dict:
+    def get_filings(self, cik_or_symbol: str, form: str | None = None, limit: int = 20) -> dict:
         """
         List a company's recent filings, optionally filtered by form type.
 
@@ -161,9 +161,13 @@ class EdgarAgent:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form) if form else company.get_filings()
             results = [self._filing_to_dict(f) for f in list(filings)[:limit]]
-            return {"success": True, "data": results}
         except Exception as e:
-            return {"success": False, "error": f"Failed to retrieve filings for '{cik_or_symbol}': {e}"}
+            return {
+                "success": False,
+                "error": f"Failed to retrieve filings for '{cik_or_symbol}': {e}",
+            }
+        else:
+            return {"success": True, "data": results}
 
     def get_filing_by_year(self, cik_or_symbol: str, form: str, year: int) -> dict:
         """
@@ -184,7 +188,7 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            match = next((f for f in filings if f.filing_date.year == year), None) # type: ignore[union-attr]
+            match = next((f for f in filings if f.filing_date.year == year), None)  # type: ignore[union-attr]
             if match is None:
                 return {
                     "success": False,
@@ -210,13 +214,14 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
+        except Exception as e:
+            return {"success": False, "error": f"Failed to retrieve latest filing: {e}"}
+        else:
             if filings_list := list(filings):
                 return {"success": True, "data": self._filing_to_dict(filings_list[0])}
             return {"success": False, "error": f"No '{form}' filings found for '{cik_or_symbol}'."}
-        except Exception as e:
-            return {"success": False, "error": f"Failed to retrieve latest filing: {e}"}
 
-    def clean_data_frame(self, df) -> list:
+    def clean_data_frame(self, df: Any) -> list[Any]:
         """_summary_
 
         Args:
@@ -226,7 +231,7 @@ class EdgarAgent:
             list: _description_
         """
         df = df.astype(object).replace({np.nan: None})
-        income_statement = df.to_dict(orient="records")
+        income_statement: list[Any] = df.to_dict(orient="records")
         return income_statement
 
     def get_financials(self, cik_or_symbol: str, form: str, year: int) -> dict:
@@ -270,9 +275,15 @@ class EdgarAgent:
             return {
                 "success": True,
                 "data": {
-                    "income_statement": self.clean_data_frame(xbrl.statements.income_statement().to_dataframe()),  # type: ignore[union-attr]
-                    "balance_sheet": self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),        # type: ignore[union-attr]
-                    "cash_flow": self.clean_data_frame(xbrl.statements.cashflow_statement().to_dataframe()),       # type: ignore[union-attr]
+                    "income_statement": self.clean_data_frame(
+                        xbrl.statements.income_statement().to_dataframe()
+                    ),  # type: ignore[union-attr]
+                    "balance_sheet": self.clean_data_frame(
+                        xbrl.statements.balance_sheet().to_dataframe()
+                    ),  # type: ignore[union-attr]
+                    "cash_flow": self.clean_data_frame(
+                        xbrl.statements.cashflow_statement().to_dataframe()
+                    ),  # type: ignore[union-attr]
                 },
             }
         except Exception as e:
@@ -296,16 +307,17 @@ class EdgarAgent:
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            years = sorted({f.filing_date.year for f in filings}) # type: ignore[union-attr]
-            return {"success": True, "data": years}
+            years = sorted({f.filing_date.year for f in filings})  # type: ignore[union-attr]
         except Exception as e:
             return {"success": False, "error": f"Failed to list available years: {e}"}
+        else:
+            return {"success": True, "data": years}
 
     def search_filings(
         self,
         cik_or_symbol: str,
         keyword: str,
-        form: Optional[str] = None,
+        form: str | None = None,
         max_filings_to_search: int = 15,
     ) -> dict:
         """
@@ -343,8 +355,11 @@ class EdgarAgent:
                 except Exception:
                     # Skip filings whose text can't be fetched rather than
                     # failing the whole search.
-                    logger.warning("Could not read text for filing %s", getattr(f, "accession_number", "?"))
+                    logger.warning(
+                        "Could not read text for filing %s", getattr(f, "accession_number", "?")
+                    )
                     continue
-            return {"success": True, "data": results}
         except Exception as e:
             return {"success": False, "error": f"Search failed: {e}"}
+        else:
+            return {"success": True, "data": results}

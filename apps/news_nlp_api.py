@@ -9,31 +9,42 @@ Run:
     .venv\\Scripts\\python.exe apps\\news_nlp_api.py
     -> http://127.0.0.1:8003/docs
 """
+
+import sqlite3
 import sys
 import threading
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from news_nlp import db, pipeline, corrections
+from news_nlp import corrections, db, pipeline
 from news_nlp.categories import CATEGORY_SLUGS, OTHER_LABEL
 
-CATEGORY_LABEL_VALUES = CATEGORY_SLUGS + (OTHER_LABEL,)
+CATEGORY_LABEL_VALUES = (*CATEGORY_SLUGS, OTHER_LABEL)
 
 app = FastAPI(title="news-nlp")
 
 
 class RunStatus:
-    def __init__(self):
+    status: str
+    stage: str | None
+    processed: int
+    total: int
+    started_at: str | None
+    finished_at: str | None
+    error: str | None
+
+    def __init__(self) -> None:
         self._lock = threading.Lock()
         self.reset()
 
-    def reset(self):
+    def reset(self) -> None:
         with self._lock:
             self.status = "idle"
             self.stage = None
@@ -43,7 +54,7 @@ class RunStatus:
             self.finished_at = None
             self.error = None
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         with self._lock:
             return {
                 "status": self.status,
@@ -63,28 +74,28 @@ class RunStatus:
             self.stage = None
             self.processed = 0
             self.total = 0
-            self.started_at = datetime.now(timezone.utc).isoformat()
+            self.started_at = datetime.now(UTC).isoformat()
             self.finished_at = None
             self.error = None
             return True
 
-    def update_progress(self, stage, processed, total):
+    def update_progress(self, stage: str, processed: int, total: int) -> None:
         with self._lock:
             self.stage = stage
             self.processed = processed
             self.total = total
 
-    def finish(self, error=None):
+    def finish(self, error: str | None = None) -> None:
         with self._lock:
             self.status = "error" if error else "done"
             self.error = error
-            self.finished_at = datetime.now(timezone.utc).isoformat()
+            self.finished_at = datetime.now(UTC).isoformat()
 
 
 pipeline_status = RunStatus()
 
 
-def get_db():
+def get_db() -> Iterator[sqlite3.Connection]:
     conn = db.connect(db.DB_PATH)
     try:
         yield conn
@@ -98,19 +109,21 @@ class PipelineRunRequest(BaseModel):
 
 
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"status": "ok"}
 
 
 @app.post("/pipeline/run", status_code=202)
-def start_pipeline(req: PipelineRunRequest):
+def start_pipeline(req: PipelineRunRequest) -> dict:
     if not pipeline_status.start():
         raise HTTPException(status_code=409, detail=pipeline_status.to_dict())
 
-    def worker():
+    def worker() -> None:
         try:
             pipeline.run_pipeline(
-                limit=req.limit, summarize=req.summarize, on_progress=pipeline_status.update_progress,
+                limit=req.limit,
+                summarize=req.summarize,
+                on_progress=pipeline_status.update_progress,
             )
             pipeline_status.finish()
         except Exception as exc:
@@ -121,7 +134,7 @@ def start_pipeline(req: PipelineRunRequest):
 
 
 @app.get("/pipeline/status")
-def get_pipeline_status():
+def get_pipeline_status() -> dict:
     return pipeline_status.to_dict()
 
 
@@ -130,21 +143,28 @@ def get_articles(
     company: str | None = None,
     ticker: str | None = None,
     sentiment: Literal["positive", "negative", "neutral"] | None = None,
-    category: Literal[CATEGORY_LABEL_VALUES] | None = None,
+    category: Literal[CATEGORY_LABEL_VALUES] | None = None,  # type: ignore[valid-type]
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    conn=Depends(get_db),
-):
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[dict]:
     return db.list_articles(
-        conn, company=company, ticker=ticker, sentiment=sentiment, category=category,
-        date_from=date_from, date_to=date_to, limit=limit, offset=offset,
+        conn,
+        company=company,
+        ticker=ticker,
+        sentiment=sentiment,
+        category=category,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
     )
 
 
 @app.get("/articles/{article_id}")
-def get_article(article_id: int, conn=Depends(get_db)):
+def get_article(article_id: int, conn: sqlite3.Connection = Depends(get_db)) -> dict:
     detail = db.get_article_detail(conn, article_id)
     if detail is None or detail["sentiment"] is None:
         raise HTTPException(status_code=404, detail="Article not found or not yet processed")
@@ -157,9 +177,11 @@ def get_sentiment_stats(
     date_from: str | None = None,
     date_to: str | None = None,
     group_by: Literal["company", "year", "month"] | None = None,
-    conn=Depends(get_db),
-):
-    return db.sentiment_stats(conn, company=company, date_from=date_from, date_to=date_to, group_by=group_by)
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[dict]:
+    return db.sentiment_stats(
+        conn, company=company, date_from=date_from, date_to=date_to, group_by=group_by
+    )
 
 
 @app.get("/stats/entities")
@@ -167,8 +189,8 @@ def get_entity_stats(
     company: str | None = None,
     entity_type: Literal["ORG", "PER", "LOC"] | None = None,
     top: int = Query(20, ge=1, le=200),
-    conn=Depends(get_db),
-):
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[dict]:
     return db.entity_stats(conn, company=company, entity_type=entity_type, top=top)
 
 
@@ -177,8 +199,8 @@ def get_category_stats(
     company: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
-    conn=Depends(get_db),
-):
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[dict]:
     return db.category_stats(conn, company=company, date_from=date_from, date_to=date_to)
 
 
@@ -187,9 +209,11 @@ def get_sector_summaries(
     sector: str | None = None,
     sub_industry: str | None = None,
     week_start: str | None = None,
-    conn=Depends(get_db),
-):
-    return db.list_sector_summaries(conn, sector=sector, sub_industry=sub_industry, week_start=week_start)
+    conn: sqlite3.Connection = Depends(get_db),
+) -> list[dict]:
+    return db.list_sector_summaries(
+        conn, sector=sector, sub_industry=sub_industry, week_start=week_start
+    )
 
 
 class SentimentUpdateRequest(BaseModel):
@@ -209,12 +233,14 @@ class EntityUpdateRequest(BaseModel):
 
 
 class CategoryUpdateRequest(BaseModel):
-    label: Literal[CATEGORY_LABEL_VALUES] | None = None
+    label: Literal[CATEGORY_LABEL_VALUES] | None = None  # type: ignore[valid-type]
     score: float | None = Field(None, ge=0, le=1)
 
 
 @app.patch("/articles/{article_id}/sentiment")
-def patch_sentiment(article_id: int, req: SentimentUpdateRequest, conn=Depends(get_db)):
+def patch_sentiment(
+    article_id: int, req: SentimentUpdateRequest, conn: sqlite3.Connection = Depends(get_db)
+) -> dict:
     fields = req.model_dump(exclude_unset=True)
     updated = corrections.update_sentiment(conn, article_id, **fields)
     conn.commit()
@@ -224,7 +250,7 @@ def patch_sentiment(article_id: int, req: SentimentUpdateRequest, conn=Depends(g
 
 
 @app.delete("/articles/{article_id}/sentiment", status_code=204)
-def remove_sentiment(article_id: int, conn=Depends(get_db)):
+def remove_sentiment(article_id: int, conn: sqlite3.Connection = Depends(get_db)) -> None:
     deleted = corrections.delete_sentiment(conn, article_id)
     conn.commit()
     if not deleted:
@@ -232,7 +258,9 @@ def remove_sentiment(article_id: int, conn=Depends(get_db)):
 
 
 @app.patch("/entities/{entity_id}")
-def patch_entity(entity_id: int, req: EntityUpdateRequest, conn=Depends(get_db)):
+def patch_entity(
+    entity_id: int, req: EntityUpdateRequest, conn: sqlite3.Connection = Depends(get_db)
+) -> dict:
     fields = req.model_dump(exclude_unset=True)
     updated = corrections.update_entity(conn, entity_id, **fields)
     conn.commit()
@@ -242,7 +270,7 @@ def patch_entity(entity_id: int, req: EntityUpdateRequest, conn=Depends(get_db))
 
 
 @app.delete("/entities/{entity_id}", status_code=204)
-def remove_entity(entity_id: int, conn=Depends(get_db)):
+def remove_entity(entity_id: int, conn: sqlite3.Connection = Depends(get_db)) -> None:
     deleted = corrections.delete_entity(conn, entity_id)
     conn.commit()
     if not deleted:
@@ -250,14 +278,16 @@ def remove_entity(entity_id: int, conn=Depends(get_db)):
 
 
 @app.delete("/articles/{article_id}/entities")
-def remove_article_entities(article_id: int, conn=Depends(get_db)):
+def remove_article_entities(article_id: int, conn: sqlite3.Connection = Depends(get_db)) -> dict:
     count = corrections.delete_entities_for_article(conn, article_id)
     conn.commit()
     return {"deleted": count}
 
 
 @app.patch("/articles/{article_id}/category")
-def patch_category(article_id: int, req: CategoryUpdateRequest, conn=Depends(get_db)):
+def patch_category(
+    article_id: int, req: CategoryUpdateRequest, conn: sqlite3.Connection = Depends(get_db)
+) -> dict:
     fields = req.model_dump(exclude_unset=True)
     updated = corrections.update_category(conn, article_id, **fields)
     conn.commit()
@@ -267,7 +297,7 @@ def patch_category(article_id: int, req: CategoryUpdateRequest, conn=Depends(get
 
 
 @app.delete("/articles/{article_id}/category", status_code=204)
-def remove_category(article_id: int, conn=Depends(get_db)):
+def remove_category(article_id: int, conn: sqlite3.Connection = Depends(get_db)) -> None:
     deleted = corrections.delete_category(conn, article_id)
     conn.commit()
     if not deleted:

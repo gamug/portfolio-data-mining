@@ -32,10 +32,13 @@ THIN_HTML = "<html><body><article><p>Breaking news update.</p></article></body><
 PAYWALL_HTML = "<html><body><p>Subscribe to continue reading this article.</p></body></html>"
 
 
-def test_classify_ok_article_uses_jsonld_fields_and_body_text():
+def test_classify_ok_article_uses_jsonld_fields_and_body_text() -> None:
     article = classify_and_build_article(
-        ROW, FULL_ARTICLE_HTML, http_status=200,
-        gics_sector="Industrials", gics_sub_industry="Industrial Conglomerates",
+        ROW,
+        FULL_ARTICLE_HTML,
+        http_status=200,
+        gics_sector="Industrials",
+        gics_sub_industry="Industrial Conglomerates",
         fetched_at="2026-08-10T12:00:00",
     )
 
@@ -50,37 +53,57 @@ def test_classify_ok_article_uses_jsonld_fields_and_body_text():
     assert article["extraction_method"] == "jsonld+trafilatura"
 
 
-def test_classify_falls_back_to_discovered_title_when_no_jsonld_or_meta_title():
+def test_classify_falls_back_to_discovered_title_when_no_jsonld_or_meta_title() -> None:
     html = "<html><body><article><p>" + " ".join(["word"] * 100) + "</p></article></body></html>"
 
     article = classify_and_build_article(
-        ROW, html, http_status=200, gics_sector=None, gics_sub_industry=None, fetched_at="2026-08-10T12:00:00",
+        ROW,
+        html,
+        http_status=200,
+        gics_sector=None,
+        gics_sub_industry=None,
+        fetched_at="2026-08-10T12:00:00",
     )
 
     assert article["title"] == "3M (MMM) Q4 Earnings Lag Estimates"
 
 
-def test_classify_thin_content():
+def test_classify_thin_content() -> None:
     article = classify_and_build_article(
-        ROW, THIN_HTML, http_status=200, gics_sector=None, gics_sub_industry=None, fetched_at="2026-08-10T12:00:00",
+        ROW,
+        THIN_HTML,
+        http_status=200,
+        gics_sector=None,
+        gics_sub_industry=None,
+        fetched_at="2026-08-10T12:00:00",
     )
 
     assert article["fetch_status"] == "thin_content"
 
 
-def test_classify_paywalled_domain_with_marker_text():
+def test_classify_paywalled_domain_with_marker_text() -> None:
     row = {**ROW, "domain": "seekingalpha.com"}
 
     article = classify_and_build_article(
-        row, PAYWALL_HTML, http_status=200, gics_sector=None, gics_sub_industry=None, fetched_at="2026-08-10T12:00:00",
+        row,
+        PAYWALL_HTML,
+        http_status=200,
+        gics_sector=None,
+        gics_sub_industry=None,
+        fetched_at="2026-08-10T12:00:00",
     )
 
     assert article["fetch_status"] == "paywalled"
 
 
-def test_classify_http_error_status_is_failed_regardless_of_content():
+def test_classify_http_error_status_is_failed_regardless_of_content() -> None:
     article = classify_and_build_article(
-        ROW, FULL_ARTICLE_HTML, http_status=404, gics_sector=None, gics_sub_industry=None, fetched_at="2026-08-10T12:00:00",
+        ROW,
+        FULL_ARTICLE_HTML,
+        http_status=404,
+        gics_sector=None,
+        gics_sub_industry=None,
+        fetched_at="2026-08-10T12:00:00",
     )
 
     assert article["fetch_status"] == "failed"

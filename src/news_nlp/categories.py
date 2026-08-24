@@ -19,15 +19,31 @@ Topics, Refinitiv/TRNA).
 # `hypothesis_topic_phrase` fills the NLI hypothesis template
 # "This example is about {phrase}." used by pipeline.run_category_stage.
 CATEGORY_LABELS = [
-    ("earnings_performance", "Earnings & Financial Performance", "earnings and financial performance"),
+    (
+        "earnings_performance",
+        "Earnings & Financial Performance",
+        "earnings and financial performance",
+    ),
     ("mergers_acquisitions", "Mergers & Acquisitions", "mergers and acquisitions"),
-    ("leadership_governance", "Corporate Leadership & Governance", "corporate leadership and governance"),
+    (
+        "leadership_governance",
+        "Corporate Leadership & Governance",
+        "corporate leadership and governance",
+    ),
     ("legal_regulatory", "Legal & Regulatory", "legal and regulatory matters"),
     ("product_innovation", "Product & Innovation", "products and innovation"),
-    ("capital_shareholder_returns", "Capital Actions & Shareholder Returns", "capital actions and shareholder returns"),
+    (
+        "capital_shareholder_returns",
+        "Capital Actions & Shareholder Returns",
+        "capital actions and shareholder returns",
+    ),
     ("labor_human_capital", "Labor & Human Capital", "labor and human capital"),
     ("market_analyst_sentiment", "Market & Analyst Sentiment", "market and analyst sentiment"),
-    ("partnerships_business_dev", "Partnerships & Business Development", "partnerships and business development"),
+    (
+        "partnerships_business_dev",
+        "Partnerships & Business Development",
+        "partnerships and business development",
+    ),
 ]
 
 # Catch-all for anything that doesn't clear CATEGORY_CONFIDENCE_THRESHOLD

@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
 from news_collector.connectors.base import BaseConnector, ConnectorConfig
 from news_collector.models import DateRange, SitemapEntry
 
-_ARTICLE_RE = re.compile(
-    r"https?://(?:www\.)?seekingalpha\.com/article/\d+-[a-z0-9-]+"
-)
+log = logging.getLogger(__name__)
+
+_ARTICLE_RE = re.compile(r"https?://(?:www\.)?seekingalpha\.com/article/\d+-[a-z0-9-]+")
 
 # Optional: SeekingAlpha official RapidAPI endpoint (requires key)
 _RAPIDAPI_HOST = "seeking-alpha.p.rapidapi.com"
@@ -41,9 +42,7 @@ class SeekingAlphaConnector(BaseConnector):
             client=client,
         )
 
-    def build_ddg_queries(
-        self, company: str, ticker: str, date_range: DateRange
-    ) -> list[str]:
+    def build_ddg_queries(self, company: str, ticker: str, date_range: DateRange) -> list[str]:
         queries = []
         for year in range(date_range.start.year, date_range.end.year + 1):
             queries.append(f"site:seekingalpha.com/article {ticker} {year}")
@@ -71,9 +70,11 @@ class SeekingAlphaConnector(BaseConnector):
             return []
 
         url = f"{_RAPIDAPI_BASE}/analysis/v2/list"
-        params = {
+        params: dict[str, str | int] = {
             "id": ticker.lower(),
-            "until": int(date_range.end.strftime("%s") if hasattr(date_range.end, "strftime") else 0),
+            "until": int(
+                date_range.end.strftime("%s") if hasattr(date_range.end, "strftime") else 0
+            ),
             "since": 0,
             "size": per_page,
             "number": page,
@@ -86,18 +87,17 @@ class SeekingAlphaConnector(BaseConnector):
             resp = await self._client.get(url, params=params, headers=headers)
             resp.raise_for_status()
             data = resp.json()
-            return data.get("data", [])
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("RapidAPI failed for %s: %s", ticker, exc)
+            log.warning("RapidAPI failed for %s: %s", ticker, exc)
             return []
+        else:
+            result: list[dict] = data.get("data", [])
+            return result
 
     def is_article_url(self, url: str) -> bool:
         return bool(_ARTICLE_RE.match(url))
 
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         if ticker.lower() in url.lower():
             return True
         pattern = self._company_pattern(company, ticker)

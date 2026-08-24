@@ -8,15 +8,16 @@ Only fetches files into the local Hugging Face cache -- does not load
 anything into memory or touch the GPU. Safe to re-run: huggingface_hub
 skips files that are already cached.
 """
+
 from huggingface_hub import snapshot_download
 from transformers import AutoConfig
 
-from .pipeline import SENTIMENT_MODEL, NER_MODEL, CATEGORY_MODEL, SUMMARY_MODEL
+from .pipeline import CATEGORY_MODEL, NER_MODEL, SENTIMENT_MODEL, SUMMARY_MODEL
 
 MODELS = (SENTIMENT_MODEL, NER_MODEL, CATEGORY_MODEL, SUMMARY_MODEL)
 
 
-def download_models():
+def download_models() -> None:
     for repo_id in MODELS:
         print(f"Fetching {repo_id}...")
         local_path = snapshot_download(repo_id)

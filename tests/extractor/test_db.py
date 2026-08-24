@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Iterator
 
 import pytest
 
@@ -52,7 +53,7 @@ CREATE TABLE discovered_urls (
 
 
 @pytest.fixture
-def conn():
+def conn() -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(":memory:")
     connection.execute(DISCOVERED_URLS_SCHEMA)
     connection.execute(
@@ -67,7 +68,9 @@ def conn():
     connection.close()
 
 
-def test_ensure_articles_table_creates_table_once_and_is_idempotent(conn):
+def test_ensure_articles_table_creates_table_once_and_is_idempotent(
+    conn: sqlite3.Connection,
+) -> None:
     ensure_articles_table(conn)
     ensure_articles_table(conn)  # must not raise on second call
 
@@ -77,7 +80,7 @@ def test_ensure_articles_table_creates_table_once_and_is_idempotent(conn):
     assert len(tables) == 1
 
 
-def test_get_pending_urls_returns_only_pending_rows(conn):
+def test_get_pending_urls_returns_only_pending_rows(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'fetched' WHERE id = 2")
     conn.commit()
 
@@ -88,7 +91,7 @@ def test_get_pending_urls_returns_only_pending_rows(conn):
     assert pending[0]["ticker"] == "MMM"
 
 
-def test_get_urls_by_status_filters_to_requested_statuses(conn):
+def test_get_urls_by_status_filters_to_requested_statuses(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -98,7 +101,7 @@ def test_get_urls_by_status_filters_to_requested_statuses(conn):
     assert failed[0]["url"] == "https://cnbc.com/b"
 
 
-def test_get_urls_by_status_accepts_multiple_statuses(conn):
+def test_get_urls_by_status_accepts_multiple_statuses(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -107,7 +110,7 @@ def test_get_urls_by_status_accepts_multiple_statuses(conn):
     assert [row["id"] for row in rows] == [1, 2]
 
 
-def test_get_urls_by_status_respects_limit(conn):
+def test_get_urls_by_status_respects_limit(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -116,7 +119,9 @@ def test_get_urls_by_status_respects_limit(conn):
     assert [row["id"] for row in rows] == [1]
 
 
-def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(conn):
+def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(
+    conn: sqlite3.Connection,
+) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -125,7 +130,7 @@ def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(conn):
     ]
 
 
-def test_save_article_then_mark_status_updates_discovered_urls(conn):
+def test_save_article_then_mark_status_updates_discovered_urls(conn: sqlite3.Connection) -> None:
     ensure_articles_table(conn)
 
     save_article(
@@ -162,7 +167,7 @@ def test_save_article_then_mark_status_updates_discovered_urls(conn):
     assert updated[1] == 200
 
 
-def test_get_status_counts_groups_discovered_urls_by_status(conn):
+def test_get_status_counts_groups_discovered_urls_by_status(conn: sqlite3.Connection) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'ok' WHERE id = 1")
     conn.commit()
 
@@ -171,7 +176,7 @@ def test_get_status_counts_groups_discovered_urls_by_status(conn):
     assert counts == {"ok": 1, "pending": 1}
 
 
-def test_ensure_articles_table_migrates_legacy_sector_column(conn):
+def test_ensure_articles_table_migrates_legacy_sector_column(conn: sqlite3.Connection) -> None:
     conn.execute(LEGACY_ARTICLES_SCHEMA)
     conn.execute(
         "INSERT INTO articles (id, ticker, company, sector, title, fetch_status) "
@@ -192,7 +197,9 @@ def test_ensure_articles_table_migrates_legacy_sector_column(conn):
     assert row == ("MMM", "3M", "headline", "ok")
 
 
-def test_save_article_with_id_not_in_discovered_urls_is_rejected_once_fk_enforced(conn):
+def test_save_article_with_id_not_in_discovered_urls_is_rejected_once_fk_enforced(
+    conn: sqlite3.Connection,
+) -> None:
     ensure_articles_table(conn)
     enable_foreign_keys(conn)
 

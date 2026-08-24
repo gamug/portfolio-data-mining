@@ -10,17 +10,21 @@ category) to stay well within a 6GB VRAM budget, and frees each model before
 loading the next. If a stage has nothing pending, it skips loading that
 stage's model entirely.
 """
+
 import gc
+import sqlite3
 import sys
+from collections.abc import Callable
+from typing import Any
 
 import torch
+from tqdm import tqdm
 from transformers import (
-    AutoTokenizer,
+    AutoModelForSeq2SeqLM,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification,
-    AutoModelForSeq2SeqLM,
+    AutoTokenizer,
 )
-from tqdm import tqdm
 
 from . import db
 from .categories import CATEGORY_LABELS, OTHER_LABEL
@@ -32,6 +36,9 @@ CATEGORY_MODEL = "MoritzLaurer/deberta-v3-base-zeroshot-v2.0"
 SUMMARY_MODEL = "sshleifer/distilbart-cnn-12-6"
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# (stage_name, processed_count, total_count) -> None
+ProgressCallback = Callable[[str, int, int], None]
 
 
 def _warn_if_cpu() -> None:
@@ -51,16 +58,15 @@ def _warn_if_cpu() -> None:
     """
     if DEVICE.type == "cpu":
         print(
-            "\n" + "!" * 78 +
-            "\n! WARNING: CUDA is not available -- this run will use the CPU.\n"
+            "\n" + "!" * 78 + "\n! WARNING: CUDA is not available -- this run will use the CPU.\n"
             "! Sentiment/NER/category/summarization models are dramatically slower\n"
             "! on CPU. If this machine has an NVIDIA GPU, torch is very likely\n"
             "! installed as the plain CPU-only wheel instead of a CUDA build --\n"
             "! reinstall it with:\n"
             "!     .venv\\Scripts\\python.exe -m pip install torch "
-            "--index-url https://download.pytorch.org/whl/cu124\n" +
-            "!" * 78 + "\n"
+            "--index-url https://download.pytorch.org/whl/cu124\n" + "!" * 78 + "\n"
         )
+
 
 # 9 mutually-exclusive labels via softmax over entailment logits gives a
 # uniform-chance baseline of ~0.11; requiring the winner to clear 0.4
@@ -95,13 +101,15 @@ SUMMARY_MIN_OUTPUT_TOKENS = 56
 MAX_REDUCE_PASSES = 6
 
 
-def free_gpu():
+def free_gpu() -> None:
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 
-def run_sentiment_stage(conn, limit=None, on_progress=None):
+def run_sentiment_stage(
+    conn: sqlite3.Connection, limit: int | None = None, on_progress: ProgressCallback | None = None
+) -> None:
     rows = db.fetch_pending_articles(conn, "article_sentiment", limit=limit)
     total = len(rows)
     print(f"\n=== Sentiment stage ({SENTIMENT_MODEL}) on {DEVICE} ===")
@@ -133,10 +141,11 @@ def run_sentiment_stage(conn, limit=None, on_progress=None):
 
             avg_probs = (probs_sum / total_weight).tolist()
             class_probs = {id2label[i]: p for i, p in enumerate(avg_probs)}
-            label = max(class_probs, key=class_probs.get)
+            label = max(class_probs, key=class_probs.__getitem__)
 
             db.write_sentiment(
-                conn, article_id,
+                conn,
+                article_id,
                 label=label,
                 score=class_probs[label],
                 positive=class_probs.get("positive", 0.0),
@@ -153,12 +162,17 @@ def run_sentiment_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
-def merge_bio_predictions(pred_ids, offsets, probs, id2label):
+def merge_bio_predictions(
+    pred_ids: list[int],
+    offsets: list[tuple[int, int]],
+    probs: list[list[float]],
+    id2label: dict[int, str],
+) -> list[dict[str, Any]]:
     """Convert token-level BIO predictions (with char offsets local to the
     chunk) into merged entity spans local to the chunk."""
-    entities = []
-    current = None
-    for i, (pred_id, (start, end)) in enumerate(zip(pred_ids, offsets)):
+    entities: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for i, (pred_id, (start, end)) in enumerate(zip(pred_ids, offsets, strict=False)):
         if start == end:  # special/padding token
             continue
         label = id2label[pred_id]
@@ -174,7 +188,12 @@ def merge_bio_predictions(pred_ids, offsets, probs, id2label):
         if bio == "B" or current is None or current["entity_type"] != tag_type:
             if current:
                 entities.append(current)
-            current = {"entity_type": tag_type, "start_char": start, "end_char": end, "scores": [score]}
+            current = {
+                "entity_type": tag_type,
+                "start_char": start,
+                "end_char": end,
+                "scores": [score],
+            }
         else:
             current["end_char"] = end
             current["scores"].append(score)
@@ -184,7 +203,9 @@ def merge_bio_predictions(pred_ids, offsets, probs, id2label):
     return entities
 
 
-def run_ner_stage(conn, limit=None, on_progress=None):
+def run_ner_stage(
+    conn: sqlite3.Connection, limit: int | None = None, on_progress: ProgressCallback | None = None
+) -> None:
     rows = db.fetch_pending_articles(conn, "article_entities", limit=limit)
     total = len(rows)
     print(f"\n=== NER stage ({NER_MODEL}) on {DEVICE} ===")
@@ -204,7 +225,10 @@ def run_ner_stage(conn, limit=None, on_progress=None):
 
         for ch in chunks:
             inputs = tokenizer(
-                ch.text, return_tensors="pt", truncation=True, max_length=512,
+                ch.text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
                 return_offsets_mapping=True,
             )
             offsets = inputs.pop("offset_mapping")[0].tolist()
@@ -218,13 +242,15 @@ def run_ner_stage(conn, limit=None, on_progress=None):
             for e in chunk_entities:
                 start = ch.start_char + e["start_char"]
                 end = ch.start_char + e["end_char"]
-                article_entities.append({
-                    "entity_type": e["entity_type"],
-                    "text": body_text[start:end],
-                    "start_char": start,
-                    "end_char": end,
-                    "score": sum(e["scores"]) / len(e["scores"]),
-                })
+                article_entities.append(
+                    {
+                        "entity_type": e["entity_type"],
+                        "text": body_text[start:end],
+                        "start_char": start,
+                        "end_char": end,
+                        "score": sum(e["scores"]) / len(e["scores"]),
+                    }
+                )
 
         article_entities = merge_char_spans(article_entities)
         db.write_entities(conn, article_id, article_entities, model_name=NER_MODEL)
@@ -251,14 +277,16 @@ def classify_category_scores(entail_logits: list[float]) -> tuple[str, float, di
     distribution is not).
     """
     probs = torch.softmax(torch.tensor(entail_logits), dim=0).tolist()
-    scores = {slug: p for (slug, _, _), p in zip(CATEGORY_LABELS, probs)}
-    winner_slug = max(scores, key=scores.get)
+    scores = {slug: p for (slug, _, _), p in zip(CATEGORY_LABELS, probs, strict=False)}
+    winner_slug = max(scores, key=scores.__getitem__)
     winner_score = scores[winner_slug]
     label = winner_slug if winner_score >= CATEGORY_CONFIDENCE_THRESHOLD else OTHER_LABEL
     return label, winner_score, scores
 
 
-def run_category_stage(conn, limit=None, on_progress=None):
+def run_category_stage(
+    conn: sqlite3.Connection, limit: int | None = None, on_progress: ProgressCallback | None = None
+) -> None:
     rows = db.fetch_pending_category_articles(conn, limit=limit)
     total = len(rows)
     print(f"\n=== Category stage ({CATEGORY_MODEL}) on {DEVICE} ===")
@@ -278,7 +306,7 @@ def run_category_stage(conn, limit=None, on_progress=None):
     idx = 0
     with tqdm(total=total, desc="category") as pbar:
         for batch_start in range(0, total, CATEGORY_BATCH_SIZE):
-            batch_rows = rows[batch_start:batch_start + CATEGORY_BATCH_SIZE]
+            batch_rows = rows[batch_start : batch_start + CATEGORY_BATCH_SIZE]
 
             # Title + lead chunk of body, not full-article chunking: each
             # label needs its own (premise, hypothesis) forward pass, so
@@ -287,8 +315,10 @@ def run_category_stage(conn, limit=None, on_progress=None):
             # article. News is inverted-pyramid, so the opening sentences
             # almost always establish the dominant topic.
             premises = []
-            for article_id, title, body_text in batch_rows:
-                chunks = chunk_text(f"{title}. {body_text}", tokenizer, max_tokens=CATEGORY_PREMISE_MAX_TOKENS)
+            for _article_id, title, body_text in batch_rows:
+                chunks = chunk_text(
+                    f"{title}. {body_text}", tokenizer, max_tokens=CATEGORY_PREMISE_MAX_TOKENS
+                )
                 premises.append(chunks[0].text if chunks else title)
 
             # Flatten to one (premise, hypothesis) pair per label per article
@@ -299,8 +329,12 @@ def run_category_stage(conn, limit=None, on_progress=None):
             batch_hypotheses = hypotheses * len(premises)
 
             inputs = tokenizer(
-                batch_premises, batch_hypotheses,
-                return_tensors="pt", truncation="only_first", padding=True, max_length=512,
+                batch_premises,
+                batch_hypotheses,
+                return_tensors="pt",
+                truncation="only_first",
+                padding=True,
+                max_length=512,
             ).to(DEVICE)
             with torch.no_grad():
                 logits = model(**inputs).logits
@@ -309,9 +343,16 @@ def run_category_stage(conn, limit=None, on_progress=None):
             # `logits`, not contiguous, and view() requires contiguity.
             entail_logits = logits[:, entailment_id].reshape(len(premises), n_labels)
 
-            for (article_id, _, _), article_logits in zip(batch_rows, entail_logits):
+            for (article_id, _, _), article_logits in zip(batch_rows, entail_logits, strict=False):
                 label, score, scores = classify_category_scores(article_logits.tolist())
-                db.write_category(conn, article_id, label=label, score=score, scores=scores, model_name=CATEGORY_MODEL)
+                db.write_category(
+                    conn,
+                    article_id,
+                    label=label,
+                    score=score,
+                    scores=scores,
+                    model_name=CATEGORY_MODEL,
+                )
 
                 idx += 1
                 pbar.update(1)
@@ -324,7 +365,7 @@ def run_category_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
-def _summarize_one(text: str, tokenizer, model, device) -> str:
+def _summarize_one(text: str, tokenizer: Any, model: Any, device: torch.device) -> str:
     """Run SUMMARY_MODEL (distilbart-cnn-12-6) generation on a single chunk
     that already fits within the model's input cap. Split out as its own
     function so tests can monkeypatch it and exercise
@@ -338,10 +379,16 @@ def _summarize_one(text: str, tokenizer, model, device) -> str:
             min_length=SUMMARY_MIN_OUTPUT_TOKENS,
             num_beams=4,
         )
-    return tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+    return str(tokenizer.decode(output_ids[0], skip_special_tokens=True)).strip()
 
 
-def hierarchical_summarize(text, tokenizer, model, device, max_input_tokens=SUMMARY_MAX_INPUT_TOKENS):
+def hierarchical_summarize(
+    text: str,
+    tokenizer: Any,
+    model: Any,
+    device: torch.device,
+    max_input_tokens: int = SUMMARY_MAX_INPUT_TOKENS,
+) -> tuple[str, int]:
     """Chunk `text` on sentence boundaries (chunk_text), summarize each
     chunk, and if more than one chunk resulted, recursively summarize the
     concatenated chunk-summaries until they collapse into a single pass.
@@ -371,7 +418,9 @@ def hierarchical_summarize(text, tokenizer, model, device, max_input_tokens=SUMM
     return summaries[0], num_chunks
 
 
-def run_company_summary_stage(conn, limit=None, on_progress=None):
+def run_company_summary_stage(
+    conn: sqlite3.Connection, limit: int | None = None, on_progress: ProgressCallback | None = None
+) -> None:
     rows = db.fetch_pending_company_summaries(conn, limit=limit)
     total = len(rows)
     print(f"\n=== Company summary stage ({SUMMARY_MODEL}) on {DEVICE} ===")
@@ -388,7 +437,9 @@ def run_company_summary_stage(conn, limit=None, on_progress=None):
         text = db.build_company_summary_input(row)
         summary_text, num_chunks = hierarchical_summarize(text, tokenizer, model, DEVICE)
         if summary_text:
-            db.write_company_summary(conn, row["article_id"], summary_text, num_chunks, SUMMARY_MODEL)
+            db.write_company_summary(
+                conn, row["article_id"], summary_text, num_chunks, SUMMARY_MODEL
+            )
             conn.commit()
 
         if on_progress:
@@ -398,7 +449,9 @@ def run_company_summary_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
-def run_sector_summary_stage(conn, limit=None, on_progress=None):
+def run_sector_summary_stage(
+    conn: sqlite3.Connection, limit: int | None = None, on_progress: ProgressCallback | None = None
+) -> None:
     groups = db.fetch_pending_sector_weeks(conn, limit=limit)
     total = len(groups)
     print(f"\n=== Sector summary stage ({SUMMARY_MODEL}) on {DEVICE} ===")
@@ -416,12 +469,18 @@ def run_sector_summary_stage(conn, limit=None, on_progress=None):
             conn, group["gics_sector"], group["gics_sub_industry"], group["week_start"]
         )
         if company_rows:
-            text = db.build_sector_summary_input(group["gics_sector"], group["gics_sub_industry"], company_rows)
+            text = db.build_sector_summary_input(
+                group["gics_sector"], group["gics_sub_industry"], company_rows
+            )
             summary_text, _ = hierarchical_summarize(text, tokenizer, model, DEVICE)
             if summary_text:
                 db.write_sector_summary(
-                    conn, group["gics_sector"], group["gics_sub_industry"],
-                    group["week_start"], group["week_end"], summary_text,
+                    conn,
+                    group["gics_sector"],
+                    group["gics_sub_industry"],
+                    group["week_start"],
+                    group["week_end"],
+                    summary_text,
                     num_articles=len(company_rows),
                     num_companies=len({r["company"] for r in company_rows}),
                     model_name=SUMMARY_MODEL,
@@ -435,7 +494,11 @@ def run_sector_summary_stage(conn, limit=None, on_progress=None):
     free_gpu()
 
 
-def run_pipeline(limit=None, summarize=False, on_progress=None):
+def run_pipeline(
+    limit: int | None = None,
+    summarize: bool = False,
+    on_progress: ProgressCallback | None = None,
+) -> None:
     _warn_if_cpu()
     conn = db.connect()
     db.init_schema(conn)
@@ -451,7 +514,7 @@ def run_pipeline(limit=None, summarize=False, on_progress=None):
     print("\nPipeline run complete.")
 
 
-def main():
+def main() -> None:
     limit = int(sys.argv[1]) if len(sys.argv) > 1 else None
     run_pipeline(limit=limit)
 

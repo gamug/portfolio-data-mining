@@ -6,8 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from news_collector.utils.url import normalize_url, extract_domain, is_valid_http_url
-
+from news_collector.utils.url import extract_domain, is_valid_http_url, normalize_url
 
 # ---------------------------------------------------------------------------
 # Unit tests

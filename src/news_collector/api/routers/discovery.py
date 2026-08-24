@@ -106,14 +106,22 @@ async def get_pending(
 async def query_urls(
     domain: str | None = Query(default=None, description="Filter by exact domain"),
     ticker: str | None = Query(default=None, description="Filter by exact ticker"),
-    company: str | None = Query(default=None, description="Filter by company name (substring match)"),
+    company: str | None = Query(
+        default=None, description="Filter by company name (substring match)"
+    ),
     status: str | None = Query(
         default=None, description="Filter by status: pending, fetched, failed, or skipped"
     ),
-    source: str | None = Query(default=None, description="Filter by discovery source: ddg, sitemap, rss, or api"),
+    source: str | None = Query(
+        default=None, description="Filter by discovery source: ddg, sitemap, rss, or api"
+    ),
     url_contains: str | None = Query(default=None, description="Filter by substring of the URL"),
-    pub_date_from: date | None = Query(default=None, description="Only rows with pub_date >= this date"),
-    pub_date_to: date | None = Query(default=None, description="Only rows with pub_date <= this date"),
+    pub_date_from: date | None = Query(
+        default=None, description="Only rows with pub_date >= this date"
+    ),
+    pub_date_to: date | None = Query(
+        default=None, description="Only rows with pub_date <= this date"
+    ),
     order_by: str = Query(
         default="discovered_at",
         description="Column to sort by: id, url, domain, company, ticker, source, discovered_at, pub_date, status",
@@ -151,4 +159,6 @@ async def query_urls(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     results = [_to_out(u) for u in rows]
-    return QueryResponse(total=total, count=len(results), limit=limit, offset=offset, results=results)
+    return QueryResponse(
+        total=total, count=len(results), limit=limit, offset=offset, results=results
+    )

@@ -12,6 +12,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\news_collector_cli.py stats
     .venv\\Scripts\\python.exe cli\\news_collector_cli.py export --output data/urls.csv
 """
+
 import sys
 from pathlib import Path
 
