@@ -2,15 +2,33 @@
 
 from __future__ import annotations
 
+import contextlib
+import csv
 import logging
 import sqlite3
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Sequence
+from typing import TypedDict
 
 from news_collector.models import DiscoveredURL
 
+
+class QueueStats(TypedDict):
+    total: int
+    by_status: dict[str, int]
+    by_domain: dict[str, int]
+
+
 log = logging.getLogger(__name__)
+
+_HTTP_SUCCESS_MIN = 200
+_HTTP_SUCCESS_MAX = 300  # exclusive -- half-open [200, 300) range
+
+
+def _is_success_status(status_code: int) -> bool:
+    return _HTTP_SUCCESS_MIN <= status_code < _HTTP_SUCCESS_MAX
+
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS discovered_urls (
@@ -157,8 +175,10 @@ class URLQueue:
         # executemany + INSERT OR IGNORE means lastrowid only reflects the final
         # statement, and ignored duplicates need their *existing* row's id too.
         placeholders = ",".join("(?,?)" for _ in urls)
+        # S608: `placeholders` is just a run of literal "(?,?)" -- values are
+        # bound as query params below, never interpolated into the SQL text.
         id_rows = self._conn.execute(
-            f"SELECT id, url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",
+            f"SELECT id, url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
             [v for u in urls for v in (u.url, u.ticker)],
         ).fetchall()
         id_by_key = {(r["url"], r["ticker"]): r["id"] for r in id_rows}
@@ -177,7 +197,7 @@ class URLQueue:
         is the intended way for downstream consumers to reference a specific row.
         """
         assert self._conn is not None
-        new_status = "fetched" if 200 <= status_code < 300 else "failed"
+        new_status = "fetched" if _is_success_status(status_code) else "failed"
         self._conn.execute(
             "UPDATE discovered_urls SET status=?, fetch_status_code=? WHERE url=?",
             (new_status, status_code, url),
@@ -205,7 +225,7 @@ class URLQueue:
         to this table should use id-based updates rather than the url string.
         """
         assert self._conn is not None
-        new_status = "fetched" if 200 <= status_code < 300 else "failed"
+        new_status = "fetched" if _is_success_status(status_code) else "failed"
         self._conn.execute(
             "UPDATE discovered_urls SET status=?, fetch_status_code=? WHERE id=?",
             (new_status, status_code, url_id),
@@ -224,9 +244,7 @@ class URLQueue:
     def get_by_id(self, url_id: int) -> DiscoveredURL | None:
         """Fetch a single `discovered_urls` row by its primary key `id`, or None if not found."""
         assert self._conn is not None
-        row = self._conn.execute(
-            "SELECT * FROM discovered_urls WHERE id=?", (url_id,)
-        ).fetchone()
+        row = self._conn.execute("SELECT * FROM discovered_urls WHERE id=?", (url_id,)).fetchone()
         return _row_to_discovered_url(row) if row else None
 
     # ------------------------------------------------------------------
@@ -250,8 +268,10 @@ class URLQueue:
         if not domains:
             return set()
         placeholders = ",".join("?" for _ in domains)
+        # S608: `placeholders` is just a run of literal "?" -- values are
+        # bound as query params below, never interpolated into the SQL text.
         rows = self._conn.execute(
-            f"SELECT ticker, domain FROM discovery_progress "
+            f"SELECT ticker, domain FROM discovery_progress "  # noqa: S608
             f"WHERE domain IN ({placeholders}) AND start_date=? AND end_date=?",
             [*domains, start_date.isoformat(), end_date.isoformat()],
         ).fetchall()
@@ -338,7 +358,9 @@ class URLQueue:
         """
         assert self._conn is not None, "Call initialize() first"
         if order_by not in _QUERY_ORDER_COLUMNS:
-            raise ValueError(f"order_by must be one of {sorted(_QUERY_ORDER_COLUMNS)}, got {order_by!r}")
+            raise ValueError(
+                f"order_by must be one of {sorted(_QUERY_ORDER_COLUMNS)}, got {order_by!r}"
+            )
 
         clauses: list[str] = []
         params: list = []
@@ -367,21 +389,26 @@ class URLQueue:
             clauses.append("pub_date <= ?")
             params.append(pub_date_to.isoformat())
 
+        # S608: `where` is built only from the hardcoded "col=?"/"col LIKE ?"
+        # fragments above (values are bound as query params, never
+        # interpolated); `order_by` is checked against the _QUERY_ORDER_COLUMNS
+        # allowlist above and `direction` is one of two hardcoded literals.
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
         total = self._conn.execute(
-            f"SELECT COUNT(*) FROM discovered_urls{where}", params
+            f"SELECT COUNT(*) FROM discovered_urls{where}",  # noqa: S608
+            params,
         ).fetchone()[0]
 
         direction = "DESC" if descending else "ASC"
         page_query = (
-            f"SELECT * FROM discovered_urls{where} "
+            f"SELECT * FROM discovered_urls{where} "  # noqa: S608
             f"ORDER BY {order_by} {direction} LIMIT ? OFFSET ?"
         )
         rows = self._conn.execute(page_query, [*params, limit, offset]).fetchall()
         return [_row_to_discovered_url(r) for r in rows], total
 
-    def stats(self) -> dict[str, int | dict]:
+    def stats(self) -> QueueStats:
         """Return summary counts for monitoring / CLI display."""
         assert self._conn is not None
         total = self._conn.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()[0]
@@ -407,8 +434,6 @@ class URLQueue:
         this CSV can carry it as a foreign key back to this row (e.g. to report
         fetch status via mark_fetched_by_id()) instead of re-matching on url text.
         """
-        import csv
-
         assert self._conn is not None
         rows = self._conn.execute(
             "SELECT id, url, domain, company, ticker, source, pub_date, title "
@@ -417,7 +442,9 @@ class URLQueue:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
-            writer.writerow(["id", "url", "domain", "company", "ticker", "source", "pub_date", "title"])
+            writer.writerow(
+                ["id", "url", "domain", "company", "ticker", "source", "pub_date", "title"]
+            )
             writer.writerows(rows)
         log.info("Exported %d pending URLs to %s", len(rows), path)
         return len(rows)
@@ -431,10 +458,8 @@ class URLQueue:
 def _row_to_discovered_url(row: sqlite3.Row) -> DiscoveredURL:
     pub_date: date | None = None
     if row["pub_date"]:
-        try:
+        with contextlib.suppress(ValueError):
             pub_date = date.fromisoformat(row["pub_date"])
-        except ValueError:
-            pass
 
     return DiscoveredURL(
         url=row["url"],

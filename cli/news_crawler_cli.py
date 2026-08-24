@@ -14,11 +14,12 @@ Usage:
     .venv\\Scripts\\python.exe cli\\news_crawler_cli.py --limit 20
     .venv\\Scripts\\python.exe cli\\news_crawler_cli.py --retry-failed
 """
+
 import argparse
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -48,27 +49,30 @@ load_dotenv()
 DEFAULT_DB = os.environ.get("DATABASE_URL", "data/urls.db")
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--limit", type=int, default=None, help="Max URLs to process this run")
     parser.add_argument(
-        "--retry-failed", action="store_true",
+        "--retry-failed",
+        action="store_true",
         help="Process rows with status='failed' instead of 'pending' -- retries URLs that "
-             "previously came back with an HTTP error or a network failure (fetch_status="
-             "'failed', e.g. http_status>=400 or a connection/timeout error), without a "
-             "separate reset-to-pending step. 'paywalled'/'thin_content' rows are left alone "
-             "since re-fetching them won't change the outcome.",
+        "previously came back with an HTTP error or a network failure (fetch_status="
+        "'failed', e.g. http_status>=400 or a connection/timeout error), without a "
+        "separate reset-to-pending step. 'paywalled'/'thin_content' rows are left alone "
+        "since re-fetching them won't change the outcome.",
     )
     parser.add_argument("--default-concurrency", type=int, default=2)
     parser.add_argument(
-        "--cnbc-concurrency", type=int, default=4,
+        "--cnbc-concurrency",
+        type=int,
+        default=4,
         help="cnbc.com is ~86%% of discovered URLs; give it its own budget",
     )
     return parser.parse_args()
 
 
-async def run(args) -> dict:
+async def run(args: argparse.Namespace) -> dict:
     conn = connect(args.db)
     ensure_articles_table(conn)
 
@@ -89,10 +93,12 @@ async def run(args) -> dict:
         gics_map = await load_gics_map(client)
         tasks = [
             process_one(
-                client, scheduler, dict(row),
+                client,
+                scheduler,
+                dict(row),
                 gics_sector=gics_map.get(row["ticker"], {}).get("sector"),
                 gics_sub_industry=gics_map.get(row["ticker"], {}).get("sub_industry"),
-                fetched_at=datetime.now(timezone.utc).isoformat(),
+                fetched_at=datetime.now(UTC).isoformat(),
             )
             for row in rows
         ]
@@ -110,7 +116,7 @@ async def run(args) -> dict:
     return counts
 
 
-def main():
+def main() -> None:
     args = parse_args()
     try:
         counts = asyncio.run(run(args))

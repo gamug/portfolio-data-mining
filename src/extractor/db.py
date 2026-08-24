@@ -4,6 +4,7 @@ Reads pending rows from `discovered_urls` (produced by the upstream
 discovery crawler) and writes results into a new `articles` table in the
 same database. See CLAUDE.md for the schema rationale.
 """
+
 import sqlite3
 
 ARTICLES_SCHEMA = """
@@ -115,8 +116,11 @@ def get_urls_by_status(
     """
     conn.row_factory = sqlite3.Row
     placeholders = ", ".join("?" for _ in statuses)
+    # S608: `placeholders` is just a run of literal "?" characters (one per
+    # `statuses` item) -- the actual values are bound as query params below,
+    # never interpolated into the SQL text.
     sql = (
-        f"SELECT id, url, domain, company, ticker, source, title "
+        f"SELECT id, url, domain, company, ticker, source, title "  # noqa: S608
         f"FROM discovered_urls WHERE status IN ({placeholders}) ORDER BY id"
     )
     params: list = list(statuses)
@@ -141,8 +145,10 @@ def save_article(conn: sqlite3.Connection, article: dict) -> None:
     placeholders = ", ".join("?" for _ in ARTICLE_COLUMNS)
     columns = ", ".join(ARTICLE_COLUMNS)
     values = [article.get(col) for col in ARTICLE_COLUMNS]
+    # S608: `columns`/`placeholders` come from the fixed ARTICLE_COLUMNS tuple,
+    # not caller input -- values are bound as query params, never interpolated.
     conn.execute(
-        f"INSERT OR REPLACE INTO articles ({columns}) VALUES ({placeholders})",
+        f"INSERT OR REPLACE INTO articles ({columns}) VALUES ({placeholders})",  # noqa: S608
         values,
     )
     conn.commit()

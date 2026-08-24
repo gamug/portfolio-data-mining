@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import httpx
 
@@ -11,9 +11,7 @@ from news_collector.connectors.base import BaseConnector, ConnectorConfig
 from news_collector.models import DateRange, SitemapEntry
 
 # FT article URLs: https://www.ft.com/content/<uuid>
-_ARTICLE_RE = re.compile(
-    r"https?://(?:www\.)?ft\.com/content/[0-9a-f-]{36}$"
-)
+_ARTICLE_RE = re.compile(r"https?://(?:www\.)?ft\.com/content/[0-9a-f-]{36}$")
 
 # FT sitemap index
 _FT_SITEMAP_INDEX = "https://www.ft.com/sitemap-index.xml"
@@ -44,9 +42,7 @@ class FTConnector(BaseConnector):
             client=client,
         )
 
-    def build_ddg_queries(
-        self, company: str, ticker: str, date_range: DateRange
-    ) -> list[str]:
+    def build_ddg_queries(self, company: str, ticker: str, date_range: DateRange) -> list[str]:
         queries = []
         for year in range(date_range.start.year, date_range.end.year + 1):
             queries.append(f"site:ft.com {ticker} {year}")
@@ -60,8 +56,6 @@ class FTConnector(BaseConnector):
     def is_article_url(self, url: str) -> bool:
         return bool(_ARTICLE_RE.match(url))
 
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         pattern = self._company_pattern(company, ticker)
         return self._matches_any(pattern, title, url)

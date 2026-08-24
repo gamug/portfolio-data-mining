@@ -18,11 +18,13 @@ Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py market-peers AAPL
     .venv\\Scripts\\python.exe cli\\pricing_cli.py market-financials AAPL --metric all
 """
+
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -36,15 +38,15 @@ from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
 
 
-def print_json(data) -> None:
+def print_json(data: Any) -> None:
     print(json.dumps(data, indent=2, default=str))
 
 
-def cmd_universe(args, **_clients) -> None:
+def cmd_universe(args: argparse.Namespace, **_clients: Any) -> None:
     print_json(list_universe(sector=args.sector))
 
 
-def cmd_resolve(args, **_clients) -> None:
+def cmd_resolve(args: argparse.Namespace, **_clients: Any) -> None:
     result = resolve_symbol(args.query)
     if result is None:
         print(f"'{args.query}' not found in tracked universe.", file=sys.stderr)
@@ -52,48 +54,68 @@ def cmd_resolve(args, **_clients) -> None:
     print_json(result)
 
 
-def cmd_pricing(args, price_fetcher, **_clients) -> None:
+def cmd_pricing(
+    args: argparse.Namespace, price_fetcher: StockPriceFetcher, **_clients: Any
+) -> None:
     print_json(price_fetcher.get_daily_candles(args.ticker.upper(), args.start, args.end))
 
 
-def cmd_news_company(args, news_fetcher, **_clients) -> None:
+def cmd_news_company(
+    args: argparse.Namespace, news_fetcher: FinnhubNewsFetcher, **_clients: Any
+) -> None:
     articles = news_fetcher.fetch_ticker_news(args.ticker.upper(), args.start, args.end)
     print_json([news_fetcher._normalize_article(args.ticker.upper(), a) for a in articles])
 
 
-def cmd_news_market(args, news_fetcher, **_clients) -> None:
+def cmd_news_market(
+    args: argparse.Namespace, news_fetcher: FinnhubNewsFetcher, **_clients: Any
+) -> None:
     print_json(news_fetcher.fetch_general_news(category=args.category))
 
 
-def cmd_news_sentiment(args, news_fetcher, **_clients) -> None:
+def cmd_news_sentiment(
+    args: argparse.Namespace, news_fetcher: FinnhubNewsFetcher, **_clients: Any
+) -> None:
     print_json(news_fetcher.fetch_news_sentiment(args.ticker.upper()))
 
 
-def cmd_market_profile(args, market_client, **_clients) -> None:
+def cmd_market_profile(
+    args: argparse.Namespace, market_client: MarketDataClient, **_clients: Any
+) -> None:
     print_json(market_client.get_company_profile(args.ticker.upper()))
 
 
-def cmd_market_peers(args, market_client, **_clients) -> None:
+def cmd_market_peers(
+    args: argparse.Namespace, market_client: MarketDataClient, **_clients: Any
+) -> None:
     print_json(market_client.get_company_peers(args.ticker.upper()))
 
 
-def cmd_market_financials(args, market_client, **_clients) -> None:
+def cmd_market_financials(
+    args: argparse.Namespace, market_client: MarketDataClient, **_clients: Any
+) -> None:
     print_json(market_client.get_basic_financials(args.ticker.upper(), metric=args.metric))
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("universe", help="List the tracked S&P 500 universe")
-    p.add_argument("--sector", default=None, help="Filter by GICS Sector, e.g. 'Information Technology'")
+    p.add_argument(
+        "--sector", default=None, help="Filter by GICS Sector, e.g. 'Information Technology'"
+    )
     p.set_defaults(func=cmd_universe)
 
     p = sub.add_parser("resolve", help="Resolve a ticker or company name to its universe row")
     p.add_argument("query")
     p.set_defaults(func=cmd_resolve)
 
-    p = sub.add_parser("pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)")
+    p = sub.add_parser(
+        "pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)"
+    )
     p.add_argument("ticker")
     p.add_argument("--start", required=True, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--end", required=True, help="YYYY-MM-DD (inclusive)")
@@ -113,7 +135,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("ticker")
     p.set_defaults(func=cmd_news_sentiment)
 
-    p = sub.add_parser("market-profile", help="Company profile (exchange, market cap, industry, ...)")
+    p = sub.add_parser(
+        "market-profile", help="Company profile (exchange, market cap, industry, ...)"
+    )
     p.add_argument("ticker")
     p.set_defaults(func=cmd_market_profile)
 

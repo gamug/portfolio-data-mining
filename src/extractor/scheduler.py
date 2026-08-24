@@ -4,12 +4,16 @@ cnbc.com is ~86% of discovered URLs (see CLAUDE.md) and needs its own
 budget so the pipeline doesn't hammer -- or get itself rate-limited by --
 a single dominant domain while starving/serializing everything else.
 """
+
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 
 class DomainScheduler:
-    def __init__(self, default_concurrency: int = 2, domain_concurrency: dict | None = None):
+    def __init__(
+        self, default_concurrency: int = 2, domain_concurrency: dict[str, int] | None = None
+    ) -> None:
         self._default_concurrency = default_concurrency
         self._domain_concurrency = domain_concurrency or {}
         self._semaphores: dict[str, asyncio.Semaphore] = {}
@@ -23,7 +27,7 @@ class DomainScheduler:
         return self._semaphores[domain]
 
     @asynccontextmanager
-    async def slot(self, domain: str):
+    async def slot(self, domain: str) -> AsyncIterator[None]:
         semaphore = self._semaphore_for(domain)
         async with semaphore:
             yield

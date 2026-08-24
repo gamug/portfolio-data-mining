@@ -6,14 +6,19 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 import httpx
 
-from news_collector.models import DateRange, SitemapEntry  # noqa: F401 – re-exported for connectors
+from news_collector.models import DateRange, SitemapEntry
+from news_collector.utils.http import fetch_text
 
 log = logging.getLogger(__name__)
+
+# Below this length a company's first word (e.g. "3M", "AT&T") is too short
+# to be a reliable standalone match token, so fall back to the full name.
+_MIN_TOKEN_LEN = 3
 
 
 @dataclass
@@ -53,9 +58,7 @@ class BaseConnector(ABC):
     ) -> None:
         self.config = config
         self._client = client
-        self._semaphore = asyncio.Semaphore(
-            max(1, int(config.requests_per_second))
-        )
+        self._semaphore = asyncio.Semaphore(max(1, int(config.requests_per_second)))
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -77,9 +80,7 @@ class BaseConnector(ABC):
         """
 
     @abstractmethod
-    async def sitemap_urls(
-        self, date_range: DateRange
-    ) -> AsyncIterator[SitemapEntry]:
+    async def sitemap_urls(self, date_range: DateRange) -> AsyncIterator[SitemapEntry]:
         """
         Async-generate SitemapEntry objects for all article URLs available
         via sitemap/RSS/API that fall within date_range.
@@ -88,6 +89,12 @@ class BaseConnector(ABC):
         - Only yields entries whose lastmod is within date_range (or None)
         - Yields nothing when config.sitemap_roots and rss_feeds are both empty
         """
+        # Unreachable, but its mere presence tells mypy this is an async
+        # generator (matching every real override below, which use the same
+        # `return` / `yield` pair), not a coroutine that returns an
+        # AsyncIterator.
+        return
+        yield
 
     @abstractmethod
     def is_article_url(self, url: str) -> bool:
@@ -100,9 +107,7 @@ class BaseConnector(ABC):
         """
 
     @abstractmethod
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         """
         Return True if the article URL or title is relevant to company/ticker.
 
@@ -117,16 +122,14 @@ class BaseConnector(ABC):
 
     async def _fetch(self, url: str) -> str:
         """Rate-limited HTTP GET returning response text."""
-        from news_collector.utils.http import fetch_text
-
         async with self._semaphore:
             return await fetch_text(self._client, url, extra_headers=self.config.headers)
 
     def _company_pattern(self, company: str, ticker: str) -> re.Pattern[str]:
         """Compile a regex that matches company name tokens or ticker."""
         # Use the first word of company name if it's long enough (>3 chars)
-        first_word = company.split()[0] if company.split() else company
-        token = first_word if len(first_word) > 3 else company
+        first_word = company.split(maxsplit=1)[0] if company.split() else company
+        token = first_word if len(first_word) > _MIN_TOKEN_LEN else company
         # Escape for regex safety
         escaped_name = re.escape(token)
         escaped_ticker = re.escape(ticker)

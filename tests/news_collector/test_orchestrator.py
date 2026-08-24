@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,7 @@ from news_collector.storage.queue import URLQueue
 
 
 @pytest.fixture
-def queue(tmp_path) -> URLQueue:
+def queue(tmp_path: Path) -> URLQueue:
     q = URLQueue(str(tmp_path / "resume_test.db"))
     q.initialize()
     return q
@@ -28,12 +29,14 @@ def _orchestrator(queue: URLQueue) -> DiscoveryOrchestrator:
 
 async def test_resume_skips_already_completed_pairs(queue: URLQueue) -> None:
     date_range = DateRange(start=date(2024, 1, 1), end=date(2024, 1, 31))
-    queue.mark_pair_completed("AAPL", "cnbc.com", date_range.start, date_range.end, inserted_count=3)
+    queue.mark_pair_completed(
+        "AAPL", "cnbc.com", date_range.start, date_range.end, inserted_count=3
+    )
 
     orch = _orchestrator(queue)
     seen: list[tuple[str, str]] = []
 
-    async def fake_run_one(company: Company, domain: str, dr: DateRange) -> PartialStats:
+    async def fake_run_one(company: Company, domain: str, date_range: DateRange) -> PartialStats:
         seen.append((company.ticker, domain))
         return PartialStats(company=company.name, domain=domain, inserted_count=1)
 
@@ -51,12 +54,14 @@ async def test_resume_skips_already_completed_pairs(queue: URLQueue) -> None:
 
 async def test_without_resume_flag_reruns_everything(queue: URLQueue) -> None:
     date_range = DateRange(start=date(2024, 1, 1), end=date(2024, 1, 31))
-    queue.mark_pair_completed("AAPL", "cnbc.com", date_range.start, date_range.end, inserted_count=3)
+    queue.mark_pair_completed(
+        "AAPL", "cnbc.com", date_range.start, date_range.end, inserted_count=3
+    )
 
     orch = _orchestrator(queue)
     seen: list[tuple[str, str]] = []
 
-    async def fake_run_one(company: Company, domain: str, dr: DateRange) -> PartialStats:
+    async def fake_run_one(company: Company, domain: str, date_range: DateRange) -> PartialStats:
         seen.append((company.ticker, domain))
         return PartialStats(company=company.name, domain=domain, inserted_count=1)
 
@@ -76,7 +81,7 @@ async def test_resume_does_not_skip_a_different_date_range(queue: URLQueue) -> N
     orch = _orchestrator(queue)
     seen: list[tuple[str, str]] = []
 
-    async def fake_run_one(company: Company, domain: str, dr: DateRange) -> PartialStats:
+    async def fake_run_one(company: Company, domain: str, date_range: DateRange) -> PartialStats:
         seen.append((company.ticker, domain))
         return PartialStats(company=company.name, domain=domain, inserted_count=1)
 

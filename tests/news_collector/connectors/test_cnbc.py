@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
+from datetime import date
 from unittest.mock import MagicMock
+
+import pytest
 
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.models import DateRange
-from datetime import date
 
 
 @pytest.fixture

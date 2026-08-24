@@ -20,12 +20,11 @@ import os
 import sys
 from datetime import date
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -47,9 +46,18 @@ app = FastAPI(
     version="1.0.0",
     openapi_tags=[
         {"name": "Universe", "description": "Tracked S&P 500 ticker/company universe"},
-        {"name": "Pricing", "description": "Daily stock price history (Finnhub, falls back to yfinance)"},
-        {"name": "News", "description": "Finnhub company news, general market news, and news sentiment"},
-        {"name": "Market Data", "description": "Finnhub company profile, peers, and basic financials"},
+        {
+            "name": "Pricing",
+            "description": "Daily stock price history (Finnhub, falls back to yfinance)",
+        },
+        {
+            "name": "News",
+            "description": "Finnhub company news, general market news, and news sentiment",
+        },
+        {
+            "name": "Market Data",
+            "description": "Finnhub company profile, peers, and basic financials",
+        },
     ],
     swagger_ui_parameters={"docExpansion": "none"},
 )
@@ -60,7 +68,7 @@ market_client = MarketDataClient(finnhub_api_key=FINNHUB_API_KEY)
 
 
 @app.exception_handler(UpstreamDataError)
-async def upstream_error_handler(request, exc: UpstreamDataError):
+async def upstream_error_handler(request: Request, exc: UpstreamDataError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={"success": False, "provider": exc.provider, "error": exc.message},
@@ -68,7 +76,7 @@ async def upstream_error_handler(request, exc: UpstreamDataError):
 
 
 @app.get("/")
-def welcome():
+def welcome() -> RedirectResponse:
     """Redirect root URL to the interactive docs."""
     return RedirectResponse(url="/docs")
 
@@ -77,13 +85,17 @@ def welcome():
 # Universe
 # ---------------------------------------------------------------------------
 @app.get("/universe", tags=["Universe"])
-def universe(sector: Optional[str] = Query(None, description="Filter by GICS Sector, e.g. 'Information Technology'")):
+def universe(
+    sector: str | None = Query(
+        None, description="Filter by GICS Sector, e.g. 'Information Technology'"
+    ),
+) -> list[dict]:
     """List the tracked S&P 500 ticker/company universe, optionally filtered by sector."""
     return list_universe(sector=sector)
 
 
 @app.get("/universe/resolve/{query}", tags=["Universe"])
-def universe_resolve(query: str):
+def universe_resolve(query: str) -> dict:
     """Resolve a ticker symbol or company name to its canonical universe row."""
     row = resolve_symbol(query)
     if row is None:
@@ -99,7 +111,7 @@ def daily_pricing(
     ticker: str,
     start_date: date = Query(..., description="Start date, YYYY-MM-DD (inclusive)"),
     end_date: date = Query(..., description="End date, YYYY-MM-DD (inclusive)"),
-):
+) -> JSONResponse:
     """
     Daily OHLCV price history for a ticker over a date range.
 
@@ -124,7 +136,7 @@ def company_news(
     ticker: str,
     start_date: date = Query(..., description="Start date, YYYY-MM-DD (inclusive)"),
     end_date: date = Query(..., description="End date, YYYY-MM-DD (inclusive)"),
-):
+) -> list[dict]:
     """
     Daily historical news for a company. NOTE: Finnhub's free tier only
     serves company news for roughly the last 12 months -- requests further
@@ -137,40 +149,50 @@ def company_news(
 
 
 @app.get("/news/market", tags=["News"])
-def market_news(category: str = Query("general", description="general | forex | crypto | merger")):
+def market_news(
+    category: str = Query("general", description="general | forex | crypto | merger"),
+) -> list[dict]:
     """General market news (not tied to a specific ticker)."""
     return news_fetcher.fetch_general_news(category=category)
 
 
 @app.get("/news/sentiment/{ticker}", tags=["News"])
-def news_sentiment(ticker: str):
+def news_sentiment(ticker: str) -> JSONResponse:
     """Finnhub news-sentiment score (buzz + bullish/bearish split) for a ticker."""
     result = news_fetcher.fetch_news_sentiment(ticker.upper())
-    return JSONResponse(status_code=200 if result["success"] else 502, content=jsonable_encoder(result))
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 # ---------------------------------------------------------------------------
 # Market Data
 # ---------------------------------------------------------------------------
 @app.get("/market/profile/{ticker}", tags=["Market Data"])
-def company_profile(ticker: str):
+def company_profile(ticker: str) -> JSONResponse:
     """Company profile: exchange, market cap, industry, shares outstanding, etc."""
     result = market_client.get_company_profile(ticker.upper())
-    return JSONResponse(status_code=200 if result["success"] else 502, content=jsonable_encoder(result))
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 @app.get("/market/peers/{ticker}", tags=["Market Data"])
-def company_peers(ticker: str):
+def company_peers(ticker: str) -> JSONResponse:
     """Sector/industry comparable tickers."""
     result = market_client.get_company_peers(ticker.upper())
-    return JSONResponse(status_code=200 if result["success"] else 502, content=jsonable_encoder(result))
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 @app.get("/market/basic_financials/{ticker}", tags=["Market Data"])
-def basic_financials(ticker: str, metric: str = "all"):
+def basic_financials(ticker: str, metric: str = "all") -> JSONResponse:
     """Basic financial metrics (valuation ratios, margins, growth, etc.)."""
     result = market_client.get_basic_financials(ticker.upper(), metric=metric)
-    return JSONResponse(status_code=200 if result["success"] else 502, content=jsonable_encoder(result))
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 if __name__ == "__main__":

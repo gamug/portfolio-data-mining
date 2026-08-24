@@ -26,6 +26,7 @@ Run:
 
 import logging
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 # Repo root (not src/) -- needed so `apps.news_collector_api` etc. are
@@ -62,7 +63,7 @@ for prefix, module_name, label in _SERVICES:
         _mounted.append((prefix, label))
         _mounted_apps.append(module.app)
         log.info("Will mount %s at %s", label, prefix)
-    except Exception as exc:  # noqa: BLE001 - deliberately broad: any one
+    except Exception as exc:
         # service's missing env var / missing dependency shouldn't take
         # down the other four.
         _skipped.append((prefix, f"{label} -- {exc.__class__.__name__}: {exc}"))
@@ -70,7 +71,7 @@ for prefix, module_name, label in _SERVICES:
 
 
 @asynccontextmanager
-async def gateway_lifespan(app: FastAPI):
+async def gateway_lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Run every mounted sub-app's own `lifespan`.
 
     `app.mount()` only wires up HTTP routing -- it does NOT forward the ASGI
@@ -109,7 +110,7 @@ app = FastAPI(
     lifespan=gateway_lifespan,
 )
 
-for prefix, sub_app in zip((p for p, _ in _mounted), _mounted_apps):
+for prefix, sub_app in zip((p for p, _ in _mounted), _mounted_apps, strict=False):
     app.mount(prefix, sub_app)
 
 
@@ -121,11 +122,7 @@ def landing() -> str:
         for prefix, label in _mounted
     )
     skipped_items = "".join(f"<li>{label}</li>" for _, label in _skipped)
-    skipped_block = (
-        f"<h2>Not mounted</h2><ul>{skipped_items}</ul>"
-        if _skipped
-        else ""
-    )
+    skipped_block = f"<h2>Not mounted</h2><ul>{skipped_items}</ul>" if _skipped else ""
     return (
         "<html><body style='font-family: sans-serif; max-width: 640px; margin: 3rem auto;'>"
         "<h1>Portfolio Data Mining — Gateway</h1>"

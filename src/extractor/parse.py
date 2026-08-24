@@ -4,7 +4,10 @@ Primary source of truth for title/author/pub_date is embedded NewsArticle
 JSON-LD (or meta tags as fallback) -- see CLAUDE.md for why this is
 preferred over trafilatura's own metadata guesses or an LLM.
 """
+
 import json
+from collections.abc import Iterator
+from typing import Any
 
 import trafilatura
 from bs4 import BeautifulSoup
@@ -44,22 +47,22 @@ def is_probably_paywalled(html: str, domain: str) -> bool:
     return any(marker in lowered for marker in PAYWALL_MARKERS)
 
 
-def detect_language(text: str):
+def detect_language(text: str) -> str | None:
     if not text.strip():
         return None
     try:
-        return detect(text)
+        return str(detect(text))
     except LangDetectException:
         return None
 
 
-def extract_jsonld_article(html: str) -> dict:
+def extract_jsonld_article(html: str) -> dict[str, str | None]:
     """Pull title/author/pub_date from the first Article-like JSON-LD block.
 
     Returns a dict with keys "title", "author", "pub_date", any of which
     may be None if not present.
     """
-    result = {"title": None, "author": None, "pub_date": None}
+    result: dict[str, str | None] = {"title": None, "author": None, "pub_date": None}
 
     soup = BeautifulSoup(html, "html.parser")
     for script in soup.find_all("script", type="application/ld+json"):
@@ -86,7 +89,9 @@ def extract_jsonld_article(html: str) -> dict:
     return _extract_meta_fallback(soup, result)
 
 
-def _extract_meta_fallback(soup: BeautifulSoup, result: dict) -> dict:
+def _extract_meta_fallback(
+    soup: BeautifulSoup, result: dict[str, str | None]
+) -> dict[str, str | None]:
     result["title"] = result["title"] or _meta_content(
         soup, [("property", "og:title"), ("name", "title")]
     )
@@ -102,15 +107,15 @@ def _extract_meta_fallback(soup: BeautifulSoup, result: dict) -> dict:
     return result
 
 
-def _meta_content(soup: BeautifulSoup, attr_pairs):
+def _meta_content(soup: BeautifulSoup, attr_pairs: list[tuple[str, str]]) -> str | None:
     for attr, value in attr_pairs:
         tag = soup.find("meta", attrs={attr: value})
         if tag and tag.get("content"):
-            return tag["content"]
+            return str(tag["content"])
     return None
 
 
-def _flatten_jsonld(data):
+def _flatten_jsonld(data: Any) -> Iterator[Any]:
     """Yield candidate nodes from a JSON-LD payload (object, list, or @graph)."""
     if isinstance(data, list):
         for item in data:
@@ -121,7 +126,7 @@ def _flatten_jsonld(data):
         yield data
 
 
-def _author_name(author):
+def _author_name(author: Any) -> str | None:
     if author is None:
         return None
     if isinstance(author, str):

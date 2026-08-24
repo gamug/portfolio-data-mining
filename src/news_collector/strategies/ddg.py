@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from datetime import datetime
 
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, DiscoveredURL
-from news_collector.utils.url import normalize_url, is_valid_http_url
+from news_collector.utils.url import is_valid_http_url, normalize_url
 
 log = logging.getLogger(__name__)
 
@@ -102,27 +103,26 @@ class DDGStrategy:
 
     async def _ddg_search(self, query: str, max_results: int) -> list[dict]:
         """Run DDG text search in executor (library is synchronous)."""
-        import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, _sync_ddg_search, query, max_results)
 
 
 def _sync_ddg_search(query: str, max_results: int) -> list[dict]:
     """Synchronous wrapper — supports both ddgs (v9+) and duckduckgo_search (legacy)."""
-    # Package was renamed from duckduckgo_search to ddgs in v9
+    # Package was renamed from duckduckgo_search to ddgs in v9. The try/except
+    # fallback needs to stay function-local (module-level would defeat the
+    # point: pick whichever name is importable at call time), so PLC0415 is
+    # expected here.
     try:
-        from ddgs import DDGS
+        from ddgs import DDGS  # noqa: PLC0415
     except ImportError:
         try:
-            from duckduckgo_search import DDGS  # type: ignore[no-redef]
+            from duckduckgo_search import DDGS  # type: ignore[no-redef]  # noqa: PLC0415
         except ImportError as e:
-            raise ImportError(
-                "Install ddgs: pip install ddgs"
-            ) from e
+            raise ImportError("Install ddgs: pip install ddgs") from e
 
     return list(DDGS().text(query, max_results=max_results))
 
 
 def _random_jitter() -> float:
-    import random
-    return random.uniform(0, _DDG_SLEEP_JITTER)
+    return random.uniform(0, _DDG_SLEEP_JITTER)  # noqa: S311 - rate-limit jitter, not crypto

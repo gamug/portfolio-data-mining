@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -42,7 +43,7 @@ log = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the shared httpx.AsyncClient across the application lifetime."""
     log_path = setup_logging(log_dir=".log", run_name="api")
     if log_path:

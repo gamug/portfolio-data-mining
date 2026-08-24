@@ -5,19 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import AsyncIterator
 
 import httpx
+import yfinance as yf
 
 from news_collector.connectors.base import BaseConnector, ConnectorConfig
 from news_collector.models import DateRange, DiscoveredURL, SitemapEntry
+from news_collector.utils.url import normalize_url
 
 log = logging.getLogger(__name__)
 
-_ARTICLE_RE = re.compile(
-    r"https?://(?:finance\.)?yahoo\.com/(?:news|m)/[a-z0-9/_-]+"
-)
+_ARTICLE_RE = re.compile(r"https?://(?:finance\.)?yahoo\.com/(?:news|m)/[a-z0-9/_-]+")
 
 
 class YahooFinanceConnector(BaseConnector):
@@ -41,9 +41,7 @@ class YahooFinanceConnector(BaseConnector):
             client=client,
         )
 
-    def build_ddg_queries(
-        self, company: str, ticker: str, date_range: DateRange
-    ) -> list[str]:
+    def build_ddg_queries(self, company: str, ticker: str, date_range: DateRange) -> list[str]:
         return [
             f"site:finance.yahoo.com {ticker} news {year}"
             for year in range(date_range.start.year, date_range.end.year + 1)
@@ -55,9 +53,7 @@ class YahooFinanceConnector(BaseConnector):
         yield  # makes this an async generator (required by ABC)
         yield
 
-    async def fetch_via_yfinance(
-        self, ticker: str, date_range: DateRange
-    ) -> list[DiscoveredURL]:
+    async def fetch_via_yfinance(self, ticker: str, date_range: DateRange) -> list[DiscoveredURL]:
         """
         Use yfinance Ticker.news to get article links for the given ticker.
 
@@ -68,9 +64,7 @@ class YahooFinanceConnector(BaseConnector):
         """
         try:
             loop = asyncio.get_event_loop()
-            news_items = await loop.run_in_executor(
-                None, _sync_yfinance_news, ticker
-            )
+            news_items = await loop.run_in_executor(None, _sync_yfinance_news, ticker)
         except Exception as exc:
             log.warning("yfinance news failed for %s: %s", ticker, exc)
             return []
@@ -89,9 +83,7 @@ class YahooFinanceConnector(BaseConnector):
                     if not date_range.contains(pub_date):
                         continue
                 except Exception:
-                    pass
-
-            from news_collector.utils.url import normalize_url
+                    log.debug("Unparseable providerPublishTime %r, treating as undated", pub_ts)
 
             results.append(
                 DiscoveredURL(
@@ -110,9 +102,7 @@ class YahooFinanceConnector(BaseConnector):
     def is_article_url(self, url: str) -> bool:
         return bool(_ARTICLE_RE.match(url))
 
-    def url_matches_company(
-        self, url: str, title: str, company: str, ticker: str
-    ) -> bool:
+    def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         # yfinance results are already ticker-specific; for DDG results use pattern
         if ticker.lower() in url.lower():
             return True
@@ -121,9 +111,5 @@ class YahooFinanceConnector(BaseConnector):
 
 
 def _sync_yfinance_news(ticker: str) -> list[dict]:
-    try:
-        import yfinance as yf
-    except ImportError as e:
-        raise ImportError("Install yfinance: pip install yfinance") from e
     t = yf.Ticker(ticker)
     return t.news or []

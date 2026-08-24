@@ -15,11 +15,13 @@ Usage:
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py financials AAPL --form 10-K --year 2023
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py search-filings AAPL --form 10-K --keyword climate
 """
+
 import argparse
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -35,35 +37,35 @@ EMAIL = os.environ.get("EMAIL", "your.email@example.com")
 FILING_FORMS = ("10-K", "10-Q", "8-K", "S-1")
 
 
-def print_json(data) -> None:
+def print_json(data: Any) -> None:
     print(json.dumps(data, indent=2, default=str))
 
 
-def cmd_company_info(args, agent: EdgarAgent) -> None:
+def cmd_company_info(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.get_company_info(args.ticker))
 
 
-def cmd_filings(args, agent: EdgarAgent) -> None:
+def cmd_filings(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.get_filings(args.ticker, form=args.form, limit=args.limit))
 
 
-def cmd_years_available(args, agent: EdgarAgent) -> None:
+def cmd_years_available(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.list_years_available(args.ticker, form=args.form))
 
 
-def cmd_filing_by_year(args, agent: EdgarAgent) -> None:
+def cmd_filing_by_year(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.get_filing_by_year(args.ticker, form=args.form, year=args.year))
 
 
-def cmd_latest_filing(args, agent: EdgarAgent) -> None:
+def cmd_latest_filing(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.get_latest_filing(args.ticker, form=args.form))
 
 
-def cmd_financials(args, agent: EdgarAgent) -> None:
+def cmd_financials(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(agent.get_financials(args.ticker, form=args.form, year=args.year))
 
 
-def cmd_search_filings(args, agent: EdgarAgent) -> None:
+def cmd_search_filings(args: argparse.Namespace, agent: EdgarAgent) -> None:
     print_json(
         agent.search_filings(
             args.ticker,
@@ -75,7 +77,9 @@ def cmd_search_filings(args, agent: EdgarAgent) -> None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("company-info", help="Basic identifying info for a company")

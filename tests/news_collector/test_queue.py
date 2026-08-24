@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
-from datetime import date, datetime
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -15,7 +15,7 @@ from news_collector.storage.queue import URLQueue
 
 
 @pytest.fixture
-def queue(tmp_path) -> URLQueue:
+def queue(tmp_path: Path) -> URLQueue:
     q = URLQueue(str(tmp_path / "test.db"))
     q.initialize()
     return q
@@ -98,6 +98,7 @@ def test_get_pending_includes_id(queue: URLQueue) -> None:
 def test_get_by_id(queue: URLQueue) -> None:
     url = _make_url("https://cnbc.com/2024/01/01/apple-story.html")
     queue.enqueue_batch([url])
+    assert url.id is not None
 
     fetched = queue.get_by_id(url.id)
     assert fetched is not None
@@ -114,6 +115,7 @@ def test_mark_fetched_by_id_updates_only_that_row(queue: URLQueue) -> None:
     ]
     queue.enqueue_batch(same_url_different_ticker)
     aapl_id = same_url_different_ticker[0].id
+    assert aapl_id is not None
 
     queue.mark_fetched_by_id(aapl_id, 200)
 
@@ -125,9 +127,11 @@ def test_mark_fetched_by_id_updates_only_that_row(queue: URLQueue) -> None:
 def test_mark_skipped_by_id(queue: URLQueue) -> None:
     url = _make_url("https://cnbc.com/2024/01/01/apple-story.html")
     queue.enqueue_batch([url])
+    assert url.id is not None
     queue.mark_skipped_by_id(url.id, reason="paywalled")
 
     fetched = queue.get_by_id(url.id)
+    assert fetched is not None
     assert fetched.status == "skipped"
     assert fetched.title == "paywalled"
 
@@ -153,7 +157,9 @@ def test_completed_pairs_empty_initially(queue: URLQueue) -> None:
 
 
 def test_mark_pair_completed_then_visible_in_completed_pairs(queue: URLQueue) -> None:
-    queue.mark_pair_completed("AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=5)
+    queue.mark_pair_completed(
+        "AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=5
+    )
 
     pairs = queue.completed_pairs(["cnbc.com", "nasdaq.com"], date(2024, 1, 1), date(2024, 1, 31))
     assert pairs == {("AAPL", "cnbc.com")}
@@ -176,8 +182,12 @@ def test_completed_pairs_filtered_by_requested_domains(queue: URLQueue) -> None:
 
 
 def test_mark_pair_completed_is_idempotent_upsert(queue: URLQueue) -> None:
-    queue.mark_pair_completed("AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=1)
-    queue.mark_pair_completed("AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=2)
+    queue.mark_pair_completed(
+        "AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=1
+    )
+    queue.mark_pair_completed(
+        "AAPL", "cnbc.com", date(2024, 1, 1), date(2024, 1, 31), inserted_count=2
+    )
 
     pairs = queue.completed_pairs(["cnbc.com"], date(2024, 1, 1), date(2024, 1, 31))
     assert pairs == {("AAPL", "cnbc.com")}  # re-marking doesn't duplicate the row

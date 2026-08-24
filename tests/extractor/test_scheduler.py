@@ -1,28 +1,26 @@
 import asyncio
 
-import pytest
-
 from extractor.scheduler import DomainScheduler
 
 
-def test_get_concurrency_returns_override_for_configured_domain():
+def test_get_concurrency_returns_override_for_configured_domain() -> None:
     scheduler = DomainScheduler(default_concurrency=2, domain_concurrency={"cnbc.com": 5})
 
     assert scheduler.get_concurrency("cnbc.com") == 5
 
 
-def test_get_concurrency_returns_default_for_unconfigured_domain():
+def test_get_concurrency_returns_default_for_unconfigured_domain() -> None:
     scheduler = DomainScheduler(default_concurrency=2, domain_concurrency={"cnbc.com": 5})
 
     assert scheduler.get_concurrency("nasdaq.com") == 2
 
 
-async def test_slot_never_exceeds_configured_concurrency_for_a_domain():
+async def test_slot_never_exceeds_configured_concurrency_for_a_domain() -> None:
     scheduler = DomainScheduler(default_concurrency=2, domain_concurrency={"cnbc.com": 2})
     current = 0
     max_seen = 0
 
-    async def worker():
+    async def worker() -> None:
         nonlocal current, max_seen
         async with scheduler.slot("cnbc.com"):
             current += 1
@@ -35,11 +33,11 @@ async def test_slot_never_exceeds_configured_concurrency_for_a_domain():
     assert max_seen == 2
 
 
-async def test_slot_gives_each_domain_an_independent_budget():
+async def test_slot_gives_each_domain_an_independent_budget() -> None:
     scheduler = DomainScheduler(default_concurrency=1, domain_concurrency={})
-    order = []
+    order: list[str] = []
 
-    async def worker(domain):
+    async def worker(domain: str) -> None:
         async with scheduler.slot(domain):
             order.append(f"start:{domain}")
             await asyncio.sleep(0.02)

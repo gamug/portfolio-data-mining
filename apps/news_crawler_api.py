@@ -20,14 +20,15 @@ Run:
     .venv\\Scripts\\python.exe apps\\news_crawler_api.py
     -> http://127.0.0.1:8002/docs for interactive Swagger UI
 """
+
 from __future__ import annotations
 
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -78,7 +79,8 @@ app = FastAPI(
 
 # ---------------------------------------------------------------- wiring --
 
-def get_conn():
+
+def get_conn() -> Iterator[sqlite3.Connection]:
     # Not extractor.db.connect(): FastAPI resolves this sync generator
     # dependency in a threadpool worker thread, but async route handlers
     # (e.g. /extract/{id}) then use the yielded connection from the event
@@ -99,7 +101,11 @@ def get_conn():
         conn.close()
 
 
-_gics_map_cache: dict[str, dict[str, str]] | None = None
+# Single-slot lazy cache, keyed so "not yet fetched" (key absent) is
+# distinguishable from "fetched, came back empty" ({} is a valid result) --
+# mutating this dict in place, rather than rebinding a module-level name,
+# means get_gics_map() doesn't need `global`.
+_gics_map_cache: dict[str, dict[str, dict[str, str]]] = {}
 
 
 async def get_gics_map() -> dict[str, dict[str, str]]:
@@ -108,14 +114,14 @@ async def get_gics_map() -> dict[str, dict[str, str]]:
     load_gics_map() already degrades to {} on failure, so a bad fetch just
     means empty GICS fields, not a broken endpoint.
     """
-    global _gics_map_cache
-    if _gics_map_cache is None:
+    if "map" not in _gics_map_cache:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            _gics_map_cache = await load_gics_map(client)
-    return _gics_map_cache
+            _gics_map_cache["map"] = await load_gics_map(client)
+    return _gics_map_cache["map"]
 
 
 # ---------------------------------------------------------- response models
+
 
 class StatusCounts(BaseModel):
     counts: dict[str, int]
@@ -130,27 +136,27 @@ class DiscoveredURL(BaseModel):
     ticker: str
     source: str
     status: str
-    title: Optional[str] = None
-    fetch_status_code: Optional[int] = None
+    title: str | None = None
+    fetch_status_code: int | None = None
 
 
 class Article(BaseModel):
     id: int
-    ticker: Optional[str] = None
-    company: Optional[str] = None
-    gics_sector: Optional[str] = None
-    gics_sub_industry: Optional[str] = None
-    title: Optional[str] = None
-    author: Optional[str] = None
-    pub_date: Optional[str] = None
-    body_text: Optional[str] = None
-    word_count: Optional[int] = None
-    language: Optional[str] = None
-    source_domain: Optional[str] = None
-    extraction_method: Optional[str] = None
-    fetch_status: Optional[str] = None
-    http_status_code: Optional[int] = None
-    fetched_at: Optional[str] = None
+    ticker: str | None = None
+    company: str | None = None
+    gics_sector: str | None = None
+    gics_sub_industry: str | None = None
+    title: str | None = None
+    author: str | None = None
+    pub_date: str | None = None
+    body_text: str | None = None
+    word_count: int | None = None
+    language: str | None = None
+    source_domain: str | None = None
+    extraction_method: str | None = None
+    fetch_status: str | None = None
+    http_status_code: int | None = None
+    fetched_at: str | None = None
 
 
 class BatchExtractResult(BaseModel):
@@ -165,31 +171,32 @@ class ResetResult(BaseModel):
 
 
 class ParsePreviewRequest(BaseModel):
-    html: Optional[str] = None
-    url: Optional[str] = None
-    domain: Optional[str] = None  # only read when `html` is given; needed for the paywall check
+    html: str | None = None
+    url: str | None = None
+    domain: str | None = None  # only read when `html` is given; needed for the paywall check
 
 
 class ParsePreviewResponse(BaseModel):
-    title: Optional[str]
-    author: Optional[str]
-    pub_date: Optional[str]
-    body_text: Optional[str]
+    title: str | None
+    author: str | None
+    pub_date: str | None
+    body_text: str | None
     word_count: int
     is_thin_content: bool
     is_probably_paywalled: bool
-    http_status_code: Optional[int] = None
+    http_status_code: int | None = None
 
 
 # --------------------------------------------------------------- endpoints
 
+
 @app.get("/health")
-def health():
+def health() -> dict:
     return {"status": "ok"}
 
 
 @app.get("/status", response_model=StatusCounts)
-def status(conn: sqlite3.Connection = Depends(get_conn)):
+def status(conn: sqlite3.Connection = Depends(get_conn)) -> StatusCounts:
     """Same numbers run_extraction.py prints at startup: discovered_urls
     grouped by status."""
     counts = get_status_counts(conn)
@@ -198,13 +205,13 @@ def status(conn: sqlite3.Connection = Depends(get_conn)):
 
 @app.get("/discovered", response_model=list[DiscoveredURL])
 def list_discovered(
-    status: Optional[str] = None,
-    ticker: Optional[str] = None,
-    domain: Optional[str] = None,
+    status: str | None = None,
+    ticker: str | None = None,
+    domain: str | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
     conn: sqlite3.Connection = Depends(get_conn),
-):
+) -> list[DiscoveredURL]:
     sql = (
         "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
         "FROM discovered_urls WHERE 1=1"
@@ -226,7 +233,7 @@ def list_discovered(
 
 
 @app.get("/discovered/{url_id}", response_model=DiscoveredURL)
-def get_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+def get_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> DiscoveredURL:
     row = conn.execute(
         "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
         "FROM discovered_urls WHERE id = ?",
@@ -238,7 +245,7 @@ def get_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)):
 
 
 @app.post("/discovered/{url_id}/reset", response_model=ResetResult)
-def reset_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+def reset_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> ResetResult:
     """Flip a row back to 'pending' (clearing fetch_status_code) so it can be
     re-extracted -- handy for testing after a code change, without hand-editing
     the DB."""
@@ -251,12 +258,12 @@ def reset_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)):
 
 @app.get("/articles", response_model=list[Article])
 def list_articles(
-    fetch_status: Optional[str] = None,
-    ticker: Optional[str] = None,
+    fetch_status: str | None = None,
+    ticker: str | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
     conn: sqlite3.Connection = Depends(get_conn),
-):
+) -> list[Article]:
     sql = "SELECT * FROM articles WHERE 1=1"
     params: list = []
     if fetch_status:
@@ -272,7 +279,7 @@ def list_articles(
 
 
 @app.get("/articles/{article_id}", response_model=Article)
-def get_article(article_id: int, conn: sqlite3.Connection = Depends(get_conn)):
+def get_article(article_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> Article:
     row = conn.execute("SELECT * FROM articles WHERE id = ?", (article_id,)).fetchone()
     if row is None:
         raise HTTPException(404, f"article id={article_id} not found")
@@ -282,19 +289,21 @@ def get_article(article_id: int, conn: sqlite3.Connection = Depends(get_conn)):
 @app.post("/extract/run", response_model=BatchExtractResult)
 async def extract_run(
     limit: int = Query(
-        5, ge=1, le=50,
+        5,
+        ge=1,
+        le=50,
         description="Capped low on purpose -- this is a test endpoint, not a batch driver. "
-                     "Use run_extraction.py for full/unattended runs.",
+        "Use run_extraction.py for full/unattended runs.",
     ),
     status: str = Query(
         "pending",
         description="discovered_urls.status to select rows from -- 'pending' for a normal "
-                     "run, 'failed' to retry URLs that previously errored (http_status>=400 "
-                     "or a network failure) without a separate /discovered/{id}/reset call.",
+        "run, 'failed' to retry URLs that previously errored (http_status>=400 "
+        "or a network failure) without a separate /discovered/{id}/reset call.",
     ),
     conn: sqlite3.Connection = Depends(get_conn),
     gics_map: dict = Depends(get_gics_map),
-):
+) -> BatchExtractResult:
     """Same loop run_extraction.py runs, over a small number of rows in the
     given `status` -- for exercising the batch path (scheduler + save +
     status flip together) without kicking off a long unattended run from
@@ -315,7 +324,7 @@ async def extract_run(
                 dict(row),
                 gics_sector=gics_map.get(row["ticker"], {}).get("sector"),
                 gics_sub_industry=gics_map.get(row["ticker"], {}).get("sub_industry"),
-                fetched_at=datetime.now(timezone.utc).isoformat(),
+                fetched_at=datetime.now(UTC).isoformat(),
             )
             save_article(conn, article)
             mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
@@ -329,7 +338,7 @@ async def extract_one(
     url_id: int,
     conn: sqlite3.Connection = Depends(get_conn),
     gics_map: dict = Depends(get_gics_map),
-):
+) -> Article:
     """Run the full fetch -> parse -> classify -> save pipeline for exactly
     one discovered_urls row, regardless of its current status. The single
     most useful endpoint for testing a code change against a real page
@@ -348,7 +357,7 @@ async def extract_one(
             dict(row),
             gics_sector=gics_map.get(row["ticker"], {}).get("sector"),
             gics_sub_industry=gics_map.get(row["ticker"], {}).get("sub_industry"),
-            fetched_at=datetime.now(timezone.utc).isoformat(),
+            fetched_at=datetime.now(UTC).isoformat(),
         )
     save_article(conn, article)
     mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
@@ -356,7 +365,7 @@ async def extract_one(
 
 
 @app.post("/parse/preview", response_model=ParsePreviewResponse)
-async def parse_preview(payload: ParsePreviewRequest):
+async def parse_preview(payload: ParsePreviewRequest) -> ParsePreviewResponse:
     """Run just the parsing/classification logic (JSON-LD + meta fallback,
     trafilatura body extraction, thin-content/paywall checks) against either
     raw HTML you paste in, or a URL fetched live -- with NO database writes.
@@ -375,8 +384,8 @@ async def parse_preview(payload: ParsePreviewRequest):
         http_status_code = response.status_code
         domain = domain or httpx.URL(payload.url).host
 
-    jsonld = extract_jsonld_article(html) # type: ignore
-    body_text = extract_body_text(html) # type: ignore
+    jsonld = extract_jsonld_article(html)  # type: ignore
+    body_text = extract_body_text(html)  # type: ignore
 
     return ParsePreviewResponse(
         title=jsonld["title"],
@@ -385,18 +394,18 @@ async def parse_preview(payload: ParsePreviewRequest):
         body_text=body_text,
         word_count=word_count(body_text),
         is_thin_content=is_thin_content(body_text),
-        is_probably_paywalled=is_probably_paywalled(html, domain or ""), # type: ignore
+        is_probably_paywalled=is_probably_paywalled(html, domain or ""),  # type: ignore
         http_status_code=http_status_code,
     )
 
 
 @app.get("/gics")
-async def gics(gics_map: dict = Depends(get_gics_map)):
+async def gics(gics_map: dict = Depends(get_gics_map)) -> dict:
     return gics_map
 
 
 @app.get("/gics/{ticker}")
-async def gics_for_ticker(ticker: str, gics_map: dict = Depends(get_gics_map)):
+async def gics_for_ticker(ticker: str, gics_map: dict = Depends(get_gics_map)) -> dict:
     entry = gics_map.get(ticker.upper())
     if entry is None:
         raise HTTPException(404, f"No GICS mapping for ticker={ticker}")

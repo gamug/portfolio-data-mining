@@ -5,10 +5,11 @@ Reads from the existing `articles` table and writes to three results tables --
 by article_id. Also provides read-only query helpers backing the FastAPI
 query endpoints.
 """
+
 import os
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
-from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
@@ -126,9 +127,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def fetch_pending_articles(conn: sqlite3.Connection, table: str, limit: int | None = None):
+_PENDING_ARTICLE_TABLES = {"article_sentiment", "article_entities"}
+
+
+def fetch_pending_articles(
+    conn: sqlite3.Connection, table: str, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Return (id, body_text) rows from `articles` not yet present in `table`,
     restricted to successfully fetched, non-empty articles."""
+    if table not in _PENDING_ARTICLE_TABLES:
+        raise ValueError(f"table must be one of {sorted(_PENDING_ARTICLE_TABLES)}, got {table!r}")
+    # S608: `table` is checked against the _PENDING_ARTICLE_TABLES allowlist above.
     sql = f"""
         SELECT a.id, a.body_text
         FROM articles a
@@ -138,13 +147,17 @@ def fetch_pending_articles(conn: sqlite3.Connection, table: str, limit: int | No
           AND a.body_text IS NOT NULL
           AND TRIM(a.body_text) != ''
         ORDER BY a.id
-    """
+    """  # noqa: S608
+    params: list = []
     if limit:
-        sql += f" LIMIT {int(limit)}"
-    return conn.execute(sql).fetchall()
+        sql += " LIMIT ?"
+        params.append(int(limit))
+    return conn.execute(sql, params).fetchall()
 
 
-def fetch_pending_category_articles(conn: sqlite3.Connection, limit: int | None = None):
+def fetch_pending_category_articles(
+    conn: sqlite3.Connection, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Return (id, title, body_text) rows from `articles` not yet present in
     article_category, same eligibility filter as fetch_pending_articles. A
     dedicated query (not a widened fetch_pending_articles) since that
@@ -166,11 +179,19 @@ def fetch_pending_category_articles(conn: sqlite3.Connection, limit: int | None 
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def write_sentiment(conn: sqlite3.Connection, article_id: int, label: str, score: float,
-                     positive: float, negative: float, neutral: float, model_name: str) -> None:
+def write_sentiment(
+    conn: sqlite3.Connection,
+    article_id: int,
+    label: str,
+    score: float,
+    positive: float,
+    negative: float,
+    neutral: float,
+    model_name: str,
+) -> None:
     conn.execute(
         """INSERT OR REPLACE INTO article_sentiment
            (article_id, label, score, positive, negative, neutral, model_name, processed_at)
@@ -179,8 +200,14 @@ def write_sentiment(conn: sqlite3.Connection, article_id: int, label: str, score
     )
 
 
-def write_category(conn: sqlite3.Connection, article_id: int, label: str, score: float,
-                    scores: dict[str, float], model_name: str) -> None:
+def write_category(
+    conn: sqlite3.Connection,
+    article_id: int,
+    label: str,
+    score: float,
+    scores: dict[str, float],
+    model_name: str,
+) -> None:
     """`scores` must have one entry per src.news_nlp.categories.CATEGORY_SLUGS
     slug (the full 9-way distribution) -- `label`/`score` are the winning
     slug (or 'other') and its probability, kept separately from the raw
@@ -193,17 +220,28 @@ def write_category(conn: sqlite3.Connection, article_id: int, label: str, score:
             capital_shareholder_returns, labor_human_capital, market_analyst_sentiment,
             partnerships_business_dev, model_name, processed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (article_id, label, score,
-         scores["earnings_performance"], scores["mergers_acquisitions"],
-         scores["leadership_governance"], scores["legal_regulatory"],
-         scores["product_innovation"], scores["capital_shareholder_returns"],
-         scores["labor_human_capital"], scores["market_analyst_sentiment"],
-         scores["partnerships_business_dev"],
-         model_name, now_iso()),
+        (
+            article_id,
+            label,
+            score,
+            scores["earnings_performance"],
+            scores["mergers_acquisitions"],
+            scores["leadership_governance"],
+            scores["legal_regulatory"],
+            scores["product_innovation"],
+            scores["capital_shareholder_returns"],
+            scores["labor_human_capital"],
+            scores["market_analyst_sentiment"],
+            scores["partnerships_business_dev"],
+            model_name,
+            now_iso(),
+        ),
     )
 
 
-def write_entities(conn: sqlite3.Connection, article_id: int, entities: list[dict], model_name: str) -> None:
+def write_entities(
+    conn: sqlite3.Connection, article_id: int, entities: list[dict], model_name: str
+) -> None:
     # Idempotency: clear any prior entities for this article before inserting fresh ones.
     conn.execute("DELETE FROM article_entities WHERE article_id = ?", (article_id,))
     ts = now_iso()
@@ -212,14 +250,24 @@ def write_entities(conn: sqlite3.Connection, article_id: int, entities: list[dic
            (article_id, entity_type, text, start_char, end_char, score, model_name, processed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         [
-            (article_id, e["entity_type"], e["text"], e["start_char"], e["end_char"], e.get("score"),
-             model_name, ts)
+            (
+                article_id,
+                e["entity_type"],
+                e["text"],
+                e["start_char"],
+                e["end_char"],
+                e.get("score"),
+                model_name,
+                ts,
+            )
             for e in entities
         ],
     )
 
 
-def fetch_pending_company_summaries(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+def fetch_pending_company_summaries(
+    conn: sqlite3.Connection, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Return raw fields for articles ready for c_summary generation: a
     successful fetch (http_status_code=200), a computed sentiment, at least
     one qualifying entity (score>0.8, non-numeric), and no article_summary
@@ -267,8 +315,9 @@ def build_company_summary_input(row: sqlite3.Row) -> str:
     )
 
 
-def write_company_summary(conn: sqlite3.Connection, article_id: int, summary_text: str,
-                           num_chunks: int, model_name: str) -> None:
+def write_company_summary(
+    conn: sqlite3.Connection, article_id: int, summary_text: str, num_chunks: int, model_name: str
+) -> None:
     conn.execute(
         """INSERT OR REPLACE INTO article_summary
            (article_id, summary_text, num_chunks, model_name, processed_at)
@@ -284,7 +333,9 @@ _WEEK_START_EXPR = "date({col}, 'weekday 0', '-6 days')"
 _WEEK_END_EXPR = "date({col}, 'weekday 0')"
 
 
-def fetch_pending_sector_weeks(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+def fetch_pending_sector_weeks(
+    conn: sqlite3.Connection, limit: int | None = None
+) -> list[sqlite3.Row]:
     """Return (gics_sector, gics_sub_industry, week_start, week_end) tuples
     ready for sector_summary generation: closed weeks (week_end already in
     the past, so a partial week is never summarized and later regenerated)
@@ -295,6 +346,8 @@ def fetch_pending_sector_weeks(conn: sqlite3.Connection, limit: int | None = Non
     date_col = "COALESCE(a.pub_date, a.fetched_at)"
     week_start_expr = _WEEK_START_EXPR.format(col=date_col)
     week_end_expr = _WEEK_END_EXPR.format(col=date_col)
+    # S608: week_start_expr/week_end_expr come from the hardcoded
+    # _WEEK_START_EXPR/_WEEK_END_EXPR templates, not caller input.
     sql = f"""
         SELECT
             a.gics_sector AS gics_sector,
@@ -313,7 +366,7 @@ def fetch_pending_sector_weeks(conn: sqlite3.Connection, limit: int | None = Non
         GROUP BY a.gics_sector, a.gics_sub_industry, week_start
         HAVING week_end < date('now')
         ORDER BY week_start, a.gics_sector, a.gics_sub_industry
-    """
+    """  # noqa: S608
     params: list = []
     if limit is not None:
         sql += " LIMIT ?"
@@ -321,12 +374,16 @@ def fetch_pending_sector_weeks(conn: sqlite3.Connection, limit: int | None = Non
     return conn.execute(sql, params).fetchall()
 
 
-def fetch_company_summaries_for_sector_week(conn: sqlite3.Connection, gics_sector: str,
-                                             gics_sub_industry: str, week_start: str) -> list[sqlite3.Row]:
+def fetch_company_summaries_for_sector_week(
+    conn: sqlite3.Connection, gics_sector: str, gics_sub_industry: str, week_start: str
+) -> list[sqlite3.Row]:
     """Return the article_summary rows (with company/ticker) contributing to
     one (gics_sector, gics_sub_industry, week_start) sector_summary."""
     date_col = "COALESCE(a.pub_date, a.fetched_at)"
     week_start_expr = _WEEK_START_EXPR.format(col=date_col)
+    # S608: week_start_expr comes from the hardcoded _WEEK_START_EXPR
+    # template, not caller input; gics_sector/sub_industry/week_start below
+    # are bound as query params.
     sql = f"""
         SELECT asum.article_id, asum.summary_text, a.ticker, a.company
         FROM article_summary asum
@@ -334,11 +391,13 @@ def fetch_company_summaries_for_sector_week(conn: sqlite3.Connection, gics_secto
         WHERE a.gics_sector = ? AND a.gics_sub_industry = ?
           AND {week_start_expr} = ?
         ORDER BY a.company, asum.article_id
-    """
+    """  # noqa: S608
     return conn.execute(sql, (gics_sector, gics_sub_industry, week_start)).fetchall()
 
 
-def build_sector_summary_input(gics_sector: str, gics_sub_industry: str, rows: list[sqlite3.Row]) -> str:
+def build_sector_summary_input(
+    gics_sector: str, gics_sub_industry: str, rows: list[sqlite3.Row]
+) -> str:
     """Assemble the sector-level reduce input: one METADATA header for the
     whole group (sector/subsector is constant across it) followed by each
     contributing company's c_summary -- a deliberate deviation from
@@ -350,21 +409,42 @@ def build_sector_summary_input(gics_sector: str, gics_sub_industry: str, rows: l
     )
 
 
-def write_sector_summary(conn: sqlite3.Connection, gics_sector: str, gics_sub_industry: str,
-                          week_start: str, week_end: str, summary_text: str,
-                          num_articles: int, num_companies: int, model_name: str) -> None:
+def write_sector_summary(
+    conn: sqlite3.Connection,
+    gics_sector: str,
+    gics_sub_industry: str,
+    week_start: str,
+    week_end: str,
+    summary_text: str,
+    num_articles: int,
+    num_companies: int,
+    model_name: str,
+) -> None:
     conn.execute(
         """INSERT OR REPLACE INTO sector_summary
            (gics_sector, gics_sub_industry, week_start, week_end, summary_text,
             num_articles, num_companies, model_name, processed_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (gics_sector, gics_sub_industry, week_start, week_end, summary_text,
-         num_articles, num_companies, model_name, now_iso()),
+        (
+            gics_sector,
+            gics_sub_industry,
+            week_start,
+            week_end,
+            summary_text,
+            num_articles,
+            num_companies,
+            model_name,
+            now_iso(),
+        ),
     )
 
 
-def list_sector_summaries(conn: sqlite3.Connection, sector: str | None = None,
-                           sub_industry: str | None = None, week_start: str | None = None) -> list[dict]:
+def list_sector_summaries(
+    conn: sqlite3.Connection,
+    sector: str | None = None,
+    sub_industry: str | None = None,
+    week_start: str | None = None,
+) -> list[dict]:
     sql = "SELECT * FROM sector_summary WHERE 1=1"
     params: list = []
     if sector:
@@ -387,10 +467,17 @@ _SENTIMENT_STATS_GROUP_EXPR = {
 }
 
 
-def list_articles(conn: sqlite3.Connection, company: str | None = None, ticker: str | None = None,
-                   sentiment: str | None = None, category: str | None = None,
-                   date_from: str | None = None, date_to: str | None = None,
-                   limit: int = 50, offset: int = 0) -> list[dict]:
+def list_articles(
+    conn: sqlite3.Connection,
+    company: str | None = None,
+    ticker: str | None = None,
+    sentiment: str | None = None,
+    category: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict]:
     sql = """
         SELECT a.id, a.company, a.ticker, a.title, a.pub_date,
                s.label AS sentiment_label, s.score AS sentiment_score,
@@ -401,7 +488,7 @@ def list_articles(conn: sqlite3.Connection, company: str | None = None, ticker: 
         LEFT JOIN article_category c ON c.article_id = a.id
         WHERE 1=1
     """
-    params = []
+    params: list = []
     if company:
         sql += " AND a.company = ?"
         params.append(company)
@@ -469,9 +556,17 @@ def get_article_detail(conn: sqlite3.Connection, article_id: int) -> dict | None
     }
 
 
-def sentiment_stats(conn: sqlite3.Connection, company: str | None = None, date_from: str | None = None,
-                     date_to: str | None = None, group_by: str | None = None) -> list[dict]:
-    group_expr = _SENTIMENT_STATS_GROUP_EXPR.get(group_by)
+def sentiment_stats(
+    conn: sqlite3.Connection,
+    company: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    group_by: str | None = None,
+) -> list[dict]:
+    # S608: `select_group` only ever comes from the fixed
+    # _SENTIMENT_STATS_GROUP_EXPR.get(...) lookup or the hardcoded fallback
+    # literal below -- never from `group_by` directly.
+    group_expr = _SENTIMENT_STATS_GROUP_EXPR.get(group_by) if group_by else None
     select_group = f"{group_expr} AS group_key," if group_expr else "NULL AS group_key,"
     sql = f"""
         SELECT {select_group}
@@ -482,8 +577,8 @@ def sentiment_stats(conn: sqlite3.Connection, company: str | None = None, date_f
         FROM article_sentiment s
         JOIN articles a ON a.id = s.article_id
         WHERE 1=1
-    """
-    params = []
+    """  # noqa: S608
+    params: list = []
     if company:
         sql += " AND a.company = ?"
         params.append(company)
@@ -498,15 +593,19 @@ def sentiment_stats(conn: sqlite3.Connection, company: str | None = None, date_f
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
-def entity_stats(conn: sqlite3.Connection, company: str | None = None, entity_type: str | None = None,
-                  top: int = 20) -> list[dict]:
+def entity_stats(
+    conn: sqlite3.Connection,
+    company: str | None = None,
+    entity_type: str | None = None,
+    top: int = 20,
+) -> list[dict]:
     sql = """
         SELECT e.text, e.entity_type, COUNT(*) AS count
         FROM article_entities e
         JOIN articles a ON a.id = e.article_id
         WHERE 1=1
     """
-    params = []
+    params: list = []
     if company:
         sql += " AND a.company = ?"
         params.append(company)
@@ -518,8 +617,12 @@ def entity_stats(conn: sqlite3.Connection, company: str | None = None, entity_ty
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
-def category_stats(conn: sqlite3.Connection, company: str | None = None,
-                    date_from: str | None = None, date_to: str | None = None) -> list[dict]:
+def category_stats(
+    conn: sqlite3.Connection,
+    company: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> list[dict]:
     """Per-label article counts. Unlike sentiment_stats' fixed 3-way pivot
     (justified there by sentiment's permanently-fixed 3-class contract), 10
     label values read better as label/count rows -- same shape as
@@ -530,7 +633,7 @@ def category_stats(conn: sqlite3.Connection, company: str | None = None,
         JOIN articles a ON a.id = c.article_id
         WHERE 1=1
     """
-    params = []
+    params: list = []
     if company:
         sql += " AND a.company = ?"
         params.append(company)

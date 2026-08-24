@@ -12,7 +12,6 @@ from news_collector.connectors.base import BaseConnector
 from news_collector.orchestrator import build_connectors
 from news_collector.storage.queue import URLQueue
 
-
 # ---------------------------------------------------------------------------
 # Client dependency — resolved from app.state set by the lifespan
 # ---------------------------------------------------------------------------
@@ -20,7 +19,8 @@ from news_collector.storage.queue import URLQueue
 
 def get_client(request: Request) -> httpx.AsyncClient:
     """Return the shared AsyncClient created during app lifespan."""
-    return request.app.state.client
+    client: httpx.AsyncClient = request.app.state.client
+    return client
 
 
 # ---------------------------------------------------------------------------

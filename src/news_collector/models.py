@@ -6,10 +6,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Literal
 
-
 # ---------------------------------------------------------------------------
 # Domain configuration
 # ---------------------------------------------------------------------------
+
+# DDG timelimit day-count thresholds -- see DateRange.ddg_timelimit() below.
+_DDG_TIMELIMIT_WEEK_DAYS = 7
+_DDG_TIMELIMIT_MONTH_DAYS = 31
+_DDG_TIMELIMIT_YEAR_DAYS = 366  # leap-year-safe
 
 SUPPORTED_DOMAINS: frozenset[str] = frozenset(
     {
@@ -48,11 +52,11 @@ class DateRange:
         delta = self.end - self.start
         if delta.days <= 1:
             return "d"
-        if delta.days <= 7:
+        if delta.days <= _DDG_TIMELIMIT_WEEK_DAYS:
             return "w"
-        if delta.days <= 31:
+        if delta.days <= _DDG_TIMELIMIT_MONTH_DAYS:
             return "m"
-        if delta.days <= 366:
+        if delta.days <= _DDG_TIMELIMIT_YEAR_DAYS:
             return "y"
         return None  # wider than a year — handle via query text
 
@@ -164,7 +168,9 @@ class DiscoveryStats:
         self.duplicate_count += partial.duplicate_count
         self.ddg_count += partial.ddg_count
         self.sitemap_count += partial.sitemap_count
-        self.by_domain[partial.domain] = self.by_domain.get(partial.domain, 0) + partial.inserted_count
+        self.by_domain[partial.domain] = (
+            self.by_domain.get(partial.domain, 0) + partial.inserted_count
+        )
         self.by_company[partial.company] = (
             self.by_company.get(partial.company, 0) + partial.inserted_count
         )

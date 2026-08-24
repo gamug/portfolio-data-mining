@@ -30,7 +30,7 @@ cost discipline initiatives that were implemented earlier in the fiscal year.</p
 """
 
 
-def test_extract_body_text_returns_article_paragraphs_without_nav_or_footer():
+def test_extract_body_text_returns_article_paragraphs_without_nav_or_footer() -> None:
     text = extract_body_text(ARTICLE_HTML)
 
     assert "3M Company reported fourth-quarter earnings" in text
@@ -39,12 +39,12 @@ def test_extract_body_text_returns_article_paragraphs_without_nav_or_footer():
     assert "Copyright 2023" not in text
 
 
-def test_word_count_counts_words_in_text():
+def test_word_count_counts_words_in_text() -> None:
     assert word_count("one two three four") == 4
     assert word_count("") == 0
 
 
-def test_is_thin_content_true_below_threshold_false_above():
+def test_is_thin_content_true_below_threshold_false_above() -> None:
     short_text = "Breaking news update."
     long_text = " ".join(["word"] * 100)
 
@@ -52,17 +52,17 @@ def test_is_thin_content_true_below_threshold_false_above():
     assert is_thin_content(long_text) is False
 
 
-def test_is_probably_paywalled_flags_known_domain_with_marker_text():
+def test_is_probably_paywalled_flags_known_domain_with_marker_text() -> None:
     html = "<p>Subscribe to continue reading this article.</p>"
 
     assert is_probably_paywalled(html, "seekingalpha.com") is True
 
 
-def test_is_probably_paywalled_false_for_normal_domain_and_content():
+def test_is_probably_paywalled_false_for_normal_domain_and_content() -> None:
     assert is_probably_paywalled(ARTICLE_HTML, "cnbc.com") is False
 
 
-def test_detect_language_identifies_english():
+def test_detect_language_identifies_english() -> None:
     text = (
         "The company reported strong quarterly earnings today, beating "
         "analyst expectations across every major business segment this year."
@@ -71,5 +71,5 @@ def test_detect_language_identifies_english():
     assert detect_language(text) == "en"
 
 
-def test_detect_language_returns_none_for_empty_text():
+def test_detect_language_returns_none_for_empty_text() -> None:
     assert detect_language("") is None
