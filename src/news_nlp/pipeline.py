@@ -99,6 +99,11 @@ SUMMARY_MIN_OUTPUT_TOKENS = 56
 # far shorter than what fed them, so this converges in 1-2 passes in
 # practice; this just bounds the pathological case.
 MAX_REDUCE_PASSES = 6
+# generate() with beam search is far more memory-intensive per row than a
+# single classification forward pass (run_category_stage's forward-only
+# CATEGORY_BATCH_SIZE=8), so this stays smaller despite the same
+# one-model-at-a-time VRAM budget -- tune down further if a 6GB card OOMs.
+SUMMARY_BATCH_SIZE = 4
 
 
 def free_gpu() -> None:
@@ -365,13 +370,19 @@ def run_category_stage(
     free_gpu()
 
 
-def _summarize_one(text: str, tokenizer: Any, model: Any, device: torch.device) -> str:
-    """Run SUMMARY_MODEL (distilbart-cnn-12-6) generation on a single chunk
-    that already fits within the model's input cap. Split out as its own
-    function so tests can monkeypatch it and exercise
-    hierarchical_summarize's chunk/reduce control flow without loading a
-    real model."""
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=1024).to(device)
+def _summarize_batch(
+    texts: list[str], tokenizer: Any, model: Any, device: torch.device
+) -> list[str]:
+    """Run SUMMARY_MODEL (distilbart-cnn-12-6) generation on a batch of
+    chunks that already fit within the model's input cap, in one forward
+    pass -- the same batching principle run_category_stage applies by
+    pooling multiple articles' (premise, hypothesis) pairs into one call.
+    Split out as its own function so tests can monkeypatch it and exercise
+    hierarchical_summarize_batch's chunk/reduce control flow without loading
+    a real model."""
+    inputs = tokenizer(
+        texts, return_tensors="pt", truncation=True, max_length=1024, padding=True
+    ).to(device)
     with torch.no_grad():
         output_ids = model.generate(
             **inputs,
@@ -379,43 +390,132 @@ def _summarize_one(text: str, tokenizer: Any, model: Any, device: torch.device) 
             min_length=SUMMARY_MIN_OUTPUT_TOKENS,
             num_beams=4,
         )
-    return str(tokenizer.decode(output_ids[0], skip_special_tokens=True)).strip()
+    return [s.strip() for s in tokenizer.batch_decode(output_ids, skip_special_tokens=True)]
 
 
-def hierarchical_summarize(
-    text: str,
+def _summarize_in_batches(
+    texts: list[str], tokenizer: Any, model: Any, device: torch.device, batch_size: int
+) -> list[str]:
+    """Run _summarize_batch over `texts` in chunks of `batch_size`,
+    concatenating results in order -- the actual generate() call count stays
+    bounded by batch_size regardless of how many texts are pending."""
+    results: list[str] = []
+    for start in range(0, len(texts), batch_size):
+        results.extend(
+            _summarize_batch(texts[start : start + batch_size], tokenizer, model, device)
+        )
+    return results
+
+
+def _leaf_summarize_batch(
+    texts: list[str],
+    tokenizer: Any,
+    model: Any,
+    device: torch.device,
+    max_input_tokens: int,
+    batch_size: int,
+) -> tuple[list[list[str]], list[int]]:
+    """Chunk every text on sentence boundaries (chunk_text) and
+    batch-summarize the whole pool of leaf chunks together. Returns
+    (summaries_per_text, num_chunks), each indexed the same as `texts`."""
+    per_text_chunks = [chunk_text(t, tokenizer, max_tokens=max_input_tokens) for t in texts]
+    num_chunks = [len(c) for c in per_text_chunks]
+
+    flat_texts: list[str] = []
+    owner: list[int] = []
+    for i, chunks in enumerate(per_text_chunks):
+        for ch in chunks:
+            flat_texts.append(ch.text)
+            owner.append(i)
+
+    flat_summaries = _summarize_in_batches(flat_texts, tokenizer, model, device, batch_size)
+
+    summaries_per_text: list[list[str]] = [[] for _ in texts]
+    for o, s in zip(owner, flat_summaries, strict=True):
+        summaries_per_text[o].append(s)
+
+    return summaries_per_text, num_chunks
+
+
+def _reduce_pass(
+    pending: set[int],
+    summaries_per_text: list[list[str]],
+    tokenizer: Any,
+    model: Any,
+    device: torch.device,
+    max_input_tokens: int,
+    batch_size: int,
+) -> None:
+    """Run one reduce pass in place over every text index in `pending`: join
+    each one's current summaries, re-chunk, and batch-summarize the pooled
+    result across all of them -- same batching principle as the leaf pass."""
+    flat_texts: list[str] = []
+    owner: list[int] = []
+    for i in sorted(pending):
+        combined = " ".join(summaries_per_text[i])
+        for ch in chunk_text(combined, tokenizer, max_tokens=max_input_tokens):
+            flat_texts.append(ch.text)
+            owner.append(i)
+
+    flat_summaries = _summarize_in_batches(flat_texts, tokenizer, model, device, batch_size)
+
+    regrouped: dict[int, list[str]] = {i: [] for i in pending}
+    for o, s in zip(owner, flat_summaries, strict=True):
+        regrouped[o].append(s)
+    for i in pending:
+        summaries_per_text[i] = regrouped[i]
+
+
+def hierarchical_summarize_batch(
+    texts: list[str],
     tokenizer: Any,
     model: Any,
     device: torch.device,
     max_input_tokens: int = SUMMARY_MAX_INPUT_TOKENS,
-) -> tuple[str, int]:
-    """Chunk `text` on sentence boundaries (chunk_text), summarize each
-    chunk, and if more than one chunk resulted, recursively summarize the
-    concatenated chunk-summaries until they collapse into a single pass.
-    Returns (summary_text, num_chunks) where num_chunks is the leaf-level
-    chunk count (>1 means a reduce pass happened).
+    batch_size: int = SUMMARY_BATCH_SIZE,
+) -> list[tuple[str, int]]:
+    """Batched chunk-then-reduce summarization: chunks and reduces every
+    text in `texts` independently (same per-text contract as a single-text
+    version would have -- sentence-boundary chunking via chunk_text, then a
+    recursive reduce pass over each text's own joined chunk-summaries until
+    they collapse to one), but pools the model calls across every text still
+    pending at each pass into batch_size-sized generate() calls instead of
+    one call per text -- the same batching principle run_category_stage
+    applies to its classification forward pass. Returns (summary_text,
+    num_chunks) pairs in the same order as `texts`, where num_chunks is each
+    text's own leaf-level chunk count (>1 means that text needed a reduce
+    pass).
     """
-    chunks = chunk_text(text, tokenizer, max_tokens=max_input_tokens)
-    if not chunks:
-        return "", 0
+    n = len(texts)
+    if n == 0:
+        return []
 
-    num_chunks = len(chunks)
-    summaries = [_summarize_one(ch.text, tokenizer, model, device) for ch in chunks]
+    summaries_per_text, num_chunks = _leaf_summarize_batch(
+        texts, tokenizer, model, device, max_input_tokens, batch_size
+    )
 
     passes = 0
-    while len(summaries) > 1 and passes < MAX_REDUCE_PASSES:
-        combined = " ".join(summaries)
-        next_chunks = chunk_text(combined, tokenizer, max_tokens=max_input_tokens)
-        summaries = [_summarize_one(ch.text, tokenizer, model, device) for ch in next_chunks]
+    pending = {i for i in range(n) if len(summaries_per_text[i]) > 1}
+    while pending and passes < MAX_REDUCE_PASSES:
+        _reduce_pass(
+            pending, summaries_per_text, tokenizer, model, device, max_input_tokens, batch_size
+        )
         passes += 1
+        pending = {i for i in pending if len(summaries_per_text[i]) > 1}
 
-    if len(summaries) > 1:
-        # MAX_REDUCE_PASSES exhausted without collapsing to one chunk --
-        # force a final pass; generate()'s own truncation=True keeps this
-        # bounded even though it means the tail gets dropped.
-        return _summarize_one(" ".join(summaries), tokenizer, model, device), num_chunks
+    if pending:
+        # MAX_REDUCE_PASSES exhausted without collapsing to one chunk for
+        # some texts -- force a final pass; generate()'s own truncation=True
+        # keeps this bounded even though it means the tail gets dropped.
+        forced_positions = sorted(pending)
+        forced_texts = [" ".join(summaries_per_text[i]) for i in forced_positions]
+        forced_summaries = _summarize_in_batches(forced_texts, tokenizer, model, device, batch_size)
+        for i, s in zip(forced_positions, forced_summaries, strict=True):
+            summaries_per_text[i] = [s]
 
-    return summaries[0], num_chunks
+    return [
+        (summaries_per_text[i][0] if summaries_per_text[i] else "", num_chunks[i]) for i in range(n)
+    ]
 
 
 def run_company_summary_stage(
@@ -433,17 +533,24 @@ def run_company_summary_stage(
     tokenizer = AutoTokenizer.from_pretrained(SUMMARY_MODEL)
     model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARY_MODEL).to(DEVICE).eval()
 
-    for idx, row in enumerate(tqdm(rows, desc="company_summary"), start=1):
-        text = db.build_company_summary_input(row)
-        summary_text, num_chunks = hierarchical_summarize(text, tokenizer, model, DEVICE)
-        if summary_text:
-            db.write_company_summary(
-                conn, row["article_id"], summary_text, num_chunks, SUMMARY_MODEL
-            )
-            conn.commit()
+    idx = 0
+    with tqdm(total=total, desc="company_summary") as pbar:
+        for batch_start in range(0, total, SUMMARY_BATCH_SIZE):
+            batch_rows = rows[batch_start : batch_start + SUMMARY_BATCH_SIZE]
+            texts = [db.build_company_summary_input(row) for row in batch_rows]
+            results = hierarchical_summarize_batch(texts, tokenizer, model, DEVICE)
 
-        if on_progress:
-            on_progress("company_summary", idx, total)
+            for row, (summary_text, num_chunks) in zip(batch_rows, results, strict=True):
+                if summary_text:
+                    db.write_company_summary(
+                        conn, row["article_id"], summary_text, num_chunks, SUMMARY_MODEL
+                    )
+                idx += 1
+                pbar.update(1)
+                if on_progress:
+                    on_progress("company_summary", idx, total)
+
+            conn.commit()
 
     del model, tokenizer
     free_gpu()
@@ -464,31 +571,80 @@ def run_sector_summary_stage(
     tokenizer = AutoTokenizer.from_pretrained(SUMMARY_MODEL)
     model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARY_MODEL).to(DEVICE).eval()
 
-    for idx, group in enumerate(tqdm(groups, desc="sector_summary"), start=1):
-        company_rows = db.fetch_company_summaries_for_sector_week(
-            conn, group["gics_sector"], group["gics_sub_industry"], group["week_start"]
-        )
-        if company_rows:
-            text = db.build_sector_summary_input(
-                group["gics_sector"], group["gics_sub_industry"], company_rows
-            )
-            summary_text, _ = hierarchical_summarize(text, tokenizer, model, DEVICE)
-            if summary_text:
-                db.write_sector_summary(
-                    conn,
-                    group["gics_sector"],
-                    group["gics_sub_industry"],
-                    group["week_start"],
-                    group["week_end"],
-                    summary_text,
-                    num_articles=len(company_rows),
-                    num_companies=len({r["company"] for r in company_rows}),
-                    model_name=SUMMARY_MODEL,
-                )
-                conn.commit()
+    idx = 0
+    with tqdm(total=total, desc="sector_summary") as pbar:
+        for batch_start in range(0, total, SUMMARY_BATCH_SIZE):
+            batch_groups = groups[batch_start : batch_start + SUMMARY_BATCH_SIZE]
 
-        if on_progress:
-            on_progress("sector_summary", idx, total)
+            # Resolve each group's contributing rows/entity stats first
+            # (cheap DB reads) -- a group with nothing to summarize (all its
+            # articles excluded, see fetch_company_summaries_for_sector_week)
+            # is skipped, same as the old per-group `if rows:` guard.
+            resolved: list[tuple[list[sqlite3.Row], list[dict]] | None] = []
+            for group in batch_groups:
+                group_rows = db.fetch_company_summaries_for_sector_week(
+                    conn, group["gics_sector"], group["gics_sub_industry"], group["week_start"]
+                )
+                if group_rows:
+                    entity_stats = db.fetch_sector_week_entity_stats(
+                        conn, group["gics_sector"], group["gics_sub_industry"], group["week_start"]
+                    )
+                    resolved.append((group_rows, entity_stats))
+                else:
+                    resolved.append(None)
+
+            # One batched model call for every group in this batch that has
+            # something to summarize -- mirrors run_category_stage pooling
+            # multiple articles' forward passes into one call. The model
+            # only ever sees these small, aggregate-stats-only seeds -- never
+            # the raw per-company c_summary text -- so it has nothing to
+            # blend across companies or categories.
+            pending_positions = [i for i, r in enumerate(resolved) if r is not None]
+            seeds = [
+                db.build_sector_intro_seed(
+                    batch_groups[i]["gics_sector"],
+                    batch_groups[i]["gics_sub_industry"],
+                    batch_groups[i]["week_start"],
+                    batch_groups[i]["week_end"],
+                    resolved[i][0],  # type: ignore[index]
+                )
+                for i in pending_positions
+            ]
+            intro_results = hierarchical_summarize_batch(seeds, tokenizer, model, DEVICE)
+            intro_by_pos = dict(
+                zip(pending_positions, (text for text, _ in intro_results), strict=True)
+            )
+
+            for i, group in enumerate(batch_groups):
+                item = resolved[i]
+                if item is not None:
+                    group_rows, entity_stats = item
+                    summary_text = db.compose_sector_summary(
+                        group["gics_sector"],
+                        group["gics_sub_industry"],
+                        group["week_start"],
+                        group["week_end"],
+                        intro_by_pos[i],
+                        group_rows,
+                        entity_stats,
+                    )
+                    db.write_sector_summary(
+                        conn,
+                        group["gics_sector"],
+                        group["gics_sub_industry"],
+                        group["week_start"],
+                        group["week_end"],
+                        summary_text,
+                        num_articles=len(group_rows),
+                        num_companies=len({r["company"] for r in group_rows}),
+                        model_name=SUMMARY_MODEL,
+                    )
+                idx += 1
+                pbar.update(1)
+                if on_progress:
+                    on_progress("sector_summary", idx, total)
+
+            conn.commit()
 
     del model, tokenizer
     free_gpu()
