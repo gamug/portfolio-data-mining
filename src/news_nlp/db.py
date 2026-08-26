@@ -6,7 +6,9 @@ by article_id. Also provides read-only query helpers backing the FastAPI
 query endpoints.
 """
 
+import json
 import os
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -86,6 +88,15 @@ CREATE TABLE IF NOT EXISTS sector_summary (
     num_articles      INTEGER NOT NULL,
     num_companies     INTEGER NOT NULL,
     model_name        TEXT NOT NULL,
+    -- facts_json: structured, non-narrative payload (sentiment/entity/category
+    -- aggregates plus attributed per-company records) meant for programmatic
+    -- consumers (e.g. knowledge-graph ingestion) -- see build_sector_facts.
+    -- intro_text: the one model-generated sentence in summary_text, stored
+    -- separately (and already run through clean_generated_text) so a
+    -- consumer that only wants grounded facts can read facts_json and skip
+    -- it entirely.
+    facts_json        TEXT NOT NULL DEFAULT '{}',
+    intro_text        TEXT NOT NULL DEFAULT '',
     format_version    INTEGER NOT NULL DEFAULT 0,
     processed_at      TEXT NOT NULL,
     UNIQUE (gics_sector, gics_sub_industry, week_start)
@@ -115,11 +126,12 @@ CREATE TABLE IF NOT EXISTS article_category (
 """
 
 # Bumped whenever sector_summary's generation logic changes shape (e.g. the
-# category-grouped deterministic-roll-up rewrite this constant was added
-# for). fetch_pending_sector_weeks() treats any row below this value as
-# stale, so legacy rows self-heal via INSERT OR REPLACE on the next
-# sector_summary run instead of needing a separate backfill script.
-SECTOR_SUMMARY_FORMAT_VERSION = 1
+# category-grouped deterministic-roll-up rewrite, then the facts_json/
+# intro_text split for knowledge-graph-friendly output). fetch_pending_sector_weeks()
+# treats any row below this value as stale, so legacy rows self-heal via
+# INSERT OR REPLACE on the next sector_summary run instead of needing a
+# separate backfill script.
+SECTOR_SUMMARY_FORMAT_VERSION = 2
 
 
 # This DB file is shared with news_collector and extractor (see CLAUDE.md).
@@ -142,14 +154,15 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
-def _migrate_sector_summary_format_version(conn: sqlite3.Connection) -> None:
+def _migrate_sector_summary_schema(conn: sqlite3.Connection) -> None:
     """Bring a pre-existing `sector_summary` table (created before
-    format_version existed) up to the current schema. Idempotent -- safe to
-    call on every startup, including against a table that's already current
-    or was just freshly created by SCHEMA. Legacy rows land at
-    format_version=0 (the column default), which fetch_pending_sector_weeks
-    treats as stale/pending, so they self-heal via INSERT OR REPLACE on the
-    next sector_summary run -- no separate backfill script needed."""
+    format_version/facts_json/intro_text existed) up to the current schema.
+    Idempotent -- safe to call on every startup, including against a table
+    that's already current or was just freshly created by SCHEMA. Legacy
+    rows land at format_version=0 (the column default), which
+    fetch_pending_sector_weeks treats as stale/pending, so they self-heal
+    via INSERT OR REPLACE on the next sector_summary run -- no separate
+    backfill script needed."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(sector_summary)").fetchall()}
     if not columns:
         return  # table doesn't exist yet -- nothing to migrate
@@ -157,11 +170,15 @@ def _migrate_sector_summary_format_version(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE sector_summary ADD COLUMN format_version INTEGER NOT NULL DEFAULT 0"
         )
+    if "facts_json" not in columns:
+        conn.execute("ALTER TABLE sector_summary ADD COLUMN facts_json TEXT NOT NULL DEFAULT '{}'")
+    if "intro_text" not in columns:
+        conn.execute("ALTER TABLE sector_summary ADD COLUMN intro_text TEXT NOT NULL DEFAULT ''")
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
-    _migrate_sector_summary_format_version(conn)
+    _migrate_sector_summary_schema(conn)
     conn.commit()
 
 
@@ -564,6 +581,79 @@ def compose_sector_summary(
     return "\n".join(lines)
 
 
+def clean_generated_text(text: str) -> str:
+    """Whitespace-normalize a model-generated snippet and drop a trailing
+    sentence fragment left when generation got cut off at max_length (a
+    partial clause with no closing '.', '!', or '?'). Applied to
+    build_sector_intro_seed's model output before it's stored as its own
+    `intro_text` column -- cosmetic issues that were easy to miss when that
+    sentence only ever appeared inline as one line inside the larger
+    composed `summary_text` body are surfaced directly now that the sentence
+    is also surfaced standalone."""
+    normalized = re.sub(r"\s+", " ", text.strip())
+    if not normalized or normalized[-1] in ".!?":
+        return normalized
+    cut = max(normalized.rfind(ch) for ch in ".!?")
+    return normalized[: cut + 1] if cut != -1 else normalized
+
+
+def build_sector_facts(
+    gics_sector: str,
+    gics_sub_industry: str,
+    week_start: str,
+    week_end: str,
+    rows: list[sqlite3.Row],
+    entity_stats: list[dict],
+) -> dict:
+    """Structured, non-narrative counterpart to compose_sector_summary's
+    prose: the same aggregate stats (sentiment/category/entity breakdowns)
+    plus one attributed record per contributing row, each tagged with its
+    own ticker/company -- meant for programmatic consumers (e.g.
+    knowledge-graph ingestion) that want grounded facts without parsing
+    prose or an intro sentence. Same no-cross-company-blending guarantee as
+    compose_sector_summary: every `companies` entry's `summary` is one row's
+    own c_summary text, never merged with another row's."""
+    total_articles = len(rows)
+    num_companies = len({r["company"] for r in rows})
+    sentiment_counts = _sentiment_counts(rows)
+    sentiment_pct = _sentiment_pct(sentiment_counts, total_articles)
+
+    categories = [
+        {
+            "label": slug,
+            "display_name": _CATEGORY_DISPLAY_NAMES[slug],
+            "num_articles": len(category_rows),
+            "tickers": sorted({r["ticker"] for r in category_rows}),
+        }
+        for slug, category_rows in _group_rows_by_category(rows)
+    ]
+
+    companies = [
+        {
+            "article_id": r["article_id"],
+            "ticker": r["ticker"],
+            "company": r["company"],
+            "category": r["category_label"],
+            "sentiment": r["sentiment_label"],
+            "summary": r["summary_text"],
+        }
+        for r in rows
+    ]
+
+    return {
+        "gics_sector": gics_sector,
+        "gics_sub_industry": gics_sub_industry,
+        "week_start": week_start,
+        "week_end": week_end,
+        "num_articles": total_articles,
+        "num_companies": num_companies,
+        "sentiment": {"counts": sentiment_counts, "pct": sentiment_pct},
+        "categories": categories,
+        "top_entities": entity_stats,
+        "companies": companies,
+    }
+
+
 def build_sector_intro_seed(
     gics_sector: str,
     gics_sub_industry: str,
@@ -612,13 +702,20 @@ def write_sector_summary(
     num_articles: int,
     num_companies: int,
     model_name: str,
+    facts: dict | None = None,
+    intro_text: str = "",
     format_version: int = SECTOR_SUMMARY_FORMAT_VERSION,
 ) -> None:
+    """`facts`/`intro_text` default to an empty dict/string -- matching the
+    facts_json/intro_text columns' own schema defaults -- so callers that
+    only care about the prose `summary_text` (e.g. older tests) don't need
+    to pass them. See build_sector_facts and clean_generated_text."""
     conn.execute(
         """INSERT OR REPLACE INTO sector_summary
            (gics_sector, gics_sub_industry, week_start, week_end, summary_text,
-            num_articles, num_companies, model_name, format_version, processed_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            num_articles, num_companies, model_name, facts_json, intro_text,
+            format_version, processed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             gics_sector,
             gics_sub_industry,
@@ -628,6 +725,8 @@ def write_sector_summary(
             num_articles,
             num_companies,
             model_name,
+            json.dumps(facts if facts is not None else {}),
+            intro_text,
             format_version,
             now_iso(),
         ),
@@ -652,7 +751,14 @@ def list_sector_summaries(
         sql += " AND week_start = ?"
         params.append(week_start)
     sql += " ORDER BY week_start DESC, gics_sector, gics_sub_industry"
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    results = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    # facts_json is stored as a TEXT column (see write_sector_summary's
+    # json.dumps) -- decode it back to a real object here so API consumers
+    # get a nested JSON value, not a JSON string they'd have to parse a
+    # second time themselves.
+    for r in results:
+        r["facts_json"] = json.loads(r["facts_json"])
+    return results
 
 
 _SENTIMENT_STATS_GROUP_EXPR = {

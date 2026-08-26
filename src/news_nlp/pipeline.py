@@ -619,12 +619,21 @@ def run_sector_summary_stage(
                 item = resolved[i]
                 if item is not None:
                     group_rows, entity_stats = item
+                    intro_text = db.clean_generated_text(intro_by_pos[i])
                     summary_text = db.compose_sector_summary(
                         group["gics_sector"],
                         group["gics_sub_industry"],
                         group["week_start"],
                         group["week_end"],
-                        intro_by_pos[i],
+                        intro_text,
+                        group_rows,
+                        entity_stats,
+                    )
+                    facts = db.build_sector_facts(
+                        group["gics_sector"],
+                        group["gics_sub_industry"],
+                        group["week_start"],
+                        group["week_end"],
                         group_rows,
                         entity_stats,
                     )
@@ -638,6 +647,8 @@ def run_sector_summary_stage(
                         num_articles=len(group_rows),
                         num_companies=len({r["company"] for r in group_rows}),
                         model_name=SUMMARY_MODEL,
+                        facts=facts,
+                        intro_text=intro_text,
                     )
                 idx += 1
                 pbar.update(1)
