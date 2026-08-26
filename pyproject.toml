@@ -44,6 +44,7 @@ dependencies = [
     # --- sec_edgar (src/sec_edgar - SEC EDGAR filings) -----------------------
     "edgartools==5.44.1",
     "defusedxml>=0.7.1",
+    "libsql>=0.1.11",
 ]
 
 [dependency-groups]

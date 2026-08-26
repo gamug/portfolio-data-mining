@@ -15,6 +15,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from common.db_backend import is_remote_url, open_connection
+
 from .categories import CATEGORY_LABELS, OTHER_LABEL
 
 # Called here (not just in apps/news_nlp_api.py) so DATABASE_URL is honored
@@ -23,25 +25,33 @@ from .categories import CATEGORY_LABELS, OTHER_LABEL
 # which never go through the FastAPI app. Safe to call more than once.
 load_dotenv()
 
-# $DATABASE_URL is a filesystem path today (this is still SQLite) -- kept as
-# an env var, not a hardcoded literal, so pointing this at a real connection
-# string later (e.g. a hosted Postgres/libSQL DSN) is a one-line env change,
-# not a code change. Falls back to the pre-existing default when unset.
+# $DATABASE_URL is a filesystem path by default -- kept as an env var, not a
+# hardcoded literal, so pointing this at a real connection string is a
+# one-line env change, not a code change: a `libsql://...` value (with
+# $TURSO_AUTH_TOKEN set) routes every connect() here through Turso instead
+# of local SQLite -- see common/db_backend.py. Falls back to the
+# pre-existing local-file default when unset.
 #
-# A relative value (the .env.example default, "data/urls.db") is resolved
-# against the project root rather than left relative to the process's CWD --
-# unlike the other DATABASE_URL call sites (extractor/, news_collector/),
-# this module gets imported by standalone CLI entrypoints
-# (`python -m news_nlp.setup`/`.pipeline`) that aren't guaranteed to be
-# launched from the repo root, so a CWD-relative path would silently point
-# at the wrong file depending on where the command was run from.
+# A remote URL is kept as-is (Path() would mangle "libsql://host" into
+# "libsql:/host" by collapsing the double slash). A relative filesystem
+# value (the .env.example default, "data/urls.db") is resolved against the
+# project root rather than left relative to the process's CWD -- unlike the
+# other DATABASE_URL call sites (extractor/, news_collector/), this module
+# gets imported by standalone CLI entrypoints (`python -m news_nlp.setup`/
+# `.pipeline`) that aren't guaranteed to be launched from the repo root, so
+# a CWD-relative path would silently point at the wrong file depending on
+# where the command was run from.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _db_path_env = os.environ.get("DATABASE_URL")
-DB_PATH = (
-    (Path(_db_path_env) if Path(_db_path_env).is_absolute() else _PROJECT_ROOT / _db_path_env)
-    if _db_path_env
-    else _PROJECT_ROOT / "data" / "urls.db"
-)
+DB_PATH: Path | str
+if _db_path_env and is_remote_url(_db_path_env):
+    DB_PATH = _db_path_env
+elif _db_path_env:
+    DB_PATH = (
+        Path(_db_path_env) if Path(_db_path_env).is_absolute() else _PROJECT_ROOT / _db_path_env
+    )
+else:
+    DB_PATH = _PROJECT_ROOT / "data" / "urls.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS article_sentiment (
@@ -143,13 +153,18 @@ SECTOR_SUMMARY_FORMAT_VERSION = 2
 BUSY_TIMEOUT_MS = 30_000
 
 
-def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+def connect(db_path: Path | str = DB_PATH) -> sqlite3.Connection:
+    conn = open_connection(str(db_path), auth_token=os.environ.get("TURSO_AUTH_TOKEN"))
     # Row objects support both key access (row["col"], used by the query
     # helpers below) and positional unpacking (used by existing call sites
     # like `for article_id, body_text in fetch_pending_articles(...)`).
     conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    if not is_remote_url(str(db_path)):
+        # busy_timeout is a local-WAL-file concern -- Turso rejects it
+        # outright ("SQL not allowed statement"), and has no equivalent
+        # need for it since it isn't a single-writer local file. See
+        # common/db_backend.py.
+        conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 

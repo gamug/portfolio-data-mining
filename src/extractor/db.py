@@ -5,7 +5,10 @@ discovery crawler) and writes results into a new `articles` table in the
 same database. See CLAUDE.md for the schema rationale.
 """
 
+import os
 import sqlite3
+
+from common.db_backend import is_remote_url, open_connection
 
 ARTICLES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (
@@ -75,10 +78,17 @@ BUSY_TIMEOUT_MS = 30_000
 def connect(db_path: str) -> sqlite3.Connection:
     """Open a connection configured the way this pipeline expects: FK
     enforcement on, rows returned as sqlite3.Row.
+
+    `db_path` doubles as $DATABASE_URL's raw value -- a `libsql://...` URL
+    (with $TURSO_AUTH_TOKEN set) routes this through Turso instead of local
+    SQLite. See common/db_backend.py.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_connection(db_path, auth_token=os.environ.get("TURSO_AUTH_TOKEN"))
     conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+    if not is_remote_url(db_path):
+        # busy_timeout is a local-WAL-file concern -- Turso rejects it
+        # outright ("SQL not allowed statement"). See common/db_backend.py.
+        conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
     enable_foreign_keys(conn)
     return conn
 

@@ -5,12 +5,14 @@ from __future__ import annotations
 import contextlib
 import csv
 import logging
+import os
 import sqlite3
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
 
+from common.db_backend import is_remote_url, open_connection
 from news_collector.models import DiscoveredURL
 
 
@@ -90,22 +92,41 @@ class URLQueue:
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Create tables and indexes if they do not already exist."""
-        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        """Create tables and indexes if they do not already exist.
+
+        `self._db_path` doubles as $DATABASE_URL's raw value -- a
+        `libsql://...` URL (with $TURSO_AUTH_TOKEN set) routes this through
+        Turso instead of local SQLite. See common/db_backend.py.
+        """
+        remote = is_remote_url(self._db_path)
+        if not remote:
+            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = open_connection(
+            self._db_path,
+            auth_token=os.environ.get("TURSO_AUTH_TOKEN"),
+            check_same_thread=False,
+        )
         self._conn.row_factory = sqlite3.Row
-        # Enable WAL for better concurrent read performance
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        # This DB file is shared with extractor and news_nlp (see CLAUDE.md) --
-        # each opens its own connection, and a writer that finds the file
-        # locked by another connection's write transaction otherwise gets an
-        # immediate `sqlite3.OperationalError: database is locked` instead of
-        # a retry. busy_timeout makes SQLite retry internally for up to this
-        # many ms before raising. Not persistent (like foreign_keys, unlike
-        # journal_mode), so every connection -- including this pipeline's own
-        # concurrent-reader connections -- needs to set it itself.
-        self._conn.execute("PRAGMA busy_timeout=30000")
+        if not remote:
+            # WAL/synchronous/busy_timeout are local-WAL-file concerns --
+            # Turso rejects busy_timeout/journal_mode outright ("SQL not
+            # allowed statement") and has no equivalent need for them since
+            # it isn't a single-writer local file. See common/db_backend.py.
+            #
+            # Enable WAL for better concurrent read performance
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            # This DB file is shared with extractor and news_nlp (see
+            # CLAUDE.md) -- each opens its own connection, and a writer that
+            # finds the file locked by another connection's write
+            # transaction otherwise gets an immediate
+            # `sqlite3.OperationalError: database is locked` instead of a
+            # retry. busy_timeout makes SQLite retry internally for up to
+            # this many ms before raising. Not persistent (like
+            # foreign_keys, unlike journal_mode), so every connection --
+            # including this pipeline's own concurrent-reader connections --
+            # needs to set it itself.
+            self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_DDL)
         self._conn.commit()
         log.info("URLQueue initialized at %s", self._db_path)
