@@ -28,12 +28,24 @@ summarization model never loads and its VRAM/latency cost is never paid unless a
 4. **`c_summary`** — one abstractive summary per article (`sshleifer/distilbart-cnn-12-6`),
    generated from the article's body plus its already-computed sentiment/entities →
    `article_summary`.
-5. **`sector_summary`** — one abstractive summary per `gics_sub_industry` per closed
-   calendar week (`sshleifer/distilbart-cnn-12-6`), reduced from that week's `article_summary`
-   rows across every company in the sub-industry → `sector_summary`. Sub-industries with
-   no qualifying articles in a given week get no row; "closed" means the week (Mon–Sun)
-   has fully ended, so a summary is never generated from a partial week and later need
-   regenerating.
+5. **`sector_summary`** — one row per `gics_sub_industry` per closed calendar week →
+   `sector_summary`. A deterministic, non-generative composition (`db.compose_sector_summary`):
+   a stats overview (sentiment %, top entities) plus one section per NLP category (stage 3's
+   taxonomy) present that week, each listing its contributing companies' `c_summary` text
+   verbatim and attributed to its own ticker — company text is never blended with another
+   company's, and never crosses a category-section boundary. The only text ever handed to a
+   model (`sshleifer/distilbart-cnn-12-6`) is a short intro sentence built purely from
+   aggregate stats (`db.build_sector_intro_seed`) — no ticker, company name, or `c_summary`
+   text ever reaches it, which is what makes cross-company/cross-topic blending structurally
+   impossible rather than merely unlikely. Articles whose `c_summary` exists but have no
+   `article_category` row (historical data predating stage 3 becoming mandatory, or a
+   partial/direct stage invocation) are excluded from sector_summary generation entirely.
+   Sub-industries with no qualifying articles in a given week get no row; "closed" means the
+   week (Mon–Sun) has fully ended, so a summary is never generated from a partial week and
+   later need regenerating. `sector_summary.format_version` is bumped whenever this
+   generation logic changes shape — a row below the current version is treated as stale and
+   self-heals (regenerated via `INSERT OR REPLACE`) the next time the stage runs, no separate
+   backfill needed.
 
 - **Sentence-aware chunking** (`src/news_nlp/chunking.py`) — articles run up to ~13K
   words, far past BERT's 512-token limit; chunks are packed on sentence boundaries. The
