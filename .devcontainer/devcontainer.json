@@ -36,6 +36,14 @@
     "runArgs": [
         "--gpus=all"
     ],
+    // Bind-mount the thesis directory from the Windows host alongside the repo workspace.
+    // Source is a Windows drive path - Docker Desktop (WSL2 backend) translates it; switch
+    // to /mnt/d/Mestría/Semestre 3/Thesis if Docker ever runs natively inside WSL2.
+    // Target is a sibling path (not /workspaces itself) to avoid colliding with the Dev
+    // Containers extension's automatic mount at /workspaces/portfolio-data-mining.
+    "mounts": [
+        "source=D:\\thesis,target=/workspaces/thesis,type=bind,consistency=cached"
+    ],
     // Use 'postCreateCommand' to run commands after the container is created.
     "postCreateCommand": "uv sync || source .venv/bin/activate"
     // Configure tool-specific properties.
