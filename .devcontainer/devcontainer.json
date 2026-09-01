@@ -45,7 +45,7 @@
         "source=D:\\thesis,target=/workspaces/thesis,type=bind,consistency=cached"
     ],
     // Use 'postCreateCommand' to run commands after the container is created.
-    "postCreateCommand": "uv sync || source .venv/bin/activate"
+    "postCreateCommand": "bash scripts/init.sh"
     // Configure tool-specific properties.
     // "customizations": {},
     // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
