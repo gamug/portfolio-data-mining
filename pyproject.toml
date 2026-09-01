@@ -1,7 +1,7 @@
 [project]
 name = "portfolio-data-mining"
 version = "0.1.0"
-description = "Financial-news + SEC-filings data-mining pipeline (news_collector -> extractor -> news_nlp, plus independent pricing and sec_edgar services)"
+description = "Financial-news + SEC-filings data-mining pipeline (news_collector -> extractor, plus independent pricing and sec_edgar services)"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
@@ -27,18 +27,6 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "trafilatura>=1.12",
     "langdetect>=1.0.9",
-    # --- news_nlp (src/news_nlp - sentiment + NER) ---------------------------
-    # torch is pinned to what the cu124 wheel index (see [tool.uv.sources]
-    # below) actually publishes - that index stops at 2.6.0, so an
-    # unbounded/newer requirement here would make uv fall back to a plain
-    # PyPI build (a different, unpinned CUDA version) instead of erroring.
-    "torch>=2.4,<2.7",
-    "transformers>=4.40",
-    "datasets>=2.19",
-    "accelerate>=0.30",
-    "evaluate>=0.4",
-    "seqeval>=1.2",
-    "huggingface_hub>=0.24",
     # --- pricing (src/pricing - Finnhub pricing/news/market data) -----------
     "finnhub-python==2.4.29",
     # --- sec_edgar (src/sec_edgar - SEC EDGAR filings) -----------------------
@@ -59,15 +47,3 @@ dev = [
 
 [tool.uv]
 package = false
-
-# torch is listed directly under [project] dependencies, but `uv sync` still
-# needs to know which wheel to fetch. This pins it to the same cu124 build the
-# old `pip install torch --index-url https://download.pytorch.org/whl/cu124`
-# manual step used, so `uv sync`/`uv lock` alone reproduce it exactly.
-[tool.uv.sources]
-torch = { index = "pytorch-cu124" }
-
-[[tool.uv.index]]
-name = "pytorch-cu124"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true

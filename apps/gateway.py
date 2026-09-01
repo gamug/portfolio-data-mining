@@ -1,23 +1,22 @@
 """
-Gateway: mounts all five service apps under one running process/port, for
+Gateway: mounts all four service apps under one running process/port, for
 browsing/demo convenience. See docs/modules/gateway.md.
 
 IMPORTANT — this is NOT a single merged OpenAPI schema. Starlette's
 `app.mount()` keeps each sub-app's OpenAPI/`/docs` fully separate; this
-process just serves all five at once, path-prefixed, instead of you having
-to start five separate `uvicorn` processes on five separate ports. Each
+process just serves all four at once, path-prefixed, instead of you having
+to start four separate `uvicorn` processes on four separate ports. Each
 service's own Swagger UI still lives at its own `/docs` (e.g.
 `/pricing/docs`), just reachable through one port now.
 
 Getting a genuinely single flattened Swagger page would require rewriting
 each service's routes as an `APIRouter` and `include_router()`-ing them all
-into one FastAPI instance -- a real refactor of all five apps, not a
+into one FastAPI instance -- a real refactor of all four apps, not a
 5th file on top of them. Not done here; flag it if you want that instead.
 
 Each sub-app is imported defensively: if one fails to import (e.g.
-FINNHUB_API_KEY missing from .env, or torch not installed for news_nlp),
-the gateway logs it and mounts everything else rather than refusing to
-start.
+FINNHUB_API_KEY missing from .env), the gateway logs it and mounts
+everything else rather than refusing to start.
 
 Run:
     .venv\\Scripts\\python.exe apps\\gateway.py
@@ -48,7 +47,6 @@ logging.basicConfig(level=logging.INFO)
 _SERVICES = [
     ("/collector", "news_collector_api", "News Collector (URL discovery)"),
     ("/crawler", "news_crawler_api", "News Crawler / extractor (full-text extraction)"),
-    ("/nlp", "news_nlp_api", "News NLP (sentiment + NER)"),
     ("/pricing", "pricing_api", "Pricing (Finnhub OHLCV/news/market data)"),
     ("/edgar", "sec_edgar_api", "SEC EDGAR (filings/financials)"),
 ]
@@ -89,7 +87,7 @@ async def gateway_lifespan(app: FastAPI) -> AsyncIterator[None]:
     here via an AsyncExitStack, so their real startup/shutdown hooks run for
     the gateway's process lifetime. Cheap/no-op for the sub-apps that don't
     define a custom lifespan (Starlette falls back to a default no-op one),
-    so this is safe for all five and needs no per-service special-casing.
+    so this is safe for all of them and needs no per-service special-casing.
     """
     async with AsyncExitStack() as stack:
         for sub_app in _mounted_apps:
@@ -100,10 +98,10 @@ async def gateway_lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Portfolio Data Mining — Gateway",
     description=(
-        "Single-process entrypoint that mounts all five services. Each "
+        "Single-process entrypoint that mounts all four services. Each "
         "keeps its own /docs -- see the landing page at / for links. "
         "Production/independent-scaling deploys should still run "
-        "apps/{news_collector,news_crawler,news_nlp,pricing,sec_edgar}_api.py "
+        "apps/{news_collector,news_crawler,pricing,sec_edgar}_api.py "
         "separately instead of this."
     ),
     version="1.0.0",

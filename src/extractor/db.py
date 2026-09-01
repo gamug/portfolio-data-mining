@@ -61,7 +61,7 @@ def enable_foreign_keys(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
-# This DB file is shared with news_collector and news_nlp (see CLAUDE.md).
+# This DB file is shared with news_collector (see CLAUDE.md).
 # Without a busy_timeout, a connection that finds the file locked by another
 # one's write transaction gets an immediate
 # `sqlite3.OperationalError: database is locked` instead of a retry -- most
