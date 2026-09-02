@@ -17,10 +17,19 @@ repo had to remember to keep up to date.
 
 Shared by the pricing and edgar modules (both need "what tickers do we
 track"), which is why it lives in `common/` rather than either one.
+
+Point-in-time membership (an `as_of` date, instead of just "today") is
+handled by the sibling `common.universe_history` module, backed by a
+dedicated `data/universe.db` -- deliberately not something this module
+touches on the default path (as_of=None keeps the exact behavior below:
+in-process cached live scrape, no DB, no filesystem write). See
+`universe_history` for why, and CLAUDE.md/docs/modules/pricing.md for the
+`as_of` API/CLI surface.
 """
 
 import functools
 import re
+from datetime import date
 
 import httpx
 import pandas as pd
@@ -88,16 +97,25 @@ def _parse_constituents_table(page_html: str) -> pd.DataFrame:
     return pd.DataFrame.from_records(records, columns=COLUMNS)
 
 
-def _fetch_universe_from_wikipedia() -> pd.DataFrame:
+def _fetch_universe_from_wikipedia(client: httpx.Client | None = None) -> pd.DataFrame:
     """Blocking GET + parse. `load_universe()`'s cache means this only ever
     runs once per process, so a synchronous client here -- rather than
     threading async through every caller (the /universe routes are sync
-    FastAPI handlers) -- is a fine trade."""
-    response = httpx.get(
-        WIKIPEDIA_SP500_URL, headers=WIKIPEDIA_HEADERS, follow_redirects=True, timeout=30.0
-    )
-    response.raise_for_status()
-    return _parse_constituents_table(response.text)
+    FastAPI handlers) -- is a fine trade. Accepts an optional injected
+    httpx.Client so tests can supply one wired to an httpx.MockTransport,
+    matching the convention already used by
+    news_collector.sp500/extractor.reference."""
+    owns_client = client is None
+    client = client or httpx.Client()
+    try:
+        response = client.get(
+            WIKIPEDIA_SP500_URL, headers=WIKIPEDIA_HEADERS, follow_redirects=True, timeout=30.0
+        )
+        response.raise_for_status()
+        return _parse_constituents_table(response.text)
+    finally:
+        if owns_client:
+            client.close()
 
 
 @functools.lru_cache(maxsize=1)
@@ -110,9 +128,23 @@ def load_universe() -> pd.DataFrame:
     return _fetch_universe_from_wikipedia()
 
 
-def list_universe(sector: str | None = None) -> list[dict]:
+def list_universe(sector: str | None = None, as_of: date | None = None) -> list[dict]:
     """Return the tracked universe as a list of row dicts, optionally filtered
-    by GICS Sector (case-insensitive exact match)."""
+    by GICS Sector (case-insensitive exact match).
+
+    as_of=None (default): today's live/cached scrape -- unchanged behavior,
+    no DB touch. as_of=<date>: point-in-time membership from the persisted
+    history in common.universe_history, raising ValueError if that date
+    predates the backfilled coverage or no backfill has been run yet.
+    """
+    if as_of is not None:
+        # Local import: avoids a module-level cycle (universe_history
+        # imports list_universe from here) and keeps the as_of=None path
+        # from ever touching common.universe_history at all.
+        from common.universe_history import query_as_of  # noqa: PLC0415
+
+        return query_as_of(as_of, sector=sector)
+
     df = load_universe()
     if sector:
         df = df[df["GICS Sector"].str.lower() == sector.lower()]
@@ -120,11 +152,21 @@ def list_universe(sector: str | None = None) -> list[dict]:
     return rows
 
 
-def resolve_symbol(query: str) -> dict | None:
+def resolve_symbol(query: str, as_of: date | None = None) -> dict | None:
     """
     Resolve a ticker symbol OR company name (case-insensitive, partial match
     on name) to a single canonical universe row, or None if nothing matches.
+
+    as_of=None (default): resolves against today's live/cached scrape.
+    as_of=<date>: resolves against point-in-time membership (see
+    common.universe_history), raising ValueError if that date predates the
+    backfilled coverage or no backfill has been run yet.
     """
+    if as_of is not None:
+        from common.universe_history import resolve_as_of  # noqa: PLC0415
+
+        return resolve_as_of(query, as_of)
+
     df = load_universe()
     q = query.strip()
     if not q:

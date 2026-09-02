@@ -9,7 +9,11 @@ Prints results as JSON to stdout.
 
 Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe --sector "Information Technology"
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py universe --as-of 2019-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py resolve AAPL
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py resolve TWTR --as-of 2022-10-01
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-backfill
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-snapshot
     .venv\\Scripts\\python.exe cli\\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-company AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-market --category general
@@ -23,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +38,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from common.portfolio import list_universe, resolve_symbol
+from common.universe_history import backfill_from_changes, record_snapshot
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
@@ -43,15 +49,35 @@ def print_json(data: Any) -> None:
 
 
 def cmd_universe(args: argparse.Namespace, **_clients: Any) -> None:
-    print_json(list_universe(sector=args.sector))
+    try:
+        print_json(list_universe(sector=args.sector, as_of=args.as_of))
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_resolve(args: argparse.Namespace, **_clients: Any) -> None:
-    result = resolve_symbol(args.query)
+    try:
+        result = resolve_symbol(args.query, as_of=args.as_of)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
     if result is None:
         print(f"'{args.query}' not found in tracked universe.", file=sys.stderr)
         sys.exit(1)
     print_json(result)
+
+
+def cmd_universe_backfill(args: argparse.Namespace, **_clients: Any) -> None:
+    count = backfill_from_changes(force=args.force)
+    if count:
+        print(f"Backfilled {count} membership intervals into universe_membership.")
+    else:
+        print("Already backfilled -- pass --force to redo.")
+
+
+def cmd_universe_snapshot(args: argparse.Namespace, **_clients: Any) -> None:
+    print_json(record_snapshot())
 
 
 def cmd_pricing(
@@ -107,11 +133,39 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--sector", default=None, help="Filter by GICS Sector, e.g. 'Information Technology'"
     )
+    p.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        default=None,
+        dest="as_of",
+        help="Point-in-time date, YYYY-MM-DD (omit for today's live snapshot; "
+        "requires universe-backfill to have been run once)",
+    )
     p.set_defaults(func=cmd_universe)
 
     p = sub.add_parser("resolve", help="Resolve a ticker or company name to its universe row")
     p.add_argument("query")
+    p.add_argument(
+        "--as-of",
+        type=date.fromisoformat,
+        default=None,
+        dest="as_of",
+        help="Point-in-time date, YYYY-MM-DD (omit for today's live snapshot)",
+    )
     p.set_defaults(func=cmd_resolve)
+
+    p = sub.add_parser(
+        "universe-backfill",
+        help="One-time point-in-time history reconstruction from Wikipedia's change log",
+    )
+    p.add_argument("--force", action="store_true", help="Redo even if already backfilled")
+    p.set_defaults(func=cmd_universe_backfill)
+
+    p = sub.add_parser(
+        "universe-snapshot",
+        help="Record today's roster as a forward snapshot (diff vs last known state)",
+    )
+    p.set_defaults(func=cmd_universe_snapshot)
 
     p = sub.add_parser(
         "pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)"

@@ -20,6 +20,8 @@ __pycache__/
 data/urls.db
 data/*.db-*
 data/urls.db.bak-*
+# Point-in-time S&P 500 membership store (src/common/universe_history.py).
+data/universe.db
 # finhub-derived output/input scratch dirs -- nothing currently creates or
 # writes into these (the init_repository()/check_repository() machinery
 # that used to was removed as dead code), kept ignored defensively in case
