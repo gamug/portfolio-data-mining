@@ -89,15 +89,33 @@ def universe(
     sector: str | None = Query(
         None, description="Filter by GICS Sector, e.g. 'Information Technology'"
     ),
+    as_of: date | None = Query(
+        None,
+        description="Point-in-time membership date, YYYY-MM-DD; omit for today's "
+        "live/cached snapshot. Requires `universe-backfill` to have been run once.",
+    ),
 ) -> list[dict]:
-    """List the tracked S&P 500 ticker/company universe, optionally filtered by sector."""
-    return list_universe(sector=sector)
+    """List the tracked S&P 500 ticker/company universe, optionally filtered by
+    sector and/or as of a past date."""
+    try:
+        return list_universe(sector=sector, as_of=as_of)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @app.get("/universe/resolve/{query}", tags=["Universe"])
-def universe_resolve(query: str) -> dict:
-    """Resolve a ticker symbol or company name to its canonical universe row."""
-    row = resolve_symbol(query)
+def universe_resolve(
+    query: str,
+    as_of: date | None = Query(
+        None, description="Point-in-time membership date, YYYY-MM-DD; omit for today's snapshot."
+    ),
+) -> dict:
+    """Resolve a ticker symbol or company name to its canonical universe row,
+    optionally as of a past date."""
+    try:
+        row = resolve_symbol(query, as_of=as_of)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if row is None:
         raise HTTPException(status_code=404, detail=f"'{query}' not found in tracked universe.")
     return row
