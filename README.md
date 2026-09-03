@@ -10,9 +10,8 @@ each stage independently runnable as its own FastAPI service.
 ```mermaid
 graph LR
     A["news_collector\nURL discovery"] -->|discovered_urls| B["extractor\n(news_crawler)\nfull-text extraction"]
-    D["pricing\nFinnhub OHLCV/news/market"] -.->|independent| F
-    E["sec_edgar\nSEC filings/financials"] -.->|independent| F
-    B --> F["feature extraction /\nknowledge graph\n(not yet built)"]
+    D["pricing\nFinnhub OHLCV/news/market"]
+    E["sec_edgar\nSEC filings/financials"]
 ```
 
 `news_collector` → `extractor` share one SQLite database
@@ -26,7 +25,34 @@ connection string later is a one-line env change, not a multi-file code change.
 `pricing` and `sec_edgar` are independent of that chain — they pull directly from Finnhub
 and SEC EDGAR for a given ticker, keyed off the tracked universe `common.portfolio`
 fetches live from Wikipedia (same source `news_collector`/`extractor` use) and caches
-in-process.
+in-process. Point-in-time membership (`as_of`, for "who was tracked on date X") is handled
+by the sibling `common.universe_history` module, backed by its own `data/universe.db` — see
+[docs/modules/pricing.md](docs/modules/pricing.md).
+
+### This repo is the acquisition layer of a six-repo system
+
+`portfolio-data-mining` stops at `articles`, and at `pricing`/`sec_edgar`'s HTTP responses —
+it does not do feature extraction or knowledge-graph work itself. An earlier version of the
+diagram above showed a `feature extraction / knowledge graph (not yet built)` node directly
+off `extractor`, as if this repo would eventually build that too; it wouldn't have, and
+doesn't need to — the project has since split into six repos (the "Portfolio Thesis"), and
+that step belongs to two of the others:
+
+- [`portfolio-nlp`](https://github.com/gamug/portfolio-nlp) — reads `articles.body_text`
+  from this repo's `urls.db` and does the actual **feature extraction**: sentiment (FinBERT),
+  named-entity recognition (SEC-BERT/FiNER-ORD), and topic categorization (DeBERTa-v3
+  zero-shot), written to its own `article_sentiment`/`article_entities`/`article_category`
+  tables. Shipped.
+- [`portfolio-financial-analysis`](https://github.com/gamug/portfolio-financial-analysis) —
+  consumes `pricing`/`sec_edgar` and reads this repo's `urls.db` read-only, to produce scored,
+  point-in-time analysis. Shipped.
+- [`portfolio-knowledge-graph`](https://github.com/gamug/portfolio-knowledge-graph) — has an
+  implemented RDF/OWL/SHACL schema, but the projection that would load `portfolio-nlp`'s and
+  `portfolio-financial-analysis`'s output into a queryable triple store is **not built yet**.
+  This is the actual "knowledge graph hand-off" — it was never this repo's job to build.
+
+`portfolio-reports` (decision layer) and `portfolio-app` (a thin presentation layer) round
+out the six repos; neither is built yet.
 
 ## `src/` — one folder per source project
 
@@ -36,7 +62,7 @@ in-process.
 | `extractor/` | `news-crawler/src/extractor/` | [docs/modules/news-crawler.md](docs/modules/news-crawler.md) |
 | `pricing/` | `finhub/src/{trading,market,news}/` (finhub split #1) | [docs/modules/pricing.md](docs/modules/pricing.md) |
 | `sec_edgar/` | `finhub/src/fundamental/` (finhub split #2) | [docs/modules/sec-edgar.md](docs/modules/sec-edgar.md) |
-| `common/` | `finhub/src/{config,commons}/` | shared by `pricing` + `sec_edgar`: universe loader (`portfolio.py`), shared error type (`errors.py`) |
+| `common/` | `finhub/src/{config,commons}/` | shared by `pricing` + `sec_edgar`: universe loader (`portfolio.py`), point-in-time universe history (`universe_history.py`), shared error type (`errors.py`) |
 
 Each package kept its own project's internal import style wherever that didn't collide
 with sharing one `src/` — `news_collector` and `extractor` are untouched (their absolute
@@ -116,8 +142,9 @@ uv run pre-commit run --all-files   # everything the git hook runs, on demand
 uv run pytest
 ```
 
-Runs `tests/news_collector` and `tests/extractor`. `pricing`/`sec_edgar` don't have a test
-suite yet (`finhub` didn't have one either).
+Runs the full suite: `tests/news_collector`, `tests/extractor`, `tests/pricing`,
+`tests/sec_edgar`, `tests/common` — all five `src/` packages now have coverage
+(`pricing`/`sec_edgar` got theirs 2026-09-02; `finhub` itself never had any).
 
 ## What didn't come along
 
