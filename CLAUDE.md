@@ -43,6 +43,16 @@ whether `as_of` is used. Both the one-time backfill and the periodic forward re-
 explicit, manually-run `cli/pricing_cli.py` subcommands (`universe-backfill`,
 `universe-snapshot`) — no scheduler, per this repo's own "Next steps" stance.
 
+A mutable universe means a ticker can newly join with zero `discovered_urls`/`articles`
+rows until `news_collector`'s `discover` is re-run for it. That needs no special-casing:
+`discover` (no `--tickers`/`--sp500`) already re-fetches the *live* Wikipedia list and the
+*full* `$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE` range every time, and `--resume`
+(default on) only skips a `(ticker, domain)` pair with an exact-range `discovery_progress`
+row already recorded — a brand-new ticker has none, so it gets fully backfilled on the next
+run like every other ticker did on its first. Same full-universe/full-range/idempotent-skip
+shape `portfolio-financial-analysis` uses for the identical problem in its own
+`pricing_agent`/`fundamental_agent`. See `docs/modules/news-collector.md`.
+
 ## Commands
 
 ```bash
