@@ -113,7 +113,7 @@ Dependencies are managed with [uv](https://docs.astral.sh/uv/) — a single `pyp
 `uv.lock` replace the old `requirements.txt`.
 
 ```bash
-uv sync   # creates .venv (Python 3.11, pinned via .python-version) and installs everything,
+uv sync   # creates .venv (Python 3.12, pinned via .python-version) and installs everything,
           # including the dev tools (pytest, ruff, mypy, pre-commit) from the dev dependency group
 
 cp .env.example .env   # Windows Command Prompt: copy .env.example .env
