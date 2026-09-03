@@ -22,6 +22,31 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
 
+## New S&P 500 members backfill automatically (no special-casing needed)
+
+The universe is mutable (see `common.universe_history`, [pricing.md](pricing.md)): a ticker
+can join the tracked S&P 500 at any time, and until `discover` is re-run for it, it simply
+has zero rows in `discovered_urls`/`articles` — a real gap, not a bug, if nobody re-runs the
+pipeline.
+
+The fix needs no code, because of how `discover` already behaves by default: with neither
+`--tickers` nor `--sp500` given, it fetches the **live, current** Wikipedia S&P 500 list
+every time (`news_collector.sp500.fetch_sp500_companies`) and requests the **full**
+`$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE` range for every ticker in it — never an
+incremental tail. `--resume` (on by default) only skips a `(ticker, domain)` pair that
+already has a `discovery_progress` row for that *exact* date range (`orchestrator.py`); a
+ticker that just joined the universe has no such row, so it gets the full historical range
+on the very next run, exactly like every other ticker did on its own first run — same
+treatment, no "is this ticker new?" branch anywhere.
+
+This mirrors the pattern `portfolio-financial-analysis`'s `pricing_agent`/`fundamental_agent`
+use for the same problem (mutable universe, per-agent price/filing data): *"One `run` makes
+a request per ticker for the whole date range... windows already stored are skipped, so
+re-runs resume"* — full universe × full range × idempotent skip, every invocation, so a new
+member is never silently under-covered. Operationally here: after `pricing_cli.py
+universe-snapshot` reports an `added` ticker, just re-run `news_collector discover` (default
+args) — it will pick up that ticker's full backlog on its own.
+
 ## Running
 
 ```bash

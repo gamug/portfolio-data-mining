@@ -30,7 +30,12 @@ article's change log (back to 1976), and persists it to a small **dedicated** SQ
 (`data/universe.db`, `$UNIVERSE_DB_PATH`) — not `urls.db`, and not touched at all unless
 `as_of` is passed, so `portfolio.py`'s default behavior and DB-independence are unchanged.
 Two `cli/pricing_cli.py` subcommands drive it by hand (no scheduler): `universe-backfill`
-(one-time reconstruction) and `universe-snapshot` (forward diff against today's roster).
+(one-time reconstruction) and `universe-snapshot` (forward diff against today's roster,
+returning `{"added": [...], "removed": [...]}`). A member appearing in `added` has no
+`discovered_urls`/`articles` rows yet by definition — re-run `news_collector discover`
+(default args) to backfill it; that command already re-fetches the live universe and the
+full configured date range every time, so a brand-new ticker gets fully covered with no
+special-casing. See [news-collector.md](news-collector.md#new-sp-500-members-backfill-automatically-no-special-casing-needed).
 
 `src/common/` used to also have `config.py` and `utils.py` (a `general` dict of
 output/input scratch-directory paths, `check_repository()`/`init_repository()` to create
