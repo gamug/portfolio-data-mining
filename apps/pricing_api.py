@@ -27,9 +27,9 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
+from portfolio_common.errors import UpstreamDataError
+from portfolio_common.portfolio import list_universe, resolve_symbol
 
-from common.errors import UpstreamDataError
-from common.portfolio import list_universe, resolve_symbol
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher

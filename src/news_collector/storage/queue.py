@@ -11,8 +11,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from common.db import connect
-from common.schema import apply_schema, run_migrations
+from portfolio_common.db import connect
+from portfolio_common.schema import apply_schema, run_migrations
+
 from news_collector.models import DiscoveredURL
 
 

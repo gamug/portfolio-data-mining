@@ -5,7 +5,9 @@ description = "Financial-news + SEC-filings data-mining pipeline (news_collector
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
-    # --- shared web/runtime -------------------------------------------------
+    # --- shared library (SQLite connect/schema, S&P 500 universe) ----------
+    "portfolio-common",
+    # --- shared web/runtime -----------------------------------------------
     "httpx[http2]>=0.27.0",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.1",
@@ -18,7 +20,6 @@ dependencies = [
     "ddgs>=9.0.0",
     "yfinance>=0.2.40",
     "tenacity>=8.3.0",
-    "aiosqlite>=0.20.0",
     "feedparser>=6.0.11",
     "lxml>=5.2.0",
     "pyyaml>=6.0.1",
@@ -47,3 +48,11 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+# The shared library lives in its own repo (github.com/gamug/portfolio-common)
+# and is pinned by tag -- bump the tag here to adopt a new schema/universe
+# contract. For local work against a checkout next to this repo, override
+# with an editable path source:
+#   portfolio-common = { path = "../portfolio-common", editable = true }
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.1.1" }

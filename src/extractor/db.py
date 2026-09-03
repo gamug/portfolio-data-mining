@@ -9,12 +9,12 @@ this module keeps only the extractor-specific queries. See CLAUDE.md.
 
 import sqlite3
 
-from common.db import connect as _connect
-from common.db import enable_foreign_keys
+from portfolio_common.db import connect as _connect
+from portfolio_common.db import enable_foreign_keys
 
 # ARTICLES_SCHEMA / _migrate_legacy_sector_column are re-exported only for
 # backward compatibility with pre-consolidation imports.
-from common.schema import (
+from portfolio_common.schema import (
     ARTICLE_COLUMNS,
     ARTICLES_SCHEMA,
     _migrate_legacy_sector_column,  # noqa: F401

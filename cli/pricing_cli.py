@@ -37,8 +37,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from common.portfolio import list_universe, resolve_symbol
-from common.universe_history import backfill_from_changes, record_snapshot
+from portfolio_common.portfolio import list_universe, resolve_symbol
+from portfolio_common.universe_history import backfill_from_changes, record_snapshot
+
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
