@@ -11,6 +11,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
 
+from common.db import connect
+from common.schema import apply_schema, run_migrations
 from news_collector.models import DiscoveredURL
 
 
@@ -29,40 +31,6 @@ _HTTP_SUCCESS_MAX = 300  # exclusive -- half-open [200, 300) range
 def _is_success_status(status_code: int) -> bool:
     return _HTTP_SUCCESS_MIN <= status_code < _HTTP_SUCCESS_MAX
 
-
-_DDL = """
-CREATE TABLE IF NOT EXISTS discovered_urls (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    url             TEXT    NOT NULL,
-    domain          TEXT    NOT NULL,
-    company         TEXT    NOT NULL,
-    ticker          TEXT    NOT NULL,
-    source          TEXT    NOT NULL,
-    discovered_at   TEXT    NOT NULL,
-    pub_date        TEXT,
-    title           TEXT,
-    status          TEXT    NOT NULL DEFAULT 'pending',
-    fetch_status_code INTEGER,
-    UNIQUE (url, ticker)
-);
-
-CREATE INDEX IF NOT EXISTS idx_status  ON discovered_urls (status);
-CREATE INDEX IF NOT EXISTS idx_domain  ON discovered_urls (domain);
-CREATE INDEX IF NOT EXISTS idx_ticker  ON discovered_urls (ticker);
-
-CREATE TABLE IF NOT EXISTS discovery_progress (
-    ticker          TEXT    NOT NULL,
-    domain          TEXT    NOT NULL,
-    start_date      TEXT    NOT NULL,
-    end_date        TEXT    NOT NULL,
-    completed_at    TEXT    NOT NULL,
-    inserted_count  INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (ticker, domain, start_date, end_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_progress_domain_range
-    ON discovery_progress (domain, start_date, end_date);
-"""
 
 # Columns query() is allowed to ORDER BY — interpolated directly into SQL,
 # so this must stay a closed whitelist rather than accepting arbitrary input.
@@ -92,21 +60,12 @@ class URLQueue:
     def initialize(self) -> None:
         """Create tables and indexes if they do not already exist."""
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        # Enable WAL for better concurrent read performance
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        # This DB file is shared with extractor (see CLAUDE.md) --
-        # each opens its own connection, and a writer that finds the file
-        # locked by another connection's write transaction otherwise gets an
-        # immediate `sqlite3.OperationalError: database is locked` instead of
-        # a retry. busy_timeout makes SQLite retry internally for up to this
-        # many ms before raising. Not persistent (like foreign_keys, unlike
-        # journal_mode), so every connection -- including this pipeline's own
-        # concurrent-reader connections -- needs to set it itself.
-        self._conn.execute("PRAGMA busy_timeout=30000")
-        self._conn.executescript(_DDL)
+        # WAL (persistent, set here once at the file level) + busy_timeout +
+        # row_factory, all from the shared factory. This is the writer path;
+        # extractor opens the same file with foreign_keys=ON instead.
+        self._conn = connect(self._db_path, wal=True, check_same_thread=False)
+        apply_schema(self._conn)
+        run_migrations(self._conn)
         self._conn.commit()
         log.info("URLQueue initialized at %s", self._db_path)
 

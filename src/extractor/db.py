@@ -1,108 +1,54 @@
 """SQLite access for the extraction pipeline.
 
 Reads pending rows from `discovered_urls` (produced by the upstream
-discovery crawler) and writes results into a new `articles` table in the
-same database. See CLAUDE.md for the schema rationale.
+discovery crawler) and writes results into the `articles` table in the same
+database. Connection handling and the schema itself live in `common.db` /
+`common.schema` -- the single source of truth shared with `news_collector`;
+this module keeps only the extractor-specific queries. See CLAUDE.md.
 """
 
 import sqlite3
 
-ARTICLES_SCHEMA = """
-CREATE TABLE IF NOT EXISTS articles (
-    id                 INTEGER PRIMARY KEY,  -- FK to discovered_urls.id
-    ticker             TEXT,
-    company            TEXT,
-    gics_sector        TEXT,
-    gics_sub_industry  TEXT,
-    title              TEXT,
-    author             TEXT,
-    pub_date           TEXT,
-    body_text          TEXT,
-    word_count         INTEGER,
-    language           TEXT,
-    source_domain      TEXT,
-    extraction_method  TEXT,
-    fetch_status       TEXT,
-    http_status_code   INTEGER,
-    fetched_at         TEXT,
-    FOREIGN KEY (id) REFERENCES discovered_urls (id)
-)
-"""
+from common.db import connect as _connect
+from common.db import enable_foreign_keys
 
-ARTICLE_COLUMNS = (
-    "id",
-    "ticker",
-    "company",
-    "gics_sector",
-    "gics_sub_industry",
-    "title",
-    "author",
-    "pub_date",
-    "body_text",
-    "word_count",
-    "language",
-    "source_domain",
-    "extraction_method",
-    "fetch_status",
-    "http_status_code",
-    "fetched_at",
+# ARTICLES_SCHEMA / _migrate_legacy_sector_column are re-exported only for
+# backward compatibility with pre-consolidation imports.
+from common.schema import (
+    ARTICLE_COLUMNS,
+    ARTICLES_SCHEMA,
+    _migrate_legacy_sector_column,  # noqa: F401
+    apply_schema,
+    run_migrations,
 )
 
-
-def enable_foreign_keys(conn: sqlite3.Connection) -> None:
-    """Turn on FK constraint enforcement for this connection.
-
-    SQLite declares FK constraints in the schema (see ARTICLES_SCHEMA) but,
-    for backward-compatibility reasons, does not enforce them unless this
-    pragma is set on every connection -- it is not a persistent DB setting.
-    Without it, `articles.id -> discovered_urls.id` is documentation only,
-    not a guarantee.
-    """
-    conn.execute("PRAGMA foreign_keys = ON")
-
-
-# This DB file is shared with news_collector (see CLAUDE.md).
-# Without a busy_timeout, a connection that finds the file locked by another
-# one's write transaction gets an immediate
-# `sqlite3.OperationalError: database is locked` instead of a retry -- most
-# likely here, since this stage runs a high-throughput loop of individual
-# save_article()/mark_status() commits while news_collector may still be
-# writing discovered_urls concurrently. Not persistent (like foreign_keys,
-# unlike journal_mode), so it has to be set on every connection.
-BUSY_TIMEOUT_MS = 30_000
+__all__ = [
+    "ARTICLES_SCHEMA",
+    "ARTICLE_COLUMNS",
+    "connect",
+    "enable_foreign_keys",
+    "ensure_articles_table",
+    "get_pending_urls",
+    "get_status_counts",
+    "get_urls_by_status",
+    "mark_status",
+    "save_article",
+]
 
 
 def connect(db_path: str) -> sqlite3.Connection:
-    """Open a connection configured the way this pipeline expects: FK
-    enforcement on, rows returned as sqlite3.Row.
+    """Open a connection configured the way this pipeline stage expects: FK
+    enforcement on, rows returned as `sqlite3.Row`, `busy_timeout` set.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-    enable_foreign_keys(conn)
-    return conn
-
-
-def _migrate_legacy_sector_column(conn: sqlite3.Connection) -> None:
-    """Bring a pre-existing `articles` table (created before gics_sector/
-    gics_sub_industry existed) up to the current schema. Idempotent -- safe
-    to call on every startup, including against a table that's already
-    current or was just freshly created by ARTICLES_SCHEMA.
-    """
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(articles)").fetchall()}
-    if not columns:
-        return  # table doesn't exist yet -- nothing to migrate
-    if "gics_sector" not in columns:
-        conn.execute("ALTER TABLE articles ADD COLUMN gics_sector TEXT")
-    if "gics_sub_industry" not in columns:
-        conn.execute("ALTER TABLE articles ADD COLUMN gics_sub_industry TEXT")
-    if "sector" in columns:
-        conn.execute("ALTER TABLE articles DROP COLUMN sector")
+    return _connect(db_path, foreign_keys=True)
 
 
 def ensure_articles_table(conn: sqlite3.Connection) -> None:
-    conn.execute(ARTICLES_SCHEMA)
-    _migrate_legacy_sector_column(conn)
+    """Create the pipeline schema if absent and apply pending migrations.
+    Idempotent -- safe to call on every startup.
+    """
+    apply_schema(conn)
+    run_migrations(conn)
     conn.commit()
 
 
