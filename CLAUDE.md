@@ -27,15 +27,15 @@ reads the DB path from `$DATABASE_URL` (see `.env.example`) rather than a hardco
 literal — unset, it defaults to `data/urls.db`. `pricing` and `sec_edgar` don't touch that
 *pipeline* DB at all; they pull directly from Finnhub/SEC EDGAR for a given ticker. Only
 `pricing` (via its `/universe` routes) is actually keyed off the tracked S&P 500 universe
-(`src/common/portfolio.py`, fetched live from Wikipedia and cached in-process, same source
-`news_collector`/`extractor` use) — `sec_edgar` takes a raw ticker/CIK string with no
-universe check at all.
+(`portfolio_common.portfolio`, fetched live from Wikipedia and cached in-process, same
+source `news_collector`/`extractor` use) — `sec_edgar` takes a raw ticker/CIK string with
+no universe check at all.
 
-`common/portfolio.py`'s default (`as_of` omitted) behavior above is the whole story — live
-scrape, in-process cache, no DB, no history. Point-in-time membership (an `as_of` date, so
-"who was tracked as of X" instead of just "who is tracked today" — closing a
+`portfolio_common.portfolio`'s default (`as_of` omitted) behavior above is the whole story
+— live scrape, in-process cache, no DB, no history. Point-in-time membership (an `as_of`
+date, so "who was tracked as of X" instead of just "who is tracked today" — closing a
 survivorship-bias gap the live-scrape-only design otherwise has) is handled by the sibling
-`src/common/universe_history.py`, backed by a small **dedicated** SQLite file
+`portfolio_common.universe_history` module, backed by a small **dedicated** SQLite file
 (`data/universe.db`, path from `$UNIVERSE_DB_PATH`) reconstructed from the "Historical
 components of the S&P 500" Wikipedia article's change log — deliberately *not* the shared
 `urls.db` above, so `pricing`'s zero-pipeline-DB-dependency property holds regardless of
@@ -87,8 +87,9 @@ uv run ruff format .
 uv run pre-commit run --all-files   # everything .pre-commit-config.yaml wires up on commit
 ```
 
-All five packages now have a test suite (`pricing`/`sec_edgar` got theirs on 2026-09-02 —
-`finhub` never had one either). Baseline includes one pre-existing Windows-only flake in
+All four `src/` packages have a test suite (`pricing`/`sec_edgar` got theirs on 2026-09-02
+— `finhub` never had one either). The former `tests/common/` moved to the `portfolio-common`
+repo along with that code. Baseline includes one pre-existing Windows-only flake in
 `tests/news_collector` (`test_enqueue_inserts_at_most_len_input`, a hypothesis property test
 racing a temp-SQLite-file cleanup against an open connection), not a logic bug.
 
@@ -102,13 +103,22 @@ racing a temp-SQLite-file cleanup against an open connection), not a logic bug.
 | `extractor/` | `news-crawler/src/extractor/` (kept the `extractor` name — its internal absolute imports already used it) |
 | `pricing/` | `finhub/src/{trading,market,news}/` (finhub split #1) |
 | `sec_edgar/` | `finhub/src/fundamental/` (finhub split #2) |
-| `common/` | `finhub/src/{config,commons}/` — now just `errors.py` (`UpstreamDataError`) and `portfolio.py` (universe loader), shared by `pricing` + `sec_edgar` |
 
-Each package kept its own project's internal import style. `news_collector` and
+The old `src/common/` package (`errors.py`, `portfolio.py`, `universe_history.py`, plus
+`db.py`/`schema.py` added when the two pipeline stages' connection code was merged) was
+**extracted into its own repo**, [`github.com/gamug/portfolio-common`](https://github.com/gamug/portfolio-common),
+so the other Portfolio Thesis repos can share it instead of forking a copy. It's a normal
+PyPI-style dependency here — pinned by git tag in `pyproject.toml`'s `[tool.uv.sources]`,
+imported as `portfolio_common` (`portfolio_common.db` / `.schema` / `.portfolio` /
+`.universe_history` / `.errors`). Bump the tag to adopt a new schema/universe contract;
+for local work against a sibling checkout, override the source with an editable path (see
+the comment in `pyproject.toml`).
+
+Each `src/` package kept its own project's internal import style. `news_collector` and
 `extractor` are untouched (absolute imports already matched their own package name).
 `finhub` used to import from a package it called `src`, which
 would collide with this repo's shared `src/` — those imports were rewritten
-(`from src.X` → `from common.X` / `from pricing.X` / `from sec_edgar.X`).
+(`from src.X` → `from pricing.X` / `from sec_edgar.X` / `from portfolio_common.X`).
 `sec_edgar` is deliberately not named `edgar` — the third-party `edgartools` library is
 itself imported as `edgar`, and a same-named local package would shadow it once `src/` is
 on `sys.path`.
@@ -144,15 +154,19 @@ run the four standalone `apps/*_api.py` instead of the gateway.
 persisted at the file level) is read/written by two modules in sequence, each owning
 different tables: `news_collector` writes `discovered_urls`; `extractor` reads pending
 rows from it and writes `articles` (same `id` as the source row, `FOREIGN KEY`-linked).
-`extractor` sets `PRAGMA foreign_keys = ON` per-connection (not persistent, unlike
-WAL). Both modules also set `PRAGMA busy_timeout=30000` per-connection (also not
-persistent), so a connection that finds the file locked by another one's write
-transaction retries internally for up to 30s instead of immediately raising
-`sqlite3.OperationalError: database is locked`. The DB itself is gitignored (regenerated by running the pipeline,
-not a fixture) and its location is controlled by `$DATABASE_URL`, read independently at
-each of the two modules' connection sites — currently just a filesystem path (plain
-SQLite), kept as an env var specifically so pointing it at a real connection string later
-is a one-line env change, not a multi-file code change.
+Both stages open the file through the **one** shared factory
+`portfolio_common.db.connect()` (`news_collector` with `wal=True`, `extractor` with
+`foreign_keys=True`) and create/upgrade the schema via
+`portfolio_common.schema.apply_schema()` + `run_migrations()` — the canonical DDL and the
+`busy_timeout=30000` / `foreign_keys` / WAL policy live in that library, not copied into
+each module. `PRAGMA foreign_keys` and `busy_timeout` are per-connection (not persistent,
+unlike WAL), so `connect()` reapplies them every time; a connection that finds the file
+locked by another one's write transaction then retries internally for up to 30s instead of
+immediately raising `sqlite3.OperationalError: database is locked`. The DB itself is
+gitignored (regenerated by running the pipeline, not a fixture) and its location is
+controlled by `$DATABASE_URL` (`portfolio_common.db.resolve_db_path()`) — currently just a
+filesystem path (plain SQLite), kept as an env var specifically so pointing it at a real
+connection string later is a one-line env change, not a multi-file code change.
 
 ### Response-shape convention (`pricing`, `sec_edgar`)
 
