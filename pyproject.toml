@@ -3,7 +3,7 @@ name = "portfolio-data-mining"
 version = "0.1.0"
 description = "Financial-news + SEC-filings data-mining pipeline (news_collector -> extractor, plus independent pricing and sec_edgar services)"
 readme = "README.md"
-requires-python = ">=3.11,<3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     # --- shared library (SQLite connect/schema, S&P 500 universe) ----------
     "portfolio-common",
@@ -55,4 +55,4 @@ package = false
 # contract. For local work against a checkout next to this repo, override
 # with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.1.1" }
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.1.2" }
