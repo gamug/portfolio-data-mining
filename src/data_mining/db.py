@@ -45,7 +45,7 @@ def connect(
 ) -> Database:
     """Open `db_path` configured the way this domain expects.
 
-    Always: rows returned as `sqlite3.Row` (via the engine), `busy_timeout`
+    Always: rows returned as `portfolio_common.db.Row` (via the engine), `busy_timeout`
     set to `BUSY_TIMEOUT_MS`.
 
     `wal=True` also sets `journal_mode=WAL` + `synchronous=NORMAL` -- the
@@ -55,14 +55,14 @@ def connect(
     `foreign_keys=True` also sets `PRAGMA foreign_keys=ON` -- so the
     `articles -> discovered_urls` FK is enforced.
 
-    `check_same_thread=False` lifts sqlite3's thread-binding.
+    `check_same_thread=False` lifts the engine's thread-binding.
 
     `uri=True` interprets `db_path` as a `file:...` URI -- required so an
     `ATTACH DATABASE 'file:...?mode=ro'` on this connection is honored.
 
     Thin wrapper around `portfolio_common.db.Database.connect()`: forwards
     these flags plus this domain's own `BUSY_TIMEOUT_MS`, and returns the
-    `Database` wrapper rather than a raw `sqlite3.Connection`.
+    `Database` wrapper rather than the raw engine connection.
     """
     return Database.connect(
         db_path,

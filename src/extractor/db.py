@@ -10,9 +10,7 @@ of truth shared with `news_collector`. This module keeps only the
 extractor-specific queries. See CLAUDE.md.
 """
 
-import sqlite3
-
-from portfolio_common.db import Database, in_clause
+from portfolio_common.db import Database, Row, in_clause
 
 from data_mining.db import connect as _connect
 from data_mining.schema import (
@@ -38,9 +36,9 @@ __all__ = [
 
 def connect(db_path: str, *, check_same_thread: bool = True) -> Database:
     """Open a connection configured the way this pipeline stage expects: FK
-    enforcement on, rows returned as `sqlite3.Row`, `busy_timeout` set.
+    enforcement on, rows returned as `portfolio_common.db.Row`, `busy_timeout` set.
 
-    `check_same_thread=False` lifts sqlite3's thread-binding -- needed by
+    `check_same_thread=False` lifts the engine's thread-binding -- needed by
     `apps/news_crawler_api.py`, whose async route handlers touch a
     connection opened in a different thread than FastAPI's sync-dependency
     resolver used.
@@ -51,7 +49,9 @@ def connect(db_path: str, *, check_same_thread: bool = True) -> Database:
 def enable_foreign_keys(db: Database) -> None:
     """Turn on FK enforcement on an already-open connection. Only needed for
     a connection that didn't go through `connect(..., foreign_keys=True)` in
-    the first place -- e.g. a test fixture that opened its own."""
+    the first place -- e.g. a test fixture that opened its own. The one raw
+    engine pragma kept in this repo; `connect(foreign_keys=True)` (which does
+    the same thing inside `portfolio_common.db.Database`) is the normal path."""
     db.execute("PRAGMA foreign_keys = ON")
 
 
@@ -64,9 +64,7 @@ def ensure_articles_table(db: Database) -> None:
     db.commit()
 
 
-def get_urls_by_status(
-    db: Database, statuses: list[str], limit: int | None = None
-) -> list[sqlite3.Row]:
+def get_urls_by_status(db: Database, statuses: list[str], limit: int | None = None) -> list[Row]:
     """Fetch discovered_urls rows whose status is in `statuses`, e.g.
     ['pending'] for a normal run or ['failed'] to retry previous failures --
     no separate reset-to-pending step needed, unlike the API's
@@ -87,7 +85,7 @@ def get_urls_by_status(
     return db.execute(sql, params).fetchall()
 
 
-def get_pending_urls(db: Database, limit: int | None = None) -> list[sqlite3.Row]:
+def get_pending_urls(db: Database, limit: int | None = None) -> list[Row]:
     return get_urls_by_status(db, ["pending"], limit=limit)
 
 
@@ -103,11 +101,14 @@ def save_article(db: Database, article: dict) -> None:
     # caller input -- values are bound as query params, never interpolated.
     # (Not an Allowlist check: that guards a single caller-influenced
     # identifier, not a whole fixed internal constant like this one.)
-    placeholders = ", ".join("?" for _ in ARTICLE_COLUMNS)
-    columns = ", ".join(ARTICLE_COLUMNS)
     values = [article.get(col) for col in ARTICLE_COLUMNS]
     db.execute(
-        f"INSERT OR REPLACE INTO articles ({columns}) VALUES ({placeholders})",  # noqa: S608
+        db.dialect.upsert(
+            "articles",
+            ARTICLE_COLUMNS,
+            conflict=("id",),
+            update=[c for c in ARTICLE_COLUMNS if c != "id"],
+        ),
         values,
     )
     db.commit()
