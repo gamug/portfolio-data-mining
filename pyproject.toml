@@ -51,8 +51,15 @@ package = false
 
 [tool.uv.sources]
 # The shared library lives in its own repo (github.com/gamug/portfolio-common)
-# and is pinned by tag -- bump the tag here to adopt a new schema/universe
-# contract. For local work against a checkout next to this repo, override
-# with an editable path source:
+# and is normally pinned by tag -- bump the tag here to adopt a new schema/
+# universe contract. For local work against a checkout next to this repo,
+# override with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.1.2" }
+#
+# Pinned by commit rather than tag right now: v1.0.0 is a clean-break rewrite
+# (portfolio_common.db.Database + in_clause/Allowlist only -- .schema/
+# .portfolio/.universe_history/.errors moved into this repo's own
+# src/data_mining/, see docs/portfolio-common-v1-migration-plan.md) that
+# master already contains, but the v1.0.0 tag itself hasn't been cut in that
+# repo yet. Swap this to `tag = "v1.0.0"` once it is (same commit).
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", rev = "aa59a7ec02610b19b6c21a2441ec422bc5a12e57" }

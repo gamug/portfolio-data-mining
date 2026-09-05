@@ -2,6 +2,7 @@ import sqlite3
 from collections.abc import Iterator
 
 import pytest
+from portfolio_common.db import Database
 
 from extractor.db import (
     enable_foreign_keys,
@@ -53,8 +54,12 @@ CREATE TABLE discovered_urls (
 
 
 @pytest.fixture
-def conn() -> Iterator[sqlite3.Connection]:
-    connection = sqlite3.connect(":memory:")
+def conn() -> Iterator[Database]:
+    # Database.connect(), not a bare sqlite3.connect() -- so row_factory is
+    # already sqlite3.Row, matching what extractor.db.connect() gives every
+    # real caller (foreign_keys stays off here; enable_foreign_keys() below
+    # tests turning it on after the fact, on a fixture-owned connection).
+    connection = Database.connect(":memory:")
     connection.execute(DISCOVERED_URLS_SCHEMA)
     connection.execute(
         """
@@ -69,7 +74,7 @@ def conn() -> Iterator[sqlite3.Connection]:
 
 
 def test_ensure_articles_table_creates_table_once_and_is_idempotent(
-    conn: sqlite3.Connection,
+    conn: Database,
 ) -> None:
     ensure_articles_table(conn)
     ensure_articles_table(conn)  # must not raise on second call
@@ -80,7 +85,7 @@ def test_ensure_articles_table_creates_table_once_and_is_idempotent(
     assert len(tables) == 1
 
 
-def test_get_pending_urls_returns_only_pending_rows(conn: sqlite3.Connection) -> None:
+def test_get_pending_urls_returns_only_pending_rows(conn: Database) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'fetched' WHERE id = 2")
     conn.commit()
 
@@ -91,7 +96,7 @@ def test_get_pending_urls_returns_only_pending_rows(conn: sqlite3.Connection) ->
     assert pending[0]["ticker"] == "MMM"
 
 
-def test_get_urls_by_status_filters_to_requested_statuses(conn: sqlite3.Connection) -> None:
+def test_get_urls_by_status_filters_to_requested_statuses(conn: Database) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -101,7 +106,7 @@ def test_get_urls_by_status_filters_to_requested_statuses(conn: sqlite3.Connecti
     assert failed[0]["url"] == "https://cnbc.com/b"
 
 
-def test_get_urls_by_status_accepts_multiple_statuses(conn: sqlite3.Connection) -> None:
+def test_get_urls_by_status_accepts_multiple_statuses(conn: Database) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -110,7 +115,7 @@ def test_get_urls_by_status_accepts_multiple_statuses(conn: sqlite3.Connection) 
     assert [row["id"] for row in rows] == [1, 2]
 
 
-def test_get_urls_by_status_respects_limit(conn: sqlite3.Connection) -> None:
+def test_get_urls_by_status_respects_limit(conn: Database) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
 
@@ -120,7 +125,7 @@ def test_get_urls_by_status_respects_limit(conn: sqlite3.Connection) -> None:
 
 
 def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(
-    conn: sqlite3.Connection,
+    conn: Database,
 ) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 2")
     conn.commit()
@@ -130,7 +135,7 @@ def test_get_pending_urls_is_a_thin_wrapper_over_get_urls_by_status(
     ]
 
 
-def test_save_article_then_mark_status_updates_discovered_urls(conn: sqlite3.Connection) -> None:
+def test_save_article_then_mark_status_updates_discovered_urls(conn: Database) -> None:
     ensure_articles_table(conn)
 
     save_article(
@@ -167,7 +172,7 @@ def test_save_article_then_mark_status_updates_discovered_urls(conn: sqlite3.Con
     assert updated[1] == 200
 
 
-def test_get_status_counts_groups_discovered_urls_by_status(conn: sqlite3.Connection) -> None:
+def test_get_status_counts_groups_discovered_urls_by_status(conn: Database) -> None:
     conn.execute("UPDATE discovered_urls SET status = 'ok' WHERE id = 1")
     conn.commit()
 
@@ -176,7 +181,7 @@ def test_get_status_counts_groups_discovered_urls_by_status(conn: sqlite3.Connec
     assert counts == {"ok": 1, "pending": 1}
 
 
-def test_ensure_articles_table_migrates_legacy_sector_column(conn: sqlite3.Connection) -> None:
+def test_ensure_articles_table_migrates_legacy_sector_column(conn: Database) -> None:
     conn.execute(LEGACY_ARTICLES_SCHEMA)
     conn.execute(
         "INSERT INTO articles (id, ticker, company, sector, title, fetch_status) "
@@ -194,11 +199,14 @@ def test_ensure_articles_table_migrates_legacy_sector_column(conn: sqlite3.Conne
     row = conn.execute(
         "SELECT ticker, company, title, fetch_status FROM articles WHERE id = 1"
     ).fetchone()
-    assert row == ("MMM", "3M", "headline", "ok")
+    # tuple(): the fixture connects via Database.connect(), which always sets
+    # row_factory=sqlite3.Row (unlike the old connection this replaced,
+    # sqlite3.Row doesn't compare equal to a plain tuple directly).
+    assert tuple(row) == ("MMM", "3M", "headline", "ok")
 
 
 def test_save_article_with_id_not_in_discovered_urls_is_rejected_once_fk_enforced(
-    conn: sqlite3.Connection,
+    conn: Database,
 ) -> None:
     ensure_articles_table(conn)
     enable_foreign_keys(conn)

@@ -24,7 +24,6 @@ Run:
 from __future__ import annotations
 
 import os
-import sqlite3
 import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -35,10 +34,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
+from portfolio_common.db import Database
 from pydantic import BaseModel
 
 from extractor.db import (
-    enable_foreign_keys,
+    connect,
     ensure_articles_table,
     get_status_counts,
     get_urls_by_status,
@@ -80,20 +80,18 @@ app = FastAPI(
 # ---------------------------------------------------------------- wiring --
 
 
-def get_conn() -> Iterator[sqlite3.Connection]:
-    # Not extractor.db.connect(): FastAPI resolves this sync generator
+def get_conn() -> Iterator[Database]:
+    # check_same_thread=False: FastAPI resolves this sync generator
     # dependency in a threadpool worker thread, but async route handlers
     # (e.g. /extract/{id}) then use the yielded connection from the event
     # loop thread. sqlite3 connections are thread-bound by default, so a
     # connection opened the normal way raises ProgrammingError as soon as an
-    # async endpoint touches it. check_same_thread=False lifts that
-    # restriction; safe here because each request gets its own short-lived
-    # connection (opened and closed within the same request, never shared
-    # across requests) and every write already commits immediately (see
-    # db.py), so there's no concurrent-write risk to guard against.
-    conn = sqlite3.connect(DEFAULT_DB, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    enable_foreign_keys(conn)
+    # async endpoint touches it. Safe here because each request gets its own
+    # short-lived connection (opened and closed within the same request,
+    # never shared across requests) and every write already commits
+    # immediately (see db.py), so there's no concurrent-write risk to guard
+    # against.
+    conn = connect(DEFAULT_DB, check_same_thread=False)
     ensure_articles_table(conn)
     try:
         yield conn
@@ -196,7 +194,7 @@ def health() -> dict:
 
 
 @app.get("/status", response_model=StatusCounts)
-def status(conn: sqlite3.Connection = Depends(get_conn)) -> StatusCounts:
+def status(conn: Database = Depends(get_conn)) -> StatusCounts:
     """Same numbers run_extraction.py prints at startup: discovered_urls
     grouped by status."""
     counts = get_status_counts(conn)
@@ -210,7 +208,7 @@ def list_discovered(
     domain: str | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
-    conn: sqlite3.Connection = Depends(get_conn),
+    conn: Database = Depends(get_conn),
 ) -> list[DiscoveredURL]:
     sql = (
         "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
@@ -233,7 +231,7 @@ def list_discovered(
 
 
 @app.get("/discovered/{url_id}", response_model=DiscoveredURL)
-def get_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> DiscoveredURL:
+def get_discovered(url_id: int, conn: Database = Depends(get_conn)) -> DiscoveredURL:
     row = conn.execute(
         "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
         "FROM discovered_urls WHERE id = ?",
@@ -245,7 +243,7 @@ def get_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)) ->
 
 
 @app.post("/discovered/{url_id}/reset", response_model=ResetResult)
-def reset_discovered(url_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> ResetResult:
+def reset_discovered(url_id: int, conn: Database = Depends(get_conn)) -> ResetResult:
     """Flip a row back to 'pending' (clearing fetch_status_code) so it can be
     re-extracted -- handy for testing after a code change, without hand-editing
     the DB."""
@@ -262,7 +260,7 @@ def list_articles(
     ticker: str | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
-    conn: sqlite3.Connection = Depends(get_conn),
+    conn: Database = Depends(get_conn),
 ) -> list[Article]:
     sql = "SELECT * FROM articles WHERE 1=1"
     params: list = []
@@ -279,7 +277,7 @@ def list_articles(
 
 
 @app.get("/articles/{article_id}", response_model=Article)
-def get_article(article_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> Article:
+def get_article(article_id: int, conn: Database = Depends(get_conn)) -> Article:
     row = conn.execute("SELECT * FROM articles WHERE id = ?", (article_id,)).fetchone()
     if row is None:
         raise HTTPException(404, f"article id={article_id} not found")
@@ -301,7 +299,7 @@ async def extract_run(
         "run, 'failed' to retry URLs that previously errored (http_status>=400 "
         "or a network failure) without a separate /discovered/{id}/reset call.",
     ),
-    conn: sqlite3.Connection = Depends(get_conn),
+    conn: Database = Depends(get_conn),
     gics_map: dict = Depends(get_gics_map),
 ) -> BatchExtractResult:
     """Same loop run_extraction.py runs, over a small number of rows in the
@@ -336,7 +334,7 @@ async def extract_run(
 @app.post("/extract/{url_id}", response_model=Article)
 async def extract_one(
     url_id: int,
-    conn: sqlite3.Connection = Depends(get_conn),
+    conn: Database = Depends(get_conn),
     gics_map: dict = Depends(get_gics_map),
 ) -> Article:
     """Run the full fetch -> parse -> classify -> save pipeline for exactly

@@ -23,10 +23,10 @@ modules' connection sites read it from that one env var rather than a hardcoded 
 which centralizes *where* the DB lives, though not the whole story for changing *what* it
 is — see [Next steps](#next-steps).
 `pricing` and `sec_edgar` are independent of that chain — they pull directly from Finnhub
-and SEC EDGAR for a given ticker, keyed off the tracked universe `portfolio_common.portfolio`
+and SEC EDGAR for a given ticker, keyed off the tracked universe `data_mining.portfolio`
 fetches live from Wikipedia (same source `news_collector`/`extractor` use) and caches
 in-process. Point-in-time membership (`as_of`, for "who was tracked on date X") is handled
-by the sibling `portfolio_common.universe_history` module, backed by its own
+by the sibling `data_mining.universe_history` module, backed by its own
 `data/universe.db` — see [docs/modules/pricing.md](docs/modules/pricing.md).
 
 ### This repo is the acquisition layer of a six-repo system
@@ -62,20 +62,25 @@ out the six repos; neither is built yet.
 | `extractor/` | `news-crawler/src/extractor/` | [docs/modules/news-crawler.md](docs/modules/news-crawler.md) |
 | `pricing/` | `finhub/src/{trading,market,news}/` (finhub split #1) | [docs/modules/pricing.md](docs/modules/pricing.md) |
 | `sec_edgar/` | `finhub/src/fundamental/` (finhub split #2) | [docs/modules/sec-edgar.md](docs/modules/sec-edgar.md) |
+| `data_mining/` | `portfolio-common`'s `business_folders/data_mining/` | — |
 
-The shared helpers that used to live in `src/common/` — the SQLite connection factory and
-canonical pipeline schema (`db`, `schema`), the S&P 500 universe loader (`portfolio`,
-`universe_history`), and the `UpstreamDataError` type — were extracted into
-[`github.com/gamug/portfolio-common`](https://github.com/gamug/portfolio-common) so every
-Portfolio Thesis repo shares one copy. It's a git-tag-pinned dependency here (see
-`pyproject.toml`'s `[tool.uv.sources]`), imported as `portfolio_common`.
+`portfolio-common` had a clean-break v1.0.0 rewrite: it's now DB-engine-only
+(`portfolio_common.db.Database`, the one connection class every domain in the Portfolio
+Thesis opens a SQLite file through, plus the `in_clause()`/`Allowlist` injection-safety
+primitives). The domain code that used to sit alongside that engine — this repo's `urls.db`
+connection factory/schema (`db`, `schema`), the S&P 500 universe loader (`portfolio`,
+`universe_history`), and the `UpstreamDataError` type — moved into this repo's own
+`src/data_mining/`, since this repo was its only consumer. `portfolio-common` stays a
+git-tag-pinned dependency here (see `pyproject.toml`'s `[tool.uv.sources]`), imported as
+`portfolio_common`, just for the engine pieces now. See
+[docs/portfolio-common-v1-migration-plan.md](docs/portfolio-common-v1-migration-plan.md).
 
 Each package kept its own project's internal import style wherever that didn't collide
 with sharing one `src/` — `news_collector` and `extractor` are untouched (their absolute
 imports already matched their own package name); `finhub`'s code used to
 import from a package it called `src`, which would have collided with this
 repo's shared `src/`, so those imports were rewritten (`from src.X` →
-`from pricing.X` / `from sec_edgar.X` / `from portfolio_common.X`) — see each module doc's
+`from pricing.X` / `from sec_edgar.X` / `from data_mining.X`) — see each module doc's
 source mapping for exactly what changed.
 
 Every service gets its own thin entrypoint under `apps/` (FastAPI/uvicorn) and `cli/`
@@ -149,9 +154,9 @@ uv run pytest
 ```
 
 Runs the full suite: `tests/news_collector`, `tests/extractor`, `tests/pricing`,
-`tests/sec_edgar` — all four `src/` packages have coverage (`pricing`/`sec_edgar` got
-theirs 2026-09-02; `finhub` itself never had any). The former `tests/common` moved to the
-`portfolio-common` repo with that code.
+`tests/sec_edgar`, `tests/data_mining` — all five `src/` packages have coverage
+(`pricing`/`sec_edgar` got theirs 2026-09-02; `finhub` itself never had any;
+`tests/data_mining` arrived with the `portfolio-common` v1.0.0 migration).
 
 ## Next steps
 
@@ -160,11 +165,12 @@ fix — just things to pick up if/when the project's actual needs change.
 
 - **Point `$DATABASE_URL` at a different backend, if SQLite's single-writer/single-file
   model ever becomes a real bottleneck.** Both pipeline stages now open the DB through the
-  single `portfolio_common.db.connect()` factory, so there is exactly one place to add a
-  compatibility layer — but it's still not literally config-only: `connect()` calls
-  `sqlite3.connect(db_path)`, which only understands local filesystem paths, not a network
-  connection string. Actually swapping backends needs code in `portfolio-common`, not just
-  a new env var value. This was tried once — [PR #12](https://github.com/gamug/portfolio-data-mining/pull/12)
+  single `data_mining.db.connect()` factory (itself a thin wrapper over
+  `portfolio_common.db.Database.connect()`), so there is exactly one place to add a
+  compatibility layer — but it's still not literally config-only: `Database.connect()`
+  calls `sqlite3.connect(db_path)`, which only understands local filesystem paths, not a
+  network connection string. Actually swapping backends needs code in `portfolio-common`'s
+  engine class, not just a new env var value. This was tried once — [PR #12](https://github.com/gamug/portfolio-data-mining/pull/12)
   built a `db_backend.py` shim (then still in this repo, under `src/common/`) that made
   `DATABASE_URL=libsql://...` genuinely work against Turso (patching two incompatibilities
   between `sqlite3.Connection` and libsql's remote `Connection`: no `row_factory` support,
