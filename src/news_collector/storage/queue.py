@@ -11,9 +11,10 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from portfolio_common.db import connect
-from portfolio_common.schema import apply_schema, run_migrations
+from portfolio_common.db import Allowlist, Database, in_clause
 
+from data_mining.db import connect
+from data_mining.schema import apply_schema, run_migrations
 from news_collector.models import DiscoveredURL
 
 
@@ -34,9 +35,9 @@ def _is_success_status(status_code: int) -> bool:
 
 
 # Columns query() is allowed to ORDER BY — interpolated directly into SQL,
-# so this must stay a closed whitelist rather than accepting arbitrary input.
-_QUERY_ORDER_COLUMNS = frozenset(
-    {"id", "url", "domain", "company", "ticker", "source", "discovered_at", "pub_date", "status"}
+# so this must stay a closed allowlist rather than accepting arbitrary input.
+_QUERY_ORDER_COLUMNS = Allowlist(
+    "id", "url", "domain", "company", "ticker", "source", "discovered_at", "pub_date", "status"
 )
 
 
@@ -52,7 +53,7 @@ class URLQueue:
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
-        self._conn: sqlite3.Connection | None = None
+        self._conn: Database | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -114,8 +115,7 @@ class URLQueue:
             for u in urls
         ]
 
-        cursor = self._conn.cursor()
-        cursor.executemany(
+        cursor = self._conn.executemany(
             """
             INSERT OR IGNORE INTO discovered_urls
                 (url, domain, company, ticker, source, discovered_at,
@@ -134,9 +134,13 @@ class URLQueue:
         # Look ids back up by (url, ticker) rather than relying on lastrowid —
         # executemany + INSERT OR IGNORE means lastrowid only reflects the final
         # statement, and ignored duplicates need their *existing* row's id too.
-        placeholders = ",".join("(?,?)" for _ in urls)
-        # S608: `placeholders` is just a run of literal "(?,?)" -- values are
-        # bound as query params below, never interpolated into the SQL text.
+        # One in_clause() group per (url, ticker) pair -- in_clause() itself
+        # only sizes a flat "(?,?,...)" group, so this row-value "(a,b) IN
+        # (...)" shape is built by joining one per-row group.
+        placeholders = ",".join(in_clause((u.url, u.ticker)) for u in urls)
+        # S608: `placeholders` is just a run of in_clause()-built "(?,?)"
+        # groups -- values are bound as query params below, never
+        # interpolated into the SQL text.
         id_rows = self._conn.execute(
             f"SELECT id, url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
             [v for u in urls for v in (u.url, u.ticker)],
@@ -227,12 +231,13 @@ class URLQueue:
         assert self._conn is not None, "Call initialize() first"
         if not domains:
             return set()
-        placeholders = ",".join("?" for _ in domains)
-        # S608: `placeholders` is just a run of literal "?" -- values are
-        # bound as query params below, never interpolated into the SQL text.
+        placeholders = in_clause(domains)
+        # S608: `placeholders` is an in_clause()-built "(?,?,...)" group --
+        # values are bound as query params below, never interpolated into
+        # the SQL text.
         rows = self._conn.execute(
             f"SELECT ticker, domain FROM discovery_progress "  # noqa: S608
-            f"WHERE domain IN ({placeholders}) AND start_date=? AND end_date=?",
+            f"WHERE domain IN {placeholders} AND start_date=? AND end_date=?",
             [*domains, start_date.isoformat(), end_date.isoformat()],
         ).fetchall()
         return {(row["ticker"], row["domain"]) for row in rows}
@@ -317,10 +322,7 @@ class URLQueue:
             (rows for the requested page, total matching row count before pagination)
         """
         assert self._conn is not None, "Call initialize() first"
-        if order_by not in _QUERY_ORDER_COLUMNS:
-            raise ValueError(
-                f"order_by must be one of {sorted(_QUERY_ORDER_COLUMNS)}, got {order_by!r}"
-            )
+        order_column = _QUERY_ORDER_COLUMNS.check(order_by)
 
         clauses: list[str] = []
         params: list = []
@@ -351,8 +353,9 @@ class URLQueue:
 
         # S608: `where` is built only from the hardcoded "col=?"/"col LIKE ?"
         # fragments above (values are bound as query params, never
-        # interpolated); `order_by` is checked against the _QUERY_ORDER_COLUMNS
-        # allowlist above and `direction` is one of two hardcoded literals.
+        # interpolated); `order_column` is checked against the
+        # _QUERY_ORDER_COLUMNS allowlist above and `direction` is one of two
+        # hardcoded literals.
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
         total = self._conn.execute(
@@ -363,7 +366,7 @@ class URLQueue:
         direction = "DESC" if descending else "ASC"
         page_query = (
             f"SELECT * FROM discovered_urls{where} "  # noqa: S608
-            f"ORDER BY {order_by} {direction} LIMIT ? OFFSET ?"
+            f"ORDER BY {order_column} {direction} LIMIT ? OFFSET ?"
         )
         rows = self._conn.execute(page_query, [*params, limit, offset]).fetchall()
         return [_row_to_discovered_url(r) for r in rows], total

@@ -2,7 +2,7 @@
 """CLI entrypoint: run pricing/news/market-data lookups directly, no
 FastAPI/uvicorn involved (for that, see apps/pricing_api.py instead).
 Same underlying classes as the API (StockPriceFetcher, FinnhubNewsFetcher,
-MarketDataClient, common.portfolio) via one subcommand per endpoint. See
+MarketDataClient, data_mining.portfolio) via one subcommand per endpoint. See
 docs/modules/pricing.md.
 
 Prints results as JSON to stdout.
@@ -37,9 +37,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from portfolio_common.portfolio import list_universe, resolve_symbol
-from portfolio_common.universe_history import backfill_from_changes, record_snapshot
-
+from data_mining.portfolio import list_universe, resolve_symbol
+from data_mining.universe_history import backfill_from_changes, record_snapshot
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher

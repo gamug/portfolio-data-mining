@@ -2,22 +2,22 @@
 
 Reads pending rows from `discovered_urls` (produced by the upstream
 discovery crawler) and writes results into the `articles` table in the same
-database. Connection handling and the schema itself live in `common.db` /
-`common.schema` -- the single source of truth shared with `news_collector`;
-this module keeps only the extractor-specific queries. See CLAUDE.md.
+database. The connection engine (pragma policy, ATTACH/DETACH, statement
+execution) lives in `portfolio_common.db.Database`; this domain's own
+defaults (where the file lives, which pragma flags this stage needs) and
+schema live in `data_mining.db` / `data_mining.schema` -- the single source
+of truth shared with `news_collector`. This module keeps only the
+extractor-specific queries. See CLAUDE.md.
 """
 
 import sqlite3
 
-from portfolio_common.db import connect as _connect
-from portfolio_common.db import enable_foreign_keys
+from portfolio_common.db import Database, in_clause
 
-# ARTICLES_SCHEMA / _migrate_legacy_sector_column are re-exported only for
-# backward compatibility with pre-consolidation imports.
-from portfolio_common.schema import (
+from data_mining.db import connect as _connect
+from data_mining.schema import (
     ARTICLE_COLUMNS,
     ARTICLES_SCHEMA,
-    _migrate_legacy_sector_column,  # noqa: F401
     apply_schema,
     run_migrations,
 )
@@ -36,78 +36,91 @@ __all__ = [
 ]
 
 
-def connect(db_path: str) -> sqlite3.Connection:
+def connect(db_path: str, *, check_same_thread: bool = True) -> Database:
     """Open a connection configured the way this pipeline stage expects: FK
     enforcement on, rows returned as `sqlite3.Row`, `busy_timeout` set.
+
+    `check_same_thread=False` lifts sqlite3's thread-binding -- needed by
+    `apps/news_crawler_api.py`, whose async route handlers touch a
+    connection opened in a different thread than FastAPI's sync-dependency
+    resolver used.
     """
-    return _connect(db_path, foreign_keys=True)
+    return _connect(db_path, foreign_keys=True, check_same_thread=check_same_thread)
 
 
-def ensure_articles_table(conn: sqlite3.Connection) -> None:
+def enable_foreign_keys(db: Database) -> None:
+    """Turn on FK enforcement on an already-open connection. Only needed for
+    a connection that didn't go through `connect(..., foreign_keys=True)` in
+    the first place -- e.g. a test fixture that opened its own."""
+    db.execute("PRAGMA foreign_keys = ON")
+
+
+def ensure_articles_table(db: Database) -> None:
     """Create the pipeline schema if absent and apply pending migrations.
     Idempotent -- safe to call on every startup.
     """
-    apply_schema(conn)
-    run_migrations(conn)
-    conn.commit()
+    apply_schema(db)
+    run_migrations(db)
+    db.commit()
 
 
 def get_urls_by_status(
-    conn: sqlite3.Connection, statuses: list[str], limit: int | None = None
+    db: Database, statuses: list[str], limit: int | None = None
 ) -> list[sqlite3.Row]:
     """Fetch discovered_urls rows whose status is in `statuses`, e.g.
     ['pending'] for a normal run or ['failed'] to retry previous failures --
     no separate reset-to-pending step needed, unlike the API's
     /discovered/{id}/reset endpoint.
     """
-    conn.row_factory = sqlite3.Row
-    placeholders = ", ".join("?" for _ in statuses)
+    placeholders = in_clause(statuses)
     # S608: `placeholders` is just a run of literal "?" characters (one per
     # `statuses` item) -- the actual values are bound as query params below,
     # never interpolated into the SQL text.
     sql = (
         f"SELECT id, url, domain, company, ticker, source, title "  # noqa: S608
-        f"FROM discovered_urls WHERE status IN ({placeholders}) ORDER BY id"
+        f"FROM discovered_urls WHERE status IN {placeholders} ORDER BY id"
     )
     params: list = list(statuses)
     if limit is not None:
         sql += " LIMIT ?"
         params.append(limit)
-    return conn.execute(sql, params).fetchall()
+    return db.execute(sql, params).fetchall()
 
 
-def get_pending_urls(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
-    return get_urls_by_status(conn, ["pending"], limit=limit)
+def get_pending_urls(db: Database, limit: int | None = None) -> list[sqlite3.Row]:
+    return get_urls_by_status(db, ["pending"], limit=limit)
 
 
-def get_status_counts(conn: sqlite3.Connection) -> dict[str, int]:
-    rows = conn.execute(
+def get_status_counts(db: Database) -> dict[str, int]:
+    rows = db.execute(
         "SELECT status, COUNT(*) AS c FROM discovered_urls GROUP BY status"
     ).fetchall()
     return {row[0]: row[1] for row in rows}
 
 
-def save_article(conn: sqlite3.Connection, article: dict) -> None:
+def save_article(db: Database, article: dict) -> None:
+    # `columns`/`placeholders` come from the fixed ARTICLE_COLUMNS tuple, not
+    # caller input -- values are bound as query params, never interpolated.
+    # (Not an Allowlist check: that guards a single caller-influenced
+    # identifier, not a whole fixed internal constant like this one.)
     placeholders = ", ".join("?" for _ in ARTICLE_COLUMNS)
     columns = ", ".join(ARTICLE_COLUMNS)
     values = [article.get(col) for col in ARTICLE_COLUMNS]
-    # S608: `columns`/`placeholders` come from the fixed ARTICLE_COLUMNS tuple,
-    # not caller input -- values are bound as query params, never interpolated.
-    conn.execute(
+    db.execute(
         f"INSERT OR REPLACE INTO articles ({columns}) VALUES ({placeholders})",  # noqa: S608
         values,
     )
-    conn.commit()
+    db.commit()
 
 
 def mark_status(
-    conn: sqlite3.Connection,
+    db: Database,
     url_id: int,
     status: str,
     http_status_code: int | None = None,
 ) -> None:
-    conn.execute(
+    db.execute(
         "UPDATE discovered_urls SET status = ?, fetch_status_code = ? WHERE id = ?",
         (status, http_status_code, url_id),
     )
-    conn.commit()
+    db.commit()
