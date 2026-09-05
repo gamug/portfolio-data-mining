@@ -22,10 +22,9 @@ Query functions:
 from __future__ import annotations
 
 import os
-import sqlite3
 from pathlib import Path
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 
 # portfolio_common (data_mining).portfolio.COLUMNS -> universe_membership's
 # lower_snake_case column names. Kept as an explicit map (not a mechanical
@@ -76,14 +75,14 @@ def _connect() -> Database:
     Delegates to `portfolio_common.db.Database.connect()` -- row_factory,
     busy_timeout, parent-directory creation, all handled by the shared
     engine. This is a deliberate behavior fix over the module's previous
-    ad hoc `sqlite3.connect()` recipe, which set none of that (no
+    ad hoc `sqlite3.connect()` recipe (pre-portfolio_common), which set none of that (no
     busy_timeout in particular -- a concurrent reader/writer could hit an
     immediate "database is locked" instead of the engine's default 30s
     retry).
     """
     path = Path(_db_path())
     db = Database.connect(path)
-    db.executescript(_DDL)
+    db.create_schema(_DDL)
     return db
 
 
@@ -136,7 +135,7 @@ def earliest_valid_from(db: Database) -> str | None:
     return row["earliest"] if row else None
 
 
-def _row_to_public_dict(row: sqlite3.Row) -> dict:
+def _row_to_public_dict(row: Row) -> dict:
     result = {_INVERSE_COLUMN_MAP[db_col]: row[db_col] for db_col in _COLUMN_MAP.values()}
     result["valid_from"] = row["valid_from"]
     result["valid_to"] = row["valid_to"]

@@ -10,7 +10,7 @@ Bump `SCHEMA_VERSION` in lockstep with any DDL change and add a matching
 step to `run_migrations()`.
 
 Query functions (the only SQL text for this database's schema lives here):
-- `apply_schema(db)` -- create every table/index if absent, stamp `user_version`.
+- `apply_schema(db)` -- create every table/index if absent, stamp the schema version.
 - `run_migrations(db)` -- bring an older database up to the current schema.
 """
 
@@ -18,9 +18,11 @@ from portfolio_common.db import Database
 
 SCHEMA_VERSION = 1
 
+# `{autoincrement_pk}` is filled in from the engine's dialect by
+# `apply_schema` (str.replace); everything else is standard SQL.
 _DISCOVERY_DDL = """
 CREATE TABLE IF NOT EXISTS discovered_urls (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              {autoincrement_pk},
     url             TEXT    NOT NULL,
     domain          TEXT    NOT NULL,
     company         TEXT    NOT NULL,
@@ -100,14 +102,14 @@ ARTICLES_SCHEMA = _ARTICLES_DDL
 
 
 def apply_schema(db: Database) -> None:
-    """Create every pipeline table + index if absent, and stamp
-    `PRAGMA user_version`. Idempotent -- safe on every startup, from either
-    stage's connection (each stage only writes its own tables, but defining
-    the whole schema from one constant is what keeps the two in sync).
+    """Create every pipeline table + index if absent, and stamp the schema
+    version. Idempotent -- safe on every startup, from either stage's
+    connection (each stage only writes its own tables, but defining the whole
+    schema from one constant is what keeps the two in sync).
     """
-    db.executescript(_DISCOVERY_DDL)
-    db.executescript(_ARTICLES_DDL)
-    db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
+    db.create_schema(_ARTICLES_DDL)
+    db.set_schema_version(SCHEMA_VERSION)
 
 
 def run_migrations(db: Database) -> None:
@@ -123,12 +125,11 @@ def _migrate_legacy_sector_column(db: Database) -> None:
     `sector` column. Add the new columns and drop the old one. No-op on a
     table that's already current or was just created by `apply_schema()`.
     """
-    columns = {row[1] for row in db.execute("PRAGMA table_info(articles)").fetchall()}
+    columns = set(db.table_columns("articles"))
     if not columns:
         return  # table doesn't exist yet -- nothing to migrate
-    if "gics_sector" not in columns:
-        db.execute("ALTER TABLE articles ADD COLUMN gics_sector TEXT")
-    if "gics_sub_industry" not in columns:
-        db.execute("ALTER TABLE articles ADD COLUMN gics_sub_industry TEXT")
+    db.ensure_columns("articles", {"gics_sector": "TEXT", "gics_sub_industry": "TEXT"})
     if "sector" in columns:
+        # SQLite >= 3.35 DROP COLUMN; a one-time destructive step a non-SQLite
+        # migration path would express differently.
         db.execute("ALTER TABLE articles DROP COLUMN sector")

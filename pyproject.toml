@@ -56,10 +56,8 @@ package = false
 # override with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
 #
-# Pinned by commit rather than tag right now: v1.0.0 is a clean-break rewrite
-# (portfolio_common.db.Database + in_clause/Allowlist only -- .schema/
-# .portfolio/.universe_history/.errors moved into this repo's own
-# src/data_mining/, see docs/portfolio-common-v1-migration-plan.md) that
-# master already contains, but the v1.0.0 tag itself hasn't been cut in that
-# repo yet. Swap this to `tag = "v1.0.0"` once it is (same commit).
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", rev = "aa59a7ec02610b19b6c21a2441ec422bc5a12e57" }
+# v1.2.1 adds the engine-agnostic seam (Dialect, connect_url, Row, the
+# schema-introspection helpers) so src/data_mining/ and src/extractor/ name
+# no database engine -- "which engine" is a portfolio-common change. See
+# docs/portfolio-common-v1.2-engine-agnostic.md.
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.1" }

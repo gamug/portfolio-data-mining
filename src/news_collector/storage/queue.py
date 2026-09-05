@@ -5,13 +5,12 @@ from __future__ import annotations
 import contextlib
 import csv
 import logging
-import sqlite3
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from portfolio_common.db import Allowlist, Database, in_clause
+from portfolio_common.db import Allowlist, Database, Row, in_clause
 
 from data_mining.db import connect
 from data_mining.schema import apply_schema, run_migrations
@@ -46,7 +45,7 @@ class URLQueue:
     Persistent URL queue backed by SQLite.
 
     Thread-safe for single-process async use (writes serialized through
-    synchronous sqlite3 connection; use in executor if needed).
+    synchronous connection; use in executor if needed).
 
     The UNIQUE(url, ticker) constraint ensures deduplication at insert time.
     """
@@ -116,16 +115,25 @@ class URLQueue:
         ]
 
         cursor = self._conn.executemany(
-            """
-            INSERT OR IGNORE INTO discovered_urls
-                (url, domain, company, ticker, source, discovered_at,
-                 pub_date, title, status, fetch_status_code)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            self._conn.dialect.insert_or_ignore(
+                "discovered_urls",
+                (
+                    "url",
+                    "domain",
+                    "company",
+                    "ticker",
+                    "source",
+                    "discovered_at",
+                    "pub_date",
+                    "title",
+                    "status",
+                    "fetch_status_code",
+                ),
+            ),
             rows,
         )
         self._conn.commit()
-        # sqlite3's cursor.rowcount sums modifications across all executemany
+        # cursor.rowcount sums modifications across all executemany
         # iterations (unlike `SELECT changes()`, which only reflects the last
         # statement executed), so it correctly counts total rows inserted.
         inserted = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
@@ -253,13 +261,12 @@ class URLQueue:
         """Record that discovery finished for (ticker, domain) over this exact date range."""
         assert self._conn is not None, "Call initialize() first"
         self._conn.execute(
-            """
-            INSERT INTO discovery_progress
-                (ticker, domain, start_date, end_date, completed_at, inserted_count)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT (ticker, domain, start_date, end_date)
-            DO UPDATE SET completed_at=excluded.completed_at, inserted_count=excluded.inserted_count
-            """,
+            self._conn.dialect.upsert(
+                "discovery_progress",
+                ("ticker", "domain", "start_date", "end_date", "completed_at", "inserted_count"),
+                conflict=("ticker", "domain", "start_date", "end_date"),
+                update=["completed_at", "inserted_count"],
+            ),
             (
                 ticker,
                 domain,
@@ -418,7 +425,7 @@ class URLQueue:
 # ------------------------------------------------------------------
 
 
-def _row_to_discovered_url(row: sqlite3.Row) -> DiscoveredURL:
+def _row_to_discovered_url(row: Row) -> DiscoveredURL:
     pub_date: date | None = None
     if row["pub_date"]:
         with contextlib.suppress(ValueError):
