@@ -102,11 +102,12 @@ stack actually pinned in `pyproject.toml`.
 5. **Docs live under `docs/`**, one topic per file: one file per service
    under `docs/modules/*.md`, cross-cutting migration notes named by
    topic/date (`portfolio-common-v1-migration-plan.md`,
-   `portfolio-common-v1.2-engine-agnostic.md`). `docs/superpowers/` holds
-   earlier, pre-spec-kit planning artifacts (the original monorepo-
-   integration plan/spec) — historical record, not the canonical spec going
-   forward. A spec-kit artifact (this constitution, `SPEC.md`, `PLAN.md`,
-   `TASKS.md`) goes under `.specify/memory/` instead.
+   `portfolio-common-v1.2-engine-agnostic.md`). A spec-kit artifact (this
+   constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`) goes under
+   `.specify/memory/` instead — the one Claude-Code-adjacent path that stays
+   tracked (see AI behavior #9); `docs/superpowers/` (earlier, pre-spec-kit
+   planning artifacts predating `.specify/memory` adoption) is gitignored,
+   kept locally as historical reference only, same as `CLAUDE.md`.
 6. **Config lives where its tool expects it, not duplicated.** Ruff:
    `.code_quality/ruff.toml` (root `ruff.toml` only `extend`s it so plain
    `ruff check .` from the repo root resolves the same config `pre-commit`
@@ -180,20 +181,26 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
    reference for planning and review** — read both before drafting a
    spec/plan, and resolve any conflict between a request and a stated
    principle or requirement by surfacing it or proposing an amendment, not
-   by quietly overriding either. `CLAUDE.md` (tracked, checked into this
-   repo, unlike some sibling repos' untracked copy) may carry additional
-   situational detail, but where it and this constitution or `SPEC.md`
-   disagree, treat the disagreement as staleness to flag and fix, not a
-   license to follow whichever is more convenient.
+   by quietly overriding either. A local, untracked `CLAUDE.md` may carry
+   situational/session notes, but it is never authoritative and must not be
+   treated as a source of fact for anything either document already
+   states.
 8. **Prefer the smallest change consistent with the existing pattern**; no
    opportunistic refactors, renames, or new abstractions outside what the
    spec/task calls for.
-9. **`CLAUDE.md` must always exist on disk, stay tracked, and must always
-   carry a reference to both this constitution
-   (`.specify/memory/constitution.md`) and `.specify/memory/SPEC.md`.** If
-   either reference is missing (freshly regenerated via `/init` or
-   otherwise edited), add it in the same change — don't treat the reference
-   as a one-time step.
+9. **`CLAUDE.md` must always exist on disk and must never be deleted, even
+   though it is intentionally untracked** (`.gitignore`, since PR #28,
+   `e63cff6` — matching `portfolio-nlp`'s convention: Claude Code tool
+   artifacts stay local, `.specify/` is the deliberate exception that stays
+   tracked), **and it must always carry a reference to both this
+   constitution (`.specify/memory/constitution.md`) and
+   `.specify/memory/SPEC.md`.** If `CLAUDE.md` is missing at the start of a
+   session, run `/init` to regenerate it before doing anything else; if it
+   exists but is missing either reference (freshly `/init`-generated or
+   otherwise edited), add it before proceeding — don't treat the reference
+   as a one-time regeneration step. Never `git checkout` / `git reset
+   --hard` onto a commit older than `e63cff6` — that predates the file
+   being untracked, and such a reset would restore a stale tracked copy.
 10. **Ask before expanding scope this constitution doesn't cover** — a new
     external data provider, a new heavy dependency, a shared-schema change
     to `discovered_urls`/`articles`, or anything touching the two-package
@@ -282,25 +289,31 @@ uv run pre-commit run --all-files           # all of the above hooks, plus hygie
    integration branch; feature/fix/docs work happens on a descriptively-
    named branch (`feat/...`, `fix/...`, `docs/...`, `chore/...`,
    `refactor/...`, `test/...`) opened as a PR.
-4. **Pre-commit hooks are mandatory, not optional**: `check-yaml`,
+4. **Never `git checkout` / `git reset --hard` onto a commit older than
+   `e63cff6` (PR #28)** — see the `CLAUDE.md`-protection rule under AI
+   behavior. That commit is when `CLAUDE.md` and `docs/superpowers/` were
+   untracked; a reset past it would restore a stale tracked copy of either
+   and has the potential to wipe the current untracked file. Keep local
+   `master` fast-forwarded from `origin/master` instead of rewriting it.
+5. **Pre-commit hooks are mandatory, not optional**: `check-yaml`,
    `check-case-conflict`, `debug-statements`, `detect-private-key`,
    `check-merge-conflict`, `check-added-large-files` run alongside
    ruff/mypy/commitizen — install them
    (`uv run pre-commit install --hook-type pre-commit --hook-type
    commit-msg --hook-type pre-push`) rather than relying on remembering to
    run checks manually.
-5. **No secrets committed.** `.env` stays git-ignored; `.env.example` holds
+6. **No secrets committed.** `.env` stays git-ignored; `.env.example` holds
    placeholder values only; `detect-private-key` is a backstop, not the
    first line of defense — never paste a real key into a commit, issue, or
    PR description to "show" a config.
-6. **A red run doesn't merge — today by convention, not yet by CI.** There
+7. **A red run doesn't merge — today by convention, not yet by CI.** There
    is no `.github/workflows/` in this repo (Executable cmds #1), so the
    "must be green" standard has no automated gate yet: a local `ruff check`
    / `ruff format --check` / `mypy` / `pytest` failure means the PR doesn't
    open or merge until it's fixed, never suppressed, exactly as it would if
    a CI job enforced it. Once `PLAN.md`'s CI work item lands, this becomes
    automatic instead of self-enforced.
-7. **Leave the working tree checked out on the branch just pushed/PR'd.**
+8. **Leave the working tree checked out on the branch just pushed/PR'd.**
    After opening a PR, don't switch back to `master` (or anywhere else) —
    the local checkout stays on that branch so the user can review the
    actual working tree immediately, without asking for a checkout or doing
@@ -326,4 +339,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.2.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
