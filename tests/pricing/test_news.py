@@ -56,27 +56,38 @@ def test_fetch_ticker_news_returns_raw_articles(fetcher: FinnhubNewsFetcher) -> 
     result = fetcher.fetch_ticker_news("AAPL", "2024-01-01", "2024-01-07")
 
     fetcher.client.company_news.assert_called_once_with("AAPL", _from="2024-01-01", to="2024-01-07")
-    assert result == [make_raw_article()]
+    assert result == {"success": True, "data": [make_raw_article()]}
 
 
-def test_fetch_ticker_news_finnhub_api_exception_returns_empty_list(
+def test_fetch_ticker_news_empty_result_is_still_success(fetcher: FinnhubNewsFetcher) -> None:
+    """An empty list is a normal Finnhub free-tier outcome (old date range), not a failure."""
+    fetcher.client.company_news.return_value = []
+
+    result = fetcher.fetch_ticker_news("AAPL", "2024-01-01", "2024-01-07")
+
+    assert result == {"success": True, "data": []}
+
+
+def test_fetch_ticker_news_finnhub_api_exception_returns_error_dict(
     fetcher: FinnhubNewsFetcher,
 ) -> None:
     fetcher.client.company_news.side_effect = make_finnhub_api_exception()
 
     result = fetcher.fetch_ticker_news("AAPL", "2024-01-01", "2024-01-07")
 
-    assert result == []
+    assert result["success"] is False
+    assert "AAPL" in result["error"]
 
 
-def test_fetch_ticker_news_generic_exception_returns_empty_list(
+def test_fetch_ticker_news_generic_exception_returns_error_dict(
     fetcher: FinnhubNewsFetcher,
 ) -> None:
     fetcher.client.company_news.side_effect = Exception("boom")
 
     result = fetcher.fetch_ticker_news("AAPL", "2024-01-01", "2024-01-07")
 
-    assert result == []
+    assert result["success"] is False
+    assert "boom" in result["error"]
 
 
 # ---------------------------------------------------------------------
@@ -94,9 +105,10 @@ def test_fetch_many_normalizes_and_accumulates_across_tickers(
 
     result = fetcher.fetch_many(["AAPL", "MSFT"], "2024-01-01", "2024-01-07", verbose=False)
 
-    assert [r["headline"] for r in result] == ["AAPL news", "MSFT news"]
-    assert [r["ticker"] for r in result] == ["AAPL", "MSFT"]
-    assert fetcher.articles == result
+    assert result["success"] is True
+    assert [r["headline"] for r in result["data"]] == ["AAPL news", "MSFT news"]
+    assert [r["ticker"] for r in result["data"]] == ["AAPL", "MSFT"]
+    assert fetcher.articles == result["data"]
 
 
 def test_fetch_many_handles_no_articles_for_a_ticker(fetcher: FinnhubNewsFetcher) -> None:
@@ -104,8 +116,23 @@ def test_fetch_many_handles_no_articles_for_a_ticker(fetcher: FinnhubNewsFetcher
 
     result = fetcher.fetch_many(["AAPL"], "2024-01-01", "2024-01-07", verbose=False)
 
-    assert result == []
+    assert result == {"success": True, "data": []}
     assert fetcher.articles == []
+
+
+def test_fetch_many_treats_a_per_ticker_failure_as_no_articles(
+    fetcher: FinnhubNewsFetcher,
+) -> None:
+    """A single ticker's Finnhub failure doesn't abort the whole batch."""
+    fetcher.client.company_news.side_effect = [
+        Exception("boom"),
+        [make_raw_article(headline="MSFT news")],
+    ]
+
+    result = fetcher.fetch_many(["AAPL", "MSFT"], "2024-01-01", "2024-01-07", verbose=False)
+
+    assert result["success"] is True
+    assert [r["headline"] for r in result["data"]] == ["MSFT news"]
 
 
 # ---------------------------------------------------------------------
@@ -119,16 +146,18 @@ def test_fetch_general_news_normalizes_with_no_ticker(fetcher: FinnhubNewsFetche
     result = fetcher.fetch_general_news(category="general", min_id=5)
 
     fetcher.client.general_news.assert_called_once_with("general", min_id=5)
-    assert result[0]["ticker"] is None
-    assert result[0]["headline"] == "Company beats earnings"
+    assert result["success"] is True
+    assert result["data"][0]["ticker"] is None
+    assert result["data"][0]["headline"] == "Company beats earnings"
 
 
-def test_fetch_general_news_exception_returns_empty_list(fetcher: FinnhubNewsFetcher) -> None:
+def test_fetch_general_news_exception_returns_error_dict(fetcher: FinnhubNewsFetcher) -> None:
     fetcher.client.general_news.side_effect = Exception("boom")
 
     result = fetcher.fetch_general_news()
 
-    assert result == []
+    assert result["success"] is False
+    assert "boom" in result["error"]
 
 
 # ---------------------------------------------------------------------
@@ -186,9 +215,20 @@ def test_fetch_rolling_range_chunks_into_windows(fetcher: FinnhubNewsFetcher) ->
     assert calls[2].kwargs == {"_from": "2024-01-15", "to": "2024-01-15"}
 
 
-def test_fetch_rolling_range_raises_when_start_after_end(fetcher: FinnhubNewsFetcher) -> None:
-    with pytest.raises(ValueError, match="start_date must be before end_date"):
-        fetcher.fetch_rolling_range(["AAPL"], "2024-02-01", "2024-01-01", verbose=False)
+def test_fetch_rolling_range_returns_error_when_start_after_end(
+    fetcher: FinnhubNewsFetcher,
+) -> None:
+    result = fetcher.fetch_rolling_range(["AAPL"], "2024-02-01", "2024-01-01", verbose=False)
+
+    assert result == {"success": False, "error": "start_date must be before end_date"}
+
+
+def test_fetch_rolling_range_returns_error_for_malformed_date(
+    fetcher: FinnhubNewsFetcher,
+) -> None:
+    result = fetcher.fetch_rolling_range(["AAPL"], "not-a-date", "2024-01-01", verbose=False)
+
+    assert result["success"] is False
 
 
 def test_fetch_rolling_range_writes_checkpoint_csv_per_window(

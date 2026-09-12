@@ -41,21 +41,27 @@ class FinnhubNewsFetcher:
     # ------------------------------------------------------------------
     # Core fetching
     # ------------------------------------------------------------------
-    def fetch_ticker_news(self, ticker: str, from_date: str, to_date: str) -> list[dict]:
+    def fetch_ticker_news(self, ticker: str, from_date: str, to_date: str) -> dict:
         """
         Fetch news for a single ticker between from_date and to_date
-        (format YYYY-MM-DD). Returns a list of raw article dicts from Finnhub.
+        (format YYYY-MM-DD).
+
+        Returns {"success": bool, "data"|"error": ...}, matching this
+        module's other public methods (`fetch_general_news`,
+        `fetch_news_sentiment`) and `market_data.py`/`sec_edgar.agent`'s
+        convention. An empty result is a normal outcome -- Finnhub's free
+        tier only serves company news for roughly the last 12 months, so an
+        old date range legitimately returns `{"success": True, "data": []}`,
+        not an error; only an actual Finnhub/network exception becomes one.
         """
         try:
             news: list[dict] = self.client.company_news(ticker, _from=from_date, to=to_date)
         except finnhub.exceptions.FinnhubAPIException as e:  # type: ignore[union-attr]
-            print(f"[ERROR] {ticker}: {e}")
-            return []
+            return {"success": False, "error": f"Failed to fetch news for '{ticker}': {e}"}
         except Exception as e:
-            print(f"[UNEXPECTED ERROR] {ticker}: {e}")
-            return []
+            return {"success": False, "error": f"Failed to fetch news for '{ticker}': {e}"}
         else:
-            return news
+            return {"success": True, "data": news}
 
     def fetch_many(
         self,
@@ -63,10 +69,16 @@ class FinnhubNewsFetcher:
         from_date: str,
         to_date: str,
         verbose: bool = True,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Fetch news for multiple tickers over the same date range.
         Appends normalized rows to self.articles and also returns them.
+
+        Returns {"success": True, "data": [...]} -- a per-ticker Finnhub
+        failure (`fetch_ticker_news` returning `success=False`) is logged
+        and treated as "no articles for that ticker," not an abort of the
+        whole batch; this is a bulk/backfill helper, not gated on every
+        ticker succeeding.
         """
         new_rows: list[dict] = []
 
@@ -74,10 +86,13 @@ class FinnhubNewsFetcher:
             if verbose:
                 print(f"Fetching news for {ticker} ({from_date} -> {to_date}) ...")
 
-            raw_articles = self.fetch_ticker_news(ticker, from_date, to_date)
+            result = self.fetch_ticker_news(ticker, from_date, to_date)
+            raw_articles = result["data"] if result["success"] else []
 
             if verbose:
-                if not raw_articles:
+                if not result["success"]:
+                    print(f"  -> {result['error']}")
+                elif not raw_articles:
                     print("  -> No articles returned (check date range / free-tier limit).")
                 else:
                     print(f"  -> {len(raw_articles)} articles found.")
@@ -87,9 +102,9 @@ class FinnhubNewsFetcher:
             time.sleep(self.sleep_between_calls)
 
         self.articles.extend(new_rows)
-        return new_rows
+        return {"success": True, "data": new_rows}
 
-    def fetch_general_news(self, category: str = "general", min_id: int = 0) -> list[dict]:
+    def fetch_general_news(self, category: str = "general", min_id: int = 0) -> dict:
         """
         General market news (not ticker-specific), via Finnhub's /news
         endpoint.
@@ -102,16 +117,16 @@ class FinnhubNewsFetcher:
             Only return articles newer than this Finnhub article id
             (use 0 to get the latest batch).
 
-        Returns a list of normalized rows (same shape as company news, but
-        with ticker=None since these articles aren't tied to one company).
-        Never raises; returns [] on error.
+        Returns {"success": bool, "data"|"error": ...}, matching this
+        module's other public methods. On success, `data` is a list of
+        normalized rows (same shape as company news, but with ticker=None
+        since these articles aren't tied to one company).
         """
         try:
             raw = self.client.general_news(category, min_id=min_id)
         except Exception as e:
-            print(f"[ERROR] general_news({category}): {e}")
-            return []
-        return [self._normalize_article(None, a) for a in raw]
+            return {"success": False, "error": f"Failed to fetch general news ({category}): {e}"}
+        return {"success": True, "data": [self._normalize_article(None, a) for a in raw]}
 
     def fetch_news_sentiment(self, ticker: str) -> dict:
         """
@@ -146,7 +161,7 @@ class FinnhubNewsFetcher:
         window_days: int = 7,
         verbose: bool = True,
         checkpoint_csv: str | None = None,
-    ) -> list[dict]:
+    ) -> dict:
         """
         Fetch news for a long date range by automatically chunking it into
         smaller windows (e.g., 7-day chunks) and looping fetch_many() over
@@ -172,38 +187,45 @@ class FinnhubNewsFetcher:
 
         Returns
         -------
-        List[Dict]
-            All newly fetched, normalized article rows (also added to
-            self.articles).
+        dict
+            {"success": bool, "data"|"error": ...}, matching this module's
+            other public methods -- an invalid date range (or format) comes
+            back as `success=False` rather than a raised exception.
+            On success, `data` is every newly fetched, normalized article
+            row (also added to self.articles).
         """
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+            end = datetime.strptime(end_date, "%Y-%m-%d")
 
-        if start > end:
-            raise ValueError("start_date must be before end_date")
+            if start > end:
+                return {"success": False, "error": "start_date must be before end_date"}
 
-        all_new_rows = []
-        window_start = start
+            all_new_rows: list[dict] = []
+            window_start = start
 
-        while window_start <= end:
-            window_end = min(window_start + timedelta(days=window_days - 1), end)
+            while window_start <= end:
+                window_end = min(window_start + timedelta(days=window_days - 1), end)
 
-            from_str = window_start.strftime("%Y-%m-%d")
-            to_str = window_end.strftime("%Y-%m-%d")
+                from_str = window_start.strftime("%Y-%m-%d")
+                to_str = window_end.strftime("%Y-%m-%d")
 
-            if verbose:
-                print(f"\n=== Window: {from_str} -> {to_str} ===")
+                if verbose:
+                    print(f"\n=== Window: {from_str} -> {to_str} ===")
 
-            window_rows = self.fetch_many(tickers, from_str, to_str, verbose=verbose)
-            all_new_rows.extend(window_rows)
+                window_result = self.fetch_many(tickers, from_str, to_str, verbose=verbose)
+                window_rows = window_result["data"]
+                all_new_rows.extend(window_rows)
 
-            # Save incremental progress if requested
-            if checkpoint_csv and window_rows:
-                self._append_to_csv(window_rows, checkpoint_csv)
+                # Save incremental progress if requested
+                if checkpoint_csv and window_rows:
+                    self._append_to_csv(window_rows, checkpoint_csv)
 
-            window_start = window_end + timedelta(days=1)
+                window_start = window_end + timedelta(days=1)
+        except Exception as e:
+            return {"success": False, "error": f"fetch_rolling_range failed: {e}"}
 
-        return all_new_rows
+        return {"success": True, "data": all_new_rows}
 
     def _append_to_csv(self, rows: list[dict], filepath: str) -> None:
         """Append rows to a CSV, writing the header only if the file is new."""

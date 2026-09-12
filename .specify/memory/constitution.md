@@ -17,18 +17,21 @@ stack actually pinned in `pyproject.toml`.
    (lockfile `uv.lock`, version pinned via `.python-version`). Do not add a
    second package manager (pip/poetry/conda) — all installs go through
    `uv sync` / `uv add`.
-2. **Web/service layer**: FastAPI (`==0.141.1`) + `uvicorn[standard]`
+2. **Per-service acquisition libraries** are scoped to the one service that
+   needs them, not shared: `news_collector` (`ddgs`, `yfinance`, `tenacity`,
+   `feedparser`, `lxml`, `pyyaml`, `rich`); `extractor` (`beautifulsoup4`,
+   `trafilatura`, `langdetect`); `pricing` (`finnhub-python==2.4.29`);
+   `sec_edgar` (`edgartools==5.44.1`, `defusedxml`). Chosen because each is
+   the one library that actually talks to that service's one external
+   source (news sites, Finnhub, SEC EDGAR) — swapping one is scoped to the
+   one service touching it, never a repo-wide decision. A new acquisition
+   source is added to the one service's dependency block, not to the shared
+   top-level group.
+3. **Web/service layer**: FastAPI (`==0.141.1`) + `uvicorn[standard]`
    (`==0.52.1`) for all four `apps/*_api.py` services; `httpx[http2]` for
    outbound calls. Pin exact versions for FastAPI/uvicorn/ruff (reproducible
    CI-equivalent local runs); range-pin libraries that are
    additive/stable (`pandas`, `numpy`, `tqdm`, `requests`).
-3. **Per-service acquisition libraries** are scoped to the one service that
-   needs them, not shared: `news_collector` (`ddgs`, `yfinance`, `tenacity`,
-   `feedparser`, `lxml`, `pyyaml`, `rich`); `extractor` (`beautifulsoup4`,
-   `trafilatura`, `langdetect`); `pricing` (`finnhub-python==2.4.29`);
-   `sec_edgar` (`edgartools==5.44.1`, `defusedxml`). A new acquisition
-   source is added to the one service's dependency block, not to the shared
-   top-level group.
 4. **Storage**: SQLite, accessed exclusively through
    `portfolio_common.db.Database` and its `Dialect` seam (`in_clause()` /
    `Allowlist` for dynamic SQL; `create_schema` / `table_columns` /
@@ -44,7 +47,15 @@ stack actually pinned in `pyproject.toml`.
    scale; a different engine is a `portfolio-common` `Dialect`
    implementation plus a re-pin here, not a rewrite of this repo's stage
    logic.
-5. **Third-party data-provider terms take the place licensing normally
+5. **Optional/heavy dependency group**: none exist today — `pyproject.toml`
+   has a single `dev` group (pytest, hypothesis, respx, pre-commit, ruff,
+   mypy), and every base dependency in `[project]` is required by at least
+   one of the four services. The principle carries over regardless: if a
+   heavy or optional add-on is ever introduced here (e.g. a future local
+   ML/analysis step), it must be isolated in its own `[dependency-groups]`
+   entry, not required just to import a service's package — the same reason
+   `portfolio-nlp`'s `eval` group is split out.
+6. **Third-party data-provider terms take the place licensing normally
    would.** This repo has no ML model checkpoints to license — its
    equivalent risk is API terms-of-service and fair-access compliance:
    Finnhub's rate limits, SEC EDGAR's requirement to self-identify via a
@@ -52,9 +63,9 @@ stack actually pinned in `pyproject.toml`.
    scraping Wikipedia's S&P 500 tables politely (cached in-process, not
    re-fetched per request). Flag any new external source's ToS/rate-limit
    posture in the PR that introduces it.
-6. **Adopting a new library, framework, or external data source is a
+7. **Adopting a new library, framework, or external data source is a
    constitution-level change**: add it to `pyproject.toml` (in the correct
-   service's dependency block, see #3) with a rationale in the PR, and if it
+   service's dependency block, see #2) with a rationale in the PR, and if it
    changes a rule above, amend this section (see Governance).
 
 ## Project structure
@@ -91,11 +102,12 @@ stack actually pinned in `pyproject.toml`.
 5. **Docs live under `docs/`**, one topic per file: one file per service
    under `docs/modules/*.md`, cross-cutting migration notes named by
    topic/date (`portfolio-common-v1-migration-plan.md`,
-   `portfolio-common-v1.2-engine-agnostic.md`). `docs/superpowers/` holds
-   earlier, pre-spec-kit planning artifacts (the original monorepo-
-   integration plan/spec) — historical record, not the canonical spec going
-   forward. A spec-kit artifact (this constitution, `SPEC.md`, `PLAN.md`,
-   `TASKS.md`) goes under `.specify/memory/` instead.
+   `portfolio-common-v1.2-engine-agnostic.md`). A spec-kit artifact (this
+   constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`) goes under
+   `.specify/memory/` instead — the one Claude-Code-adjacent path that stays
+   tracked (see AI behavior #9); `docs/superpowers/` (earlier, pre-spec-kit
+   planning artifacts predating `.specify/memory` adoption) is gitignored,
+   kept locally as historical reference only, same as `CLAUDE.md`.
 6. **Config lives where its tool expects it, not duplicated.** Ruff:
    `.code_quality/ruff.toml` (root `ruff.toml` only `extend`s it so plain
    `ruff check .` from the repo root resolves the same config `pre-commit`
@@ -128,15 +140,15 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
    Financial Times, Investing.com, Nasdaq, Seeking Alpha, StockTwits);
    `pricing`/`sec_edgar` pull from exactly Finnhub and SEC EDGAR. Adding an
    eighth news domain or a new provider is a constitution-level dependency
-   change (see Technological stock #6), not a runtime option.
-2. **Every stage is idempotent and resumable by construction, not by
-   convention.** `discover --resume` (default on) skips only a
-   `(ticker, domain)` pair with an exact-range `discovery_progress` row
-   already recorded; `extract` processes only `discovered_urls` rows not
-   yet in `articles`. A newly-added S&P 500 member is never special-cased —
-   it simply has no checkpoint yet, so the next full-universe/full-range run
-   backfills it like any other ticker's first run (`docs/modules/news-
-   collector.md`).
+   change (see Technological stock #7), not a runtime option.
+2. **Every stage behaves the same regardless of when or how many times it
+   runs — idempotent and resumable by construction, not by convention.**
+   `discover --resume` (default on) skips only a `(ticker, domain)` pair
+   with an exact-range `discovery_progress` row already recorded; `extract`
+   processes only `discovered_urls` rows not yet in `articles`. A
+   newly-added S&P 500 member is never special-cased — it simply has no
+   checkpoint yet, so the next full-universe/full-range run backfills it
+   like any other ticker's first run (`docs/modules/news-collector.md`).
 3. **Upstream failure is an inspectable result, never a silent gap or an
    uncaught exception reaching the caller.** Every public method in
    `pricing/` and `sec_edgar/agent.py`'s `EdgarAgent` returns
@@ -152,11 +164,12 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
    entity/category judgment of its own (that is `portfolio-nlp`'s job) and
    must not editorialize, filter for "quality," or silently drop rows that
    look wrong without recording that it did.
-5. **A DB-engine change is a `portfolio-common` re-pin, not a rewrite
-   here.** Every engine-specific SQL fragment goes through
-   `conn.dialect`/`portfolio_common.db` helpers (Technological stock #4) —
-   a new backend is implemented once, in `portfolio-common`, and adopted
-   here by bumping the pinned tag.
+5. **Coverage/reliability claims are backed by the test suite and
+   `discovery/stats` counts, not spot-checks.** A change asserted to fix or
+   improve discovery/extraction coverage (a resume-logic fix, a new domain
+   connector, a universe-membership edge case) should be verifiable via
+   `uv run pytest` and, where relevant, `GET /discovery/stats`'s counts —
+   not a handful of manually-checked tickers.
 
 *Claude Code / coding-agent conduct on this repo:*
 
@@ -168,20 +181,26 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
    reference for planning and review** — read both before drafting a
    spec/plan, and resolve any conflict between a request and a stated
    principle or requirement by surfacing it or proposing an amendment, not
-   by quietly overriding either. `CLAUDE.md` (tracked, checked into this
-   repo, unlike some sibling repos' untracked copy) may carry additional
-   situational detail, but where it and this constitution or `SPEC.md`
-   disagree, treat the disagreement as staleness to flag and fix, not a
-   license to follow whichever is more convenient.
+   by quietly overriding either. A local, untracked `CLAUDE.md` may carry
+   situational/session notes, but it is never authoritative and must not be
+   treated as a source of fact for anything either document already
+   states.
 8. **Prefer the smallest change consistent with the existing pattern**; no
    opportunistic refactors, renames, or new abstractions outside what the
    spec/task calls for.
-9. **`CLAUDE.md` must always exist on disk, stay tracked, and must always
-   carry a reference to both this constitution
-   (`.specify/memory/constitution.md`) and `.specify/memory/SPEC.md`.** If
-   either reference is missing (freshly regenerated via `/init` or
-   otherwise edited), add it in the same change — don't treat the reference
-   as a one-time step.
+9. **`CLAUDE.md` must always exist on disk and must never be deleted, even
+   though it is intentionally untracked** (`.gitignore`, since PR #28,
+   `e63cff6` — matching `portfolio-nlp`'s convention: Claude Code tool
+   artifacts stay local, `.specify/` is the deliberate exception that stays
+   tracked), **and it must always carry a reference to both this
+   constitution (`.specify/memory/constitution.md`) and
+   `.specify/memory/SPEC.md`.** If `CLAUDE.md` is missing at the start of a
+   session, run `/init` to regenerate it before doing anything else; if it
+   exists but is missing either reference (freshly `/init`-generated or
+   otherwise edited), add it before proceeding — don't treat the reference
+   as a one-time regeneration step. Never `git checkout` / `git reset
+   --hard` onto a commit older than `e63cff6` — that predates the file
+   being untracked, and such a reset would restore a stale tracked copy.
 10. **Ask before expanding scope this constitution doesn't cover** — a new
     external data provider, a new heavy dependency, a shared-schema change
     to `discovered_urls`/`articles`, or anything touching the two-package
@@ -270,18 +289,31 @@ uv run pre-commit run --all-files           # all of the above hooks, plus hygie
    integration branch; feature/fix/docs work happens on a descriptively-
    named branch (`feat/...`, `fix/...`, `docs/...`, `chore/...`,
    `refactor/...`, `test/...`) opened as a PR.
-4. **Pre-commit hooks are mandatory, not optional**: `check-yaml`,
+4. **Never `git checkout` / `git reset --hard` onto a commit older than
+   `e63cff6` (PR #28)** — see the `CLAUDE.md`-protection rule under AI
+   behavior. That commit is when `CLAUDE.md` and `docs/superpowers/` were
+   untracked; a reset past it would restore a stale tracked copy of either
+   and has the potential to wipe the current untracked file. Keep local
+   `master` fast-forwarded from `origin/master` instead of rewriting it.
+5. **Pre-commit hooks are mandatory, not optional**: `check-yaml`,
    `check-case-conflict`, `debug-statements`, `detect-private-key`,
    `check-merge-conflict`, `check-added-large-files` run alongside
    ruff/mypy/commitizen — install them
    (`uv run pre-commit install --hook-type pre-commit --hook-type
    commit-msg --hook-type pre-push`) rather than relying on remembering to
    run checks manually.
-5. **No secrets committed.** `.env` stays git-ignored; `.env.example` holds
+6. **No secrets committed.** `.env` stays git-ignored; `.env.example` holds
    placeholder values only; `detect-private-key` is a backstop, not the
    first line of defense — never paste a real key into a commit, issue, or
    PR description to "show" a config.
-6. **Leave the working tree checked out on the branch just pushed/PR'd.**
+7. **A red run doesn't merge — today by convention, not yet by CI.** There
+   is no `.github/workflows/` in this repo (Executable cmds #1), so the
+   "must be green" standard has no automated gate yet: a local `ruff check`
+   / `ruff format --check` / `mypy` / `pytest` failure means the PR doesn't
+   open or merge until it's fixed, never suppressed, exactly as it would if
+   a CI job enforced it. Once `PLAN.md`'s CI work item lands, this becomes
+   automatic instead of self-enforced.
+8. **Leave the working tree checked out on the branch just pushed/PR'd.**
    After opening a PR, don't switch back to `master` (or anywhere else) —
    the local checkout stays on that branch so the user can review the
    actual working tree immediately, without asking for a checkout or doing
@@ -307,4 +339,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.2.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
