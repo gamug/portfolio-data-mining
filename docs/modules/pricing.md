@@ -14,7 +14,9 @@ Wraps the Finnhub API (with a `yfinance` fallback for pricing) — no SEC/EDGAR 
 
 Every method returns `{"success": bool, "data"|"error": ...}` — upstream provider
 failures (premium-gated endpoints, bad tickers) never raise; they come back as a clean,
-inspectable result. `src/common/` (shared with `sec_edgar`, though `sec_edgar` takes a raw
+inspectable result. (`FinnhubNewsFetcher`'s four company/general-news-fetching methods
+were the one holdout — they used to return a plain `list[dict]`/raise on a bad date range
+until this was closed to match the rest of the module.) `src/common/` (shared with `sec_edgar`, though `sec_edgar` takes a raw
 ticker/CIK string and doesn't actually touch any of this) holds the pieces that aren't
 Finnhub-specific: `errors.py` (`UpstreamDataError`) and `portfolio.py` (the
 tracked-universe loader backing the `/universe` endpoints — fetched live from Wikipedia

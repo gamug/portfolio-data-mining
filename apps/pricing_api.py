@@ -154,24 +154,35 @@ def company_news(
     ticker: str,
     start_date: date = Query(..., description="Start date, YYYY-MM-DD (inclusive)"),
     end_date: date = Query(..., description="End date, YYYY-MM-DD (inclusive)"),
-) -> list[dict]:
+) -> JSONResponse:
     """
     Daily historical news for a company. NOTE: Finnhub's free tier only
     serves company news for roughly the last 12 months -- requests further
-    back typically return an empty list, not an error.
+    back typically return an empty list, not an error (`{"success": True,
+    "data": []}`, not a 502).
     """
-    articles = news_fetcher.fetch_ticker_news(
+    result = news_fetcher.fetch_ticker_news(
         ticker.upper(), start_date.isoformat(), end_date.isoformat()
     )
-    return [news_fetcher._normalize_article(ticker.upper(), a) for a in articles]
+    if result["success"]:
+        result = {
+            "success": True,
+            "data": [news_fetcher._normalize_article(ticker.upper(), a) for a in result["data"]],
+        }
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 @app.get("/news/market", tags=["News"])
 def market_news(
     category: str = Query("general", description="general | forex | crypto | merger"),
-) -> list[dict]:
+) -> JSONResponse:
     """General market news (not tied to a specific ticker)."""
-    return news_fetcher.fetch_general_news(category=category)
+    result = news_fetcher.fetch_general_news(category=category)
+    return JSONResponse(
+        status_code=200 if result["success"] else 502, content=jsonable_encoder(result)
+    )
 
 
 @app.get("/news/sentiment/{ticker}", tags=["News"])

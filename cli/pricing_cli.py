@@ -89,8 +89,15 @@ def cmd_pricing(
 def cmd_news_company(
     args: argparse.Namespace, news_fetcher: FinnhubNewsFetcher, **_clients: Any
 ) -> None:
-    articles = news_fetcher.fetch_ticker_news(args.ticker.upper(), args.start, args.end)
-    print_json([news_fetcher._normalize_article(args.ticker.upper(), a) for a in articles])
+    result = news_fetcher.fetch_ticker_news(args.ticker.upper(), args.start, args.end)
+    if result["success"]:
+        result = {
+            "success": True,
+            "data": [
+                news_fetcher._normalize_article(args.ticker.upper(), a) for a in result["data"]
+            ],
+        }
+    print_json(result)
 
 
 def cmd_news_market(
