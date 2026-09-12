@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Spec-driven development
+
+This repo follows a spec-driven ("spec coding") workflow: specs and plans
+are written before implementation. The binding references are
+[`.specify/memory/constitution.md`](.specify/memory/constitution.md)
+(governing principles — stack, structure, AI/coding-agent behavior, code &
+git conventions) and [`.specify/memory/SPEC.md`](.specify/memory/SPEC.md)
+(the requirements/architecture contract — functional and non-functional
+requirements, data model, open questions). Read both before drafting a
+spec/plan or making a non-trivial change; this file carries situational/
+session detail, but where it and either of those documents disagree, treat
+the disagreement as staleness to flag and fix, not a license to follow
+whichever is more convenient (constitution: AI behavior #7). See also
+[`.specify/memory/PLAN.md`](.specify/memory/PLAN.md) and
+[`.specify/memory/TASKS.md`](.specify/memory/TASKS.md) for the current,
+narrowly-scoped actionable backlog.
+
 ## What this is
 
 A single repository for a financial-news + SEC-filings data-mining pipeline, consolidated

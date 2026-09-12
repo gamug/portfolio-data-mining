@@ -62,7 +62,7 @@ out the six repos; neither is built yet.
 | `extractor/` | `news-crawler/src/extractor/` | [docs/modules/news-crawler.md](docs/modules/news-crawler.md) |
 | `pricing/` | `finhub/src/{trading,market,news}/` (finhub split #1) | [docs/modules/pricing.md](docs/modules/pricing.md) |
 | `sec_edgar/` | `finhub/src/fundamental/` (finhub split #2) | [docs/modules/sec-edgar.md](docs/modules/sec-edgar.md) |
-| `data_mining/` | `portfolio-common`'s `business_folders/data_mining/` | — |
+| `data_mining/` | `portfolio-common`'s `business_folders/data_mining/` | [docs/modules/data-mining.md](docs/modules/data-mining.md) |
 
 `portfolio-common` had a clean-break v1.0.0 rewrite: it's now DB-engine-only
 (`portfolio_common.db.Database`, the one connection class every domain in the Portfolio
