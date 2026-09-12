@@ -173,6 +173,22 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
 
 *Claude Code / coding-agent conduct on this repo:*
 
+> **Never commit a Claude Code / agent-tooling artifact.** `CLAUDE.md`,
+> `.claude/`, `.superpowers/`, `docs/superpowers/`, and any future one
+> (a new skill config, a new session/scratch file, a new local settings
+> file) stay out of git — `.gitignore` already excludes all four paths
+> above (since PR #28, `e63cff6`). **The one deliberate exception is
+> `.specify/memory/`** (this constitution, `SPEC.md`, `PLAN.md`,
+> `TASKS.md`) — that is this project's real, versioned source of truth,
+> not tool scratch, and stays tracked. If a new Claude-Code-adjacent file
+> or directory ever appears in the tree that isn't already covered by an
+> existing `.gitignore` pattern, add it to `.gitignore` in the same
+> change that introduces it — never leave it for a later cleanup, and
+> never `git add`/commit it "just this once." If one is ever found
+> already tracked (e.g. after a merge, a rebase, or restoring from an
+> older commit), untrack it (`git rm --cached`) in the next commit rather
+> than leaving it versioned.
+
 6. **Match existing structure before introducing new structure** — check
    where a file's siblings live and follow that package's placement,
    naming, and import style (each package's own convention per Project
@@ -339,4 +355,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.3.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
