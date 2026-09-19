@@ -26,7 +26,13 @@ stack actually pinned in `pyproject.toml`.
    source (news sites, Finnhub, SEC EDGAR) — swapping one is scoped to the
    one service touching it, never a repo-wide decision. A new acquisition
    source is added to the one service's dependency block, not to the shared
-   top-level group.
+   top-level group. The one deliberate exception is `yfinance`: it is
+   listed under `news_collector` in `pyproject.toml` (its Yahoo Finance news
+   connector) but is also imported by `pricing`, as the OHLCV fallback and as
+   the only source of corporate actions (dividends, splits). It is an
+   unofficial, keyless, best-effort source with no SLA (`SPEC.md` §13
+   item 9) — a reason to keep it to the calls that need it, not a precedent
+   for sharing other libraries across services.
 3. **Web/service layer**: FastAPI (`==0.141.1`) + `uvicorn[standard]`
    (`==0.52.1`) for all four `apps/*_api.py` services; `httpx[http2]` for
    outbound calls. Pin exact versions for FastAPI/uvicorn/ruff (reproducible
@@ -138,8 +144,9 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
 1. **The source set is fixed, not dynamically discovered.** `news_collector`
    discovers URLs from exactly seven named domains (CNBC, Yahoo Finance,
    Financial Times, Investing.com, Nasdaq, Seeking Alpha, StockTwits);
-   `pricing`/`sec_edgar` pull from exactly Finnhub and SEC EDGAR. Adding an
-   eighth news domain or a new provider is a constitution-level dependency
+   `pricing` pulls from Finnhub and `yfinance` (the OHLCV fallback and the
+   only corporate-actions source); `sec_edgar` pulls from SEC EDGAR. Adding
+   an eighth news domain or a new provider is a constitution-level dependency
    change (see Technological stock #7), not a runtime option.
 2. **Every stage behaves the same regardless of when or how many times it
    runs — idempotent and resumable by construction, not by convention.**
@@ -265,7 +272,7 @@ uv run cli/pricing_cli.py universe-snapshot        # periodic, by hand: refresh 
 uv run cli/sec_edgar_cli.py filings AAPL --form 10-K
 uv run cli/<service>_cli.py --help          # full subcommand list per service
 
-uv run pytest                               # full suite (213 tests as of PR #26)
+uv run pytest                               # full suite (230 tests as of PR #36)
 uv run pytest tests/<package> -q            # one module's tests
 
 uv run ruff check .                         # lint (config: .code_quality/ruff.toml via root pointer)
@@ -366,4 +373,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19
+**Version**: 1.5.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19

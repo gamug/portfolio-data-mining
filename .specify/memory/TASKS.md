@@ -81,7 +81,7 @@ renumber; mark a cancelled/superseded task in place instead.
       2026-09-19** (PR #36): `docs/modules/pricing.md` only — `README.md`
       gives one example per service and does not enumerate pricing routes, so
       it needed no change.
-- [ ] **T-024** Finalize the specs once the code exists: `FR-012`, `SPEC.md`
+- [x] **T-024** Finalize the specs once the code exists: `FR-012`, `SPEC.md`
       §2.1 and §12 were written ahead of the code marked "planned" — drop that
       marker, and update the §10/NR-004 test count (213 today) and the
       constitution's "Executable cmds" test-count line. Separately, as its own
@@ -89,10 +89,12 @@ renumber; mark a cancelled/superseded task in place instead.
       Technological stock #2 and AI behavior #1 so `yfinance` is listed under
       `pricing` (MINOR bump). → `PLAN.md` Work item 3, "Constitution notes".
       **Partly done 2026-09-19** (PR #36): `SPEC.md` FR-012 ("planned" marker
-      dropped), §2.1, §12 and the test count (→ 230). **Still open:** the
-      constitution — its `yfinance` wording (Tech stock #2, AI behavior #1)
-      and its "Executable cmds" test-count line — waits on an explicit
-      go-ahead, since constitution changes are their own reviewed change.
+      dropped), §2.1, §12 and the test count (→ 230). **Constitution half done
+      2026-09-19**, on an explicit go-ahead and as its own PR: Tech stock #2
+      (yfinance is used by both `news_collector` and `pricing`, named as the
+      one exception to per-service scoping), AI behavior #1 (`pricing` pulls
+      from Finnhub and yfinance), and the "Executable cmds" test count (213 →
+      230). Constitution 1.5.0.
 - [x] **T-025** Verify live: run `uv run apps/pricing_api.py`, `curl` the XOM
       range and the `1900-01-01` probe range from `PLAN.md` Work item 3's
       acceptance criteria, and run the `actions` CLI subcommand. State
@@ -125,11 +127,10 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Work item 3 is built and merged (PR #36); its artifacts are reconciled
-(`T-027`). Two things remain open on purpose: `T-024`'s constitution half (the
-`yfinance` wording and test-count line — needs an explicit go-ahead) and
-`T-026`'s redeploy hand-off (the operator redeploys; then
-`portfolio-financial-analysis`'s `T-052` runs `quant backfill-actions`). The
+Work item 3 is built and merged (PR #36), its artifacts are reconciled
+(`T-027`) and its constitution wording is amended (`T-024`). One item remains
+open on purpose: `T-026`'s redeploy hand-off — the operator redeploys, then
+`portfolio-financial-analysis`'s `T-052` runs `quant backfill-actions`. The
 downstream client's `probe('XOM')` has already been shown to return `True`
 against the merged code. Work item 1 (CI workflow) was built and then reverted
 at the maintainer's request (#35), so T-001–T-007 stay unchecked and
