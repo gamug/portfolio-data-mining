@@ -105,18 +105,32 @@ renumber; mark a cancelled/superseded task in place instead.
       redeployed, hand off to `portfolio-financial-analysis`'s `T-052`
       (`QuantPricingClient.probe('XOM')` → `True`, then `quant
       backfill-actions` → `corpact-v1` rows). That check lives in PFA, not
-      here. → acceptance criteria, PFA bullet.
-- [ ] **T-027** Reconcile both architecture artifacts (Portfolio Thesis +
-      Portfolio Data Mining) per constitution AI behavior #11 — content
-      only, never the title. → `PLAN.md` Work item 3, last acceptance
-      bullet.
+      here. → acceptance criteria, PFA bullet. **Progress 2026-09-19:** landed
+      (PR #36), and verified against the real client —
+      `portfolio-financial-analysis`'s own `QuantPricingClient.probe('XOM')`
+      returned `True` against this repo's merged code running locally (before:
+      always `False`), and `.actions()` parsed XOM's four 2024 dividends and
+      NVDA's `10.0` split. **Still open:** the redeploy of the service PFA's
+      `PRICING_BASE_URL` points at, which is the operator's step, and PFA's
+      `T-052` (`quant backfill-actions` on its production DB), which lives in
+      that repo.
+- [x] **T-027** Reconcile both architecture artifacts (Portfolio Thesis +
+      Portfolio Data Mining) per constitution AI behavior #11 — content only,
+      never the title. → `PLAN.md` Work item 3, last acceptance bullet. **Done
+      2026-09-19** (after PR #36 merged): Portfolio Data Mining (v23) and
+      Portfolio Thesis (v24) now describe the endpoint as built — the pricing
+      node/row, its route list, the pricing test count (38 → 55), and the
+      yfinance contract — and the "queued" wording is gone. Content only,
+      titles unchanged.
 
 ## Status
 
-Work item 3 is built and open for review in PR #36: `T-020`–`T-023` and
-`T-025` are done (verified live against yfinance). `T-024` is half done — the
-spec is reconciled, the constitution wording is not (needs a go-ahead).
-`T-026` (redeploy, then `portfolio-financial-analysis`'s `T-052`) and `T-027`
-(architecture artifacts) wait on that PR merging. Work item 1 (CI workflow)
-was built and then reverted at the maintainer's request (#35), so T-001–T-007
-stay unchecked and T-010–T-014 are moot until CI is wanted again.
+Work item 3 is built and merged (PR #36); its artifacts are reconciled
+(`T-027`). Two things remain open on purpose: `T-024`'s constitution half (the
+`yfinance` wording and test-count line — needs an explicit go-ahead) and
+`T-026`'s redeploy hand-off (the operator redeploys; then
+`portfolio-financial-analysis`'s `T-052` runs `quant backfill-actions`). The
+downstream client's `probe('XOM')` has already been shown to return `True`
+against the merged code. Work item 1 (CI workflow) was built and then reverted
+at the maintainer's request (#35), so T-001–T-007 stay unchecked and
+T-010–T-014 are moot until CI is wanted again.

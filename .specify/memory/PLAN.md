@@ -138,10 +138,11 @@ settings for `master`):
 
 ## Work item 3 — yfinance corporate-actions endpoint (code, cross-repo origin)
 
-**Status: built, in review (PR #36, 2026-09-19).** Verified live against yfinance
-(XOM dividends, NVDA split, the `1900-01-01` probe range over HTTP). Remaining:
-the redeploy hand-off (`T-026`), the artifacts (`T-027`), and the constitution
-wording (`T-024`, pending a go-ahead).
+**Status: built and merged (PR #36, 2026-09-19).** Verified live against yfinance
+(XOM dividends, NVDA split, the `1900-01-01` probe range over HTTP), and against
+the downstream client (`QuantPricingClient.probe('XOM')` → `True`). Remaining:
+the redeploy hand-off (`T-026`) and the constitution wording (`T-024`, pending a
+go-ahead). The architecture artifacts (`T-027`) are done.
 
 **Why**: `portfolio-financial-analysis` (PFA) tracked this as its own Work
 item 6 / `T-050`–`T-052`, but it is data mining, not analysis, so it moved
