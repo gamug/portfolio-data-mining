@@ -55,6 +55,15 @@ Everything else in `SPEC.md` §13 stays exactly as §14 disposed of it —
 
 ## Work item 1 — Add a CI workflow (`.github/workflows/ci.yml`)
 
+**Status: built (2026-09-19, PR #32).** Verified end to end: a clean
+checkout with no `.env` passes all four gates (216 tests); the PR's own run
+went green; a deliberate `ruff` violation on a throwaway draft PR (#33,
+closed unmerged) turned the check red at "Ruff lint" with the later steps
+skipped. One deliberate deviation from the wording below: the install step is
+`uv sync --locked --group dev`, so a stale `uv.lock` fails the run instead of
+being silently re-resolved. The README badge (`T-006`) waits on a green run on
+`master`; Work item 2 is the remaining maintainer step.
+
 **Why**: `SPEC.md` NR-007 / §13 item 5 — this repo has no
 `.github/workflows/` at all today. The four-step gate (`ruff check` →
 `ruff format --check` → `mypy` → `pytest`) that the constitution's
@@ -91,7 +100,7 @@ gate elsewhere in the Portfolio Thesis).
 - `.github/workflows/ci.yml` exists and triggers on both `push` to `master`
   and `pull_request`.
 - A normal PR run completes all four steps successfully on
-  `ubuntu-latest`, matching a local `uv run pytest` result (213 tests, per
+  `ubuntu-latest`, matching a local `uv run pytest` result (216 tests, per
   `SPEC.md` §10, unless a concurrent change altered that count).
 - A deliberately-introduced failure (a `ruff`-flagged lint issue, or a
   failing test on a throwaway branch) causes the workflow to fail — proving
