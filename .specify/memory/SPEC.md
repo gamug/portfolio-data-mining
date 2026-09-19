@@ -77,8 +77,7 @@ or time into portfolio-level signals (`financial-analysis` and
   news/market data/sentiment/profile/peers/basic financials (`pricing`), and
   SEC EDGAR filings/parsed financials (`sec_edgar`).
 - Per-ticker corporate actions (dividends and splits, exact ex-dates) sourced
-  from `yfinance`, served by `pricing` alongside OHLCV (FR-012; planned —
-  `PLAN.md` Work item 3).
+  from `yfinance`, served by `pricing` alongside OHLCV (FR-012).
 - The tracked S&P 500 universe itself: a live, in-process-cached Wikipedia
   scrape by default, plus an opt-in point-in-time (`as_of`) reconstruction
   from Wikipedia's historical-components change log.
@@ -119,7 +118,7 @@ or time into portfolio-level signals (`financial-analysis` and
 | **FR-009** | Dynamic SQL sized to a caller-supplied list (an `IN (...)` clause) or picking a caller-supplied sort column (an `ORDER BY` allowlist) goes through `portfolio_common.db.in_clause()`/`Allowlist`, not hand-rolled string interpolation. | `grep` for an f-string/`.format()`-built `IN (` or `ORDER BY` in `news_collector/storage/queue.py` or `extractor/db.py` returns none outside these helpers. |
 | **FR-010** | `apps/gateway.py` mounts all four services under one process (`/collector`, `/crawler`, `/pricing`, `/edgar`) for local convenience, without merging their OpenAPI schemas. | `GET /collector/docs`, `/crawler/docs`, `/pricing/docs`, `/edgar/docs` each serve that service's own schema; there is no single merged `/docs`. Production/independent-scaling deploys run the four standalone `apps/*_api.py` instead. |
 | **FR-011** | `cli/*.py` mirrors each service's API routes 1:1 as argparse subcommands and prints JSON to stdout. | Every non-infrastructure route (excluding `/health`, `/docs`) in `pricing_api.py`/`sec_edgar_api.py` has a corresponding `cli/pricing_cli.py`/`cli/sec_edgar_cli.py` subcommand; `news_collector_cli.py`/`news_crawler_cli.py` wrap each module's pre-existing CLI rather than reimplementing it. |
-| **FR-012** | *(Planned — `PLAN.md` Work item 3; not yet implemented.)* `pricing` exposes per-ticker corporate actions — dividends (cash/share) and splits (ratio) with exact ex-dates — over `GET /pricing/{ticker}/actions?start_date=&end_date=` and a matching `actions` CLI subcommand, sourced from `yfinance`, writing nothing to any database. An empty range is HTTP 200 with empty lists, never a 404; an upstream failure is empty lists plus a `warning`, never a raised exception (FR-003's contract). Moved here from `portfolio-financial-analysis`, whose `quant` package probes exactly this route. | `GET /pricing/XOM/actions` over a range containing known ex-dates returns a non-empty `dividends` list with `source: "yfinance"`; the `1900-01-01`–`1900-01-02` probe range returns 200 with empty lists; `start_date > end_date` returns 400; mocked-`yf.Ticker` tests in `tests/pricing/test_fetcher.py` cover in-range/out-of-range/empty/failure cases with no network (NR-004). |
+| **FR-012** | `pricing` exposes per-ticker corporate actions — dividends (cash/share) and splits (ratio) with exact ex-dates — over `GET /pricing/{ticker}/actions?start_date=&end_date=` and a matching `actions` CLI subcommand, sourced from `yfinance`, writing nothing to any database. An empty range is HTTP 200 with empty lists, never a 404; an upstream failure is empty lists plus a `warning`, never a raised exception (FR-003's contract). Moved here from `portfolio-financial-analysis`, whose `quant` package probes exactly this route. | `GET /pricing/XOM/actions` over a range containing known ex-dates returns a non-empty `dividends` list with `source: "yfinance"`; the `1900-01-01`–`1900-01-02` probe range returns 200 with empty lists; `start_date > end_date` returns 400; mocked-`yf.Ticker` tests in `tests/pricing/test_fetcher.py` cover in-range/out-of-range/empty/failure cases with no network (NR-004). |
 
 ### 2.4 Non-functional requirements
 
@@ -128,7 +127,7 @@ or time into portfolio-level signals (`financial-analysis` and
 | **NR-001** | None of the four services has authentication or authorization — every endpoint is open to anyone who can reach the port. | Acceptable today only because every service is expected to run on a private/trusted network with a single operator, not because it's been assessed as safe for broader exposure (§14). |
 | **NR-002** | SQLite is the only implemented database engine; a second backend is a `portfolio-common` `Dialect` implementation plus a re-pin here, never a repo-local shim. | `grep -rn "import sqlite3" src apps cli` returns nothing outside test fixtures (verified after `portfolio-common` v1.2.1's engine-agnostic seam, PR #26); a prior repo-local shim attempt (`db_backend.py`, PR #12, Turso/libSQL) was closed unmerged rather than adopted, precisely because the sanctioned path is the `Dialect` seam. |
 | **NR-003** | The shared connection applies `PRAGMA foreign_keys`/`busy_timeout=30000` per-connection (WAL persists at the file level) — a connection finding `urls.db` locked by another writer retries internally rather than immediately raising. | A concurrent `extractor` read and `news_collector` write against the same `urls.db` does not surface `sqlite3.OperationalError: database is locked` under normal single-writer contention. |
-| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `hypothesis` property tests for queueing logic) — 213 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
+| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `hypothesis` property tests for queueing logic) — 230 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
 | **NR-005** | One pre-existing platform-specific test flake is documented, not silently tolerated or hidden. | `tests/news_collector::test_enqueue_inserts_at_most_len_input` is a known Windows-only flake (a `hypothesis` property test racing temp-SQLite-file cleanup against an open connection) — recorded in `CLAUDE.md` and `docs/modules/news-collector.md` as not a logic bug, so it isn't mistaken for a regression. |
 | **NR-006** | A database-engine change away from SQLite must not require touching this repo's stage/query logic. | `grep -rn "import sqlite3" src apps cli` returns nothing (NR-002); every engine-specific SQL fragment goes through `conn.dialect`/`portfolio_common.db` helpers rather than a raw driver call. |
 | **NR-007** | There is no CI workflow configured for this repo — lint/format/type/test gating before merge is a manual, convention-based step (constitution: Executable cmds #1), not an automated one. | `.github/workflows/` does not exist in this repo as of this writing; see `PLAN.md` for whether adding one is the actionable next step. |
@@ -378,8 +377,9 @@ production system this project isn't. What exists instead:
   len_input` (Windows-only, `tests/news_collector`) is a known race in a
   `hypothesis` property test's temp-file cleanup, not a logic bug (NR-005) —
   don't "fix" it by weakening the property it tests.
-- **213 tests total** as of `portfolio-common` v1.2.1 adoption (PR #26),
-  across the five `tests/<package>` directories above.
+- **230 tests total** as of the corporate-actions endpoint (was 213 at
+  `portfolio-common` v1.2.1 adoption, PR #26), across the five
+  `tests/<package>` directories above.
 
 ## 11. Deployment Procedures
 
@@ -408,7 +408,7 @@ There is no formal CD pipeline for this repo; what exists:
 
 - **External services (required)**: Finnhub API (`pricing`, needs
   `$FINNHUB_API_KEY`); Yahoo Finance via `yfinance` (`pricing`'s OHLCV
-  fallback and, once FR-012 lands, its corporate-actions source — no key,
+  fallback and its corporate-actions source (FR-012) — no key,
   unofficial, best-effort, §13 item 9); SEC EDGAR via `edgartools` (`sec_edgar`, needs a real
   `$NAME`/`$EMAIL` identity per SEC's programmatic-access policy); Wikipedia
   (live S&P 500 list scrape, `data_mining.portfolio`, and the "Historical
@@ -555,4 +555,4 @@ than silently diverging (constitution: Governance).
 | Author | Dovaribi Carupia Yagari | | Universidad Pontificia Bolivariana (UPB) |
 | Reviewer | Camilo Andrés Soto Montoya | | Universidad Pontificia Bolivariana (UPB) |
 
-**Version**: 1.1.0 | **Last Amended**: 2026-09-19
+**Version**: 1.1.1 | **Last Amended**: 2026-09-19
