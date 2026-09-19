@@ -8,7 +8,7 @@ Wraps the Finnhub API (with a `yfinance` fallback for pricing) — no SEC/EDGAR 
 
 | File | Class | Does |
 |---|---|---|
-| `src/pricing/fetcher.py` | `StockPriceFetcher` | Daily OHLCV candles. Tries Finnhub's `stock_candles` first; free-tier Finnhub no longer returns historical candles, so this transparently falls back to `yfinance`. |
+| `src/pricing/fetcher.py` | `StockPriceFetcher` | Daily OHLCV candles. Tries Finnhub's `stock_candles` first; free-tier Finnhub no longer returns historical candles, so this transparently falls back to `yfinance`. Also `get_corporate_actions` — dividends and splits, `yfinance` only (see below). |
 | `src/pricing/market_data.py` | `MarketDataClient` | Company profile, peers, basic financials. |
 | `src/pricing/news.py` | `FinnhubNewsFetcher` | Company news, general market news, news-sentiment score. Free tier only serves ~12 months of company news. |
 
@@ -56,6 +56,7 @@ existed solely to call `init_repository()`.
 
 # CLI (direct — no server), one subcommand per endpoint, prints JSON
 .venv\Scripts\python.exe cli\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
+.venv\Scripts\python.exe cli\pricing_cli.py actions XOM --start 2022-01-01 --end 2026-08-27
 .venv\Scripts\python.exe cli\pricing_cli.py resolve TWTR --as-of 2022-10-01
 .venv\Scripts\python.exe cli\pricing_cli.py universe-backfill   # one-time, run this first
 .venv\Scripts\python.exe cli\pricing_cli.py universe-snapshot   # run occasionally by hand
@@ -74,6 +75,35 @@ the exact same `StockPriceFetcher`/`FinnhubNewsFetcher`/`MarketDataClient`/
 
 `GET /universe` and `/universe/resolve/{query}` both take an optional `?as_of=YYYY-MM-DD`
 (point-in-time membership; 400 if it predates the backfilled coverage or no backfill has
-been run yet). `/pricing/{ticker}`,
+been run yet). `/pricing/{ticker}`, `/pricing/{ticker}/actions`,
 `/news/company/{ticker}`, `/news/market`, `/news/sentiment/{ticker}`,
 `/market/profile/{ticker}`, `/market/peers/{ticker}`, `/market/basic_financials/{ticker}`.
+
+## Corporate actions (`/pricing/{ticker}/actions`)
+
+`GET /pricing/{ticker}/actions?start_date=&end_date=` (CLI: `pricing_cli.py actions`)
+returns the dividends and splits whose ex-date falls in the range, both bounds inclusive:
+
+```json
+{"ticker": "XOM", "start_date": "2024-01-01", "end_date": "2024-12-31", "source": "yfinance",
+ "dividends": [{"date": "2024-02-13", "value": 0.95}],
+ "splits": [], "warning": null}
+```
+
+`dividends[].value` is cash per share; `splits[].value` is a ratio (`10.0` for NVIDIA's
+10-for-1 on 2024-06-10). Dates are the exchange-local calendar day.
+
+- **Source is `yfinance` only**, unlike the candle endpoint's Finnhub-first order: the point
+  is exact ex-dates and Finnhub's free tier isn't known to serve them. `yfinance` is an
+  unofficial, best-effort source with no SLA — a Yahoo-side change can break or empty this
+  endpoint (`SPEC.md` §13 item 9).
+- **An empty range is HTTP 200 with empty lists, never a 404.** A downstream caller
+  (`portfolio-financial-analysis`'s `QuantPricingClient.probe()`) sends a `1900-01-01`
+  range to learn whether the route exists; a 404 would read as "no".
+- **A `yfinance` failure is also 200 with empty lists**, plus a non-null `warning`. Check
+  `warning` before reading empty lists as "no actions in range". `yfinance` can't tell "no
+  actions" from "unknown ticker", so a bad ticker is empty lists with `warning: null`.
+- `start_date > end_date` is a 400; a malformed date is FastAPI's 422.
+- Not the `{"success": ..., "data": ...}` shape the Finnhub-backed methods use: like
+  `/pricing/{ticker}`, it returns its fields at the top level with a `warning` instead, which
+  is the shape the consuming client already parses.
