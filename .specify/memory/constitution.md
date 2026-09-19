@@ -341,10 +341,12 @@ uv run pre-commit run --all-files           # all of the above hooks, plus hygie
    plain, clickable link (`https://github.com/<owner>/<repo>/pull/<n>`),
    not "a PR was opened" or a bare `#n`. When the work spans repos (a
    change here plus a companion change in a sibling repo), list one link
-   per PR and name the repo each belongs to. If no PR was opened (the user
-   asked not to, or the push was blocked), say so explicitly and why,
-   rather than leaving the reader to infer it. State the PR's CI status
-   only if it is known — never claim a green run that hasn't finished.
+   per PR and name the repo each belongs to. This is a reporting rule, not
+   an exception to item 3: work still goes through a branch and a PR by
+   default. Where no PR was opened anyway (the user asked not to, or the
+   push was blocked), say so explicitly and why, rather than leaving the
+   reader to infer it. State the PR's CI status only if it is known —
+   never claim a green run that hasn't finished.
 
 ## Governance
 
