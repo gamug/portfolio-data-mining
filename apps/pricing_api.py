@@ -7,7 +7,8 @@ docs/modules/pricing.md.
 Endpoints, grouped by tag:
 - Universe:     the tracked S&P 500 ticker/company universe.
 - Pricing:      daily stock price history (Finnhub, falls back to yfinance
-                on the free tier's lack of historical candles).
+                on the free tier's lack of historical candles), and corporate
+                actions -- dividends and splits (yfinance).
 - News:         Finnhub company news, general market news, news sentiment.
 - Market Data:  Finnhub company profile, peers, basic financials.
 
@@ -48,7 +49,10 @@ app = FastAPI(
         {"name": "Universe", "description": "Tracked S&P 500 ticker/company universe"},
         {
             "name": "Pricing",
-            "description": "Daily stock price history (Finnhub, falls back to yfinance)",
+            "description": (
+                "Daily stock price history (Finnhub, falls back to yfinance) "
+                "and corporate actions (dividends, splits; yfinance)"
+            ),
         },
         {
             "name": "News",
@@ -141,6 +145,30 @@ def daily_pricing(
         raise HTTPException(status_code=400, detail="start_date must be <= end_date")
 
     result = price_fetcher.get_daily_candles(
+        ticker.upper(), start_date.isoformat(), end_date.isoformat()
+    )
+    return JSONResponse(content=jsonable_encoder(result))
+
+
+@app.get("/pricing/{ticker}/actions", tags=["Pricing"])
+def corporate_actions(
+    ticker: str,
+    start_date: date = Query(..., description="Start date, YYYY-MM-DD (inclusive)"),
+    end_date: date = Query(..., description="End date, YYYY-MM-DD (inclusive)"),
+) -> JSONResponse:
+    """
+    Dividends (cash per share) and splits (ratio, e.g. 4.0 for a 4:1 split) with
+    ex-dates in a date range, from yfinance.
+
+    A range with no actions is HTTP 200 with empty lists, never a 404 -- callers
+    probe this route to learn whether it exists, and a 404 would read as "no".
+    A yfinance failure is also 200 with empty lists and a non-null "warning", so
+    check "warning" before treating empty lists as "no actions in range".
+    """
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+
+    result = price_fetcher.get_corporate_actions(
         ticker.upper(), start_date.isoformat(), end_date.isoformat()
     )
     return JSONResponse(content=jsonable_encoder(result))

@@ -15,6 +15,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-backfill
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-snapshot
     .venv\\Scripts\\python.exe cli\\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py actions XOM --start 2022-01-01 --end 2026-08-27
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-company AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-market --category general
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-sentiment AAPL
@@ -84,6 +85,12 @@ def cmd_pricing(
     args: argparse.Namespace, price_fetcher: StockPriceFetcher, **_clients: Any
 ) -> None:
     print_json(price_fetcher.get_daily_candles(args.ticker.upper(), args.start, args.end))
+
+
+def cmd_actions(
+    args: argparse.Namespace, price_fetcher: StockPriceFetcher, **_clients: Any
+) -> None:
+    print_json(price_fetcher.get_corporate_actions(args.ticker.upper(), args.start, args.end))
 
 
 def cmd_news_company(
@@ -181,6 +188,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start", required=True, help="YYYY-MM-DD (inclusive)")
     p.add_argument("--end", required=True, help="YYYY-MM-DD (inclusive)")
     p.set_defaults(func=cmd_pricing)
+
+    p = sub.add_parser(
+        "actions", help="Corporate actions: dividends and splits with ex-dates (yfinance)"
+    )
+    p.add_argument("ticker")
+    p.add_argument("--start", required=True, help="YYYY-MM-DD (inclusive)")
+    p.add_argument("--end", required=True, help="YYYY-MM-DD (inclusive)")
+    p.set_defaults(func=cmd_actions)
 
     p = sub.add_parser("news-company", help="Company news over a date range")
     p.add_argument("ticker")

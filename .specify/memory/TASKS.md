@@ -55,37 +55,52 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Work item 3 — yfinance corporate-actions endpoint (code, moved from `portfolio-financial-analysis`)
 
-- [ ] **T-020** Add `StockPriceFetcher.get_corporate_actions(ticker,
+- [x] **T-020** Add `StockPriceFetcher.get_corporate_actions(ticker,
       start_date, end_date)` to `src/pricing/fetcher.py`: `yf.Ticker(t).
-      dividends`/`.splits`, filtered to the inclusive range by the series'
-      own index date (tz-aware index normalized to `YYYY-MM-DD`), returning
-      `{ticker, start_date, end_date, source: "yfinance", dividends:
-      [{date, value}], splits: [{date, value}], warning}`; never raises — a
-      yfinance failure yields empty lists plus `warning`. Tests in
-      `tests/pricing/test_fetcher.py` mocking `yf.Ticker`: in-range
-      dividends + splits, out-of-range rows excluded, empty range, tz-aware
-      index, yfinance raising, the `1900-01-01`–`1900-01-02` probe range. →
-      `PLAN.md` Work item 3, steps 1–2.
-- [ ] **T-021** Add `GET /pricing/{ticker}/actions?start_date=&end_date=` to
+      dividends`/`.splits`, filtered to the inclusive range by the series' own
+      index date (tz-aware index normalized to `YYYY-MM-DD`), returning
+      `{ticker, start_date, end_date, source: "yfinance", dividends: [{date,
+      value}], splits: [{date, value}], warning}`; never raises — a yfinance
+      failure yields empty lists plus `warning`. Tests in
+      `tests/pricing/test_fetcher.py` mocking `yf.Ticker`: in-range dividends
+      + splits, out-of-range rows excluded, empty range, tz-aware index,
+      yfinance raising, the `1900-01-01`–`1900-01-02` probe range. → `PLAN.md`
+      Work item 3, steps 1–2. **Done 2026-09-19** (PR #36): 8 tests, hermetic;
+      the timezone test was mutation-checked (a UTC conversion makes it fail).
+- [x] **T-021** Add `GET /pricing/{ticker}/actions?start_date=&end_date=` to
       `apps/pricing_api.py` (tag `Pricing`, `start_date > end_date` → 400,
-      empty range → 200 with empty lists, never 404). → step 3.
-- [ ] **T-022** Add an `actions` subcommand to `cli/pricing_cli.py`
-      mirroring the route. → step 4.
-- [ ] **T-023** Update `docs/modules/pricing.md`, and the endpoint/subcommand
+      empty range → 200 with empty lists, never 404). → step 3. **Done
+      2026-09-19** (PR #36): 6 API tests (`tests/pricing/test_pricing_api.py`)
+      cover 200 on empty, 400 on a reversed range, 422 on a malformed date,
+      and the candles route unaffected.
+- [x] **T-022** Add an `actions` subcommand to `cli/pricing_cli.py` mirroring
+      the route. → step 4. **Done 2026-09-19** (PR #36).
+- [x] **T-023** Update `docs/modules/pricing.md`, and the endpoint/subcommand
       lists in the `apps/pricing_api.py` and `cli/pricing_cli.py` docstrings
-      and `README.md` wherever they enumerate pricing routes. → step 5.
-- [ ] **T-024** Finalize the specs once the code exists: `FR-012`,
-      `SPEC.md` §2.1 and §12 were written ahead of the code marked
-      "planned" — drop that marker, and update the §10/NR-004 test count
-      (213 today) and the constitution's "Executable cmds" test-count line.
-      Separately, as its own reviewed change per the constitution's
-      Governance section, amend Technological stock #2 and AI behavior #1
-      so `yfinance` is listed under `pricing` (MINOR bump). → `PLAN.md`
-      Work item 3, "Constitution notes".
-- [ ] **T-025** Verify live: run `uv run apps/pricing_api.py`, `curl` the XOM
+      and `README.md` wherever they enumerate pricing routes. → step 5. **Done
+      2026-09-19** (PR #36): `docs/modules/pricing.md` only — `README.md`
+      gives one example per service and does not enumerate pricing routes, so
+      it needed no change.
+- [ ] **T-024** Finalize the specs once the code exists: `FR-012`, `SPEC.md`
+      §2.1 and §12 were written ahead of the code marked "planned" — drop that
+      marker, and update the §10/NR-004 test count (213 today) and the
+      constitution's "Executable cmds" test-count line. Separately, as its own
+      reviewed change per the constitution's Governance section, amend
+      Technological stock #2 and AI behavior #1 so `yfinance` is listed under
+      `pricing` (MINOR bump). → `PLAN.md` Work item 3, "Constitution notes".
+      **Partly done 2026-09-19** (PR #36): `SPEC.md` FR-012 ("planned" marker
+      dropped), §2.1, §12 and the test count (→ 230). **Still open:** the
+      constitution — its `yfinance` wording (Tech stock #2, AI behavior #1)
+      and its "Executable cmds" test-count line — waits on an explicit
+      go-ahead, since constitution changes are their own reviewed change.
+- [x] **T-025** Verify live: run `uv run apps/pricing_api.py`, `curl` the XOM
       range and the `1900-01-01` probe range from `PLAN.md` Work item 3's
       acceptance criteria, and run the `actions` CLI subcommand. State
       yfinance's unofficial/no-SLA posture in the PR. → acceptance criteria.
+      **Done 2026-09-19** (PR #36), live against yfinance: XOM's four 2024
+      quarterly dividends, NVDA's 10-for-1 split (`10.0`, 2024-06-10), the
+      1900 probe range over real HTTP → 200 with empty lists, reversed range →
+      400. The yfinance unofficial/no-SLA posture is stated in the PR.
 - [ ] **T-026** *(cross-repo)* After this lands and the pricing service is
       redeployed, hand off to `portfolio-financial-analysis`'s `T-052`
       (`QuantPricingClient.probe('XOM')` → `True`, then `quant
@@ -98,9 +113,10 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Nothing above is started. T-001–T-007 have no blockers and can begin
-immediately; T-010–T-014 are blocked on T-004 (a successful CI run must
-exist before it can be made a required check). T-020–T-027 (Work item 3) are
-independent of both — they touch only `pricing` code, tests and docs — so
-they can begin immediately, in either order relative to the CI work;
-`portfolio-financial-analysis`'s `T-052` is downstream of them.
+Work item 3 is built and open for review in PR #36: `T-020`–`T-023` and
+`T-025` are done (verified live against yfinance). `T-024` is half done — the
+spec is reconciled, the constitution wording is not (needs a go-ahead).
+`T-026` (redeploy, then `portfolio-financial-analysis`'s `T-052`) and `T-027`
+(architecture artifacts) wait on that PR merging. Work item 1 (CI workflow)
+was built and then reverted at the maintainer's request (#35), so T-001–T-007
+stay unchecked and T-010–T-014 are moot until CI is wanted again.

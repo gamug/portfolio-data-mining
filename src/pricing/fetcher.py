@@ -1,7 +1,8 @@
 """
 src/pricing/fetcher.py
 
-StockPriceFetcher: daily OHLCV candles for a ticker over a date range.
+StockPriceFetcher: daily OHLCV candles and corporate actions for a ticker over
+a date range.
 
 Tries Finnhub's `stock_candles` first. Finnhub's free tier no longer returns
 historical daily candle data for stocks (paid-plan-only since 2023) — a
@@ -13,10 +14,15 @@ Both sources are normalized to one common row shape so callers never need to
 know which source actually served a given request — the response always
 reports which one did, plus a human-readable "warning" when a fallback
 occurred, so the caller can surface that to the user if useful.
+
+Corporate actions (dividends and splits) come from `yfinance` only: the point is
+exact ex-dates, and Finnhub's free tier isn't known to serve them. See
+`get_corporate_actions`.
 """
 
 import time
 from datetime import datetime, timedelta
+from typing import Any
 
 import finnhub
 import yfinance as yf
@@ -81,9 +87,70 @@ class StockPriceFetcher:
             "warning": warning,
         }
 
+    def get_corporate_actions(self, ticker: str, start_date: str, end_date: str) -> dict:
+        """
+        Fetch dividends and splits for `ticker` with ex-dates between `start_date`
+        and `end_date` (inclusive, format YYYY-MM-DD), from `yfinance`.
+
+        Never raises — same convention as `get_daily_candles`. A yfinance failure
+        comes back as empty lists plus a "warning". A range with no actions is
+        also empty lists with `warning: None`; yfinance can't tell "no actions"
+        from "unknown ticker", so a caller who needs that distinction has to
+        check the ticker separately.
+
+        Returns
+        -------
+        dict:
+            {
+              "ticker": str, "start_date": str, "end_date": str,
+              "source": "yfinance",
+              "dividends": List[{"date": "YYYY-MM-DD", "value": float}],  # cash/share
+              "splits": List[{"date": "YYYY-MM-DD", "value": float}],     # ratio, 4:1 -> 4.0
+              "warning": Optional[str],
+            }
+        """
+        result: dict[str, Any] = {
+            "ticker": ticker,
+            "start_date": start_date,
+            "end_date": end_date,
+            "source": "yfinance",
+            "dividends": [],
+            "splits": [],
+            "warning": None,
+        }
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+            yf_ticker = yf.Ticker(ticker)
+            result["dividends"] = self._actions_in_range(yf_ticker.dividends, start, end)
+            result["splits"] = self._actions_in_range(yf_ticker.splits, start, end)
+        except Exception as e:
+            print(f"[ERROR] yfinance corporate actions({ticker}): {e}")
+            result["dividends"] = []
+            result["splits"] = []
+            result["warning"] = f"yfinance failed to return corporate actions: {e}"
+        return result
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _actions_in_range(series: Any, start: Any, end: Any) -> list[dict[str, object]]:
+        """Rows of a yfinance actions series (tz-aware DatetimeIndex -> value) whose
+        ex-date falls in [start, end], as {"date", "value"} dicts, oldest first.
+
+        Filtered on the index's own (exchange-local) calendar date rather than
+        through a yfinance range argument, so an out-of-history range such as
+        1900-01-01..1900-01-02 just yields an empty list.
+        """
+        if series is None or len(series) == 0:
+            return []
+        return [
+            {"date": idx.strftime("%Y-%m-%d"), "value": float(value)}
+            for idx, value in series.items()
+            if start <= idx.date() <= end
+        ]
+
     def _try_finnhub(self, ticker: str, start_date: str, end_date: str) -> list[DailyCandle] | None:
         try:
             _from = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
