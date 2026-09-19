@@ -76,6 +76,9 @@ or time into portfolio-level signals (`financial-analysis` and
 - Two independent, stateless per-ticker HTTP pulls: Finnhub OHLCV/company
   news/market data/sentiment/profile/peers/basic financials (`pricing`), and
   SEC EDGAR filings/parsed financials (`sec_edgar`).
+- Per-ticker corporate actions (dividends and splits, exact ex-dates) sourced
+  from `yfinance`, served by `pricing` alongside OHLCV (FR-012; planned —
+  `PLAN.md` Work item 3).
 - The tracked S&P 500 universe itself: a live, in-process-cached Wikipedia
   scrape by default, plus an opt-in point-in-time (`as_of`) reconstruction
   from Wikipedia's historical-components change log.
@@ -116,6 +119,7 @@ or time into portfolio-level signals (`financial-analysis` and
 | **FR-009** | Dynamic SQL sized to a caller-supplied list (an `IN (...)` clause) or picking a caller-supplied sort column (an `ORDER BY` allowlist) goes through `portfolio_common.db.in_clause()`/`Allowlist`, not hand-rolled string interpolation. | `grep` for an f-string/`.format()`-built `IN (` or `ORDER BY` in `news_collector/storage/queue.py` or `extractor/db.py` returns none outside these helpers. |
 | **FR-010** | `apps/gateway.py` mounts all four services under one process (`/collector`, `/crawler`, `/pricing`, `/edgar`) for local convenience, without merging their OpenAPI schemas. | `GET /collector/docs`, `/crawler/docs`, `/pricing/docs`, `/edgar/docs` each serve that service's own schema; there is no single merged `/docs`. Production/independent-scaling deploys run the four standalone `apps/*_api.py` instead. |
 | **FR-011** | `cli/*.py` mirrors each service's API routes 1:1 as argparse subcommands and prints JSON to stdout. | Every non-infrastructure route (excluding `/health`, `/docs`) in `pricing_api.py`/`sec_edgar_api.py` has a corresponding `cli/pricing_cli.py`/`cli/sec_edgar_cli.py` subcommand; `news_collector_cli.py`/`news_crawler_cli.py` wrap each module's pre-existing CLI rather than reimplementing it. |
+| **FR-012** | *(Planned — `PLAN.md` Work item 3; not yet implemented.)* `pricing` exposes per-ticker corporate actions — dividends (cash/share) and splits (ratio) with exact ex-dates — over `GET /pricing/{ticker}/actions?start_date=&end_date=` and a matching `actions` CLI subcommand, sourced from `yfinance`, writing nothing to any database. An empty range is HTTP 200 with empty lists, never a 404; an upstream failure is empty lists plus a `warning`, never a raised exception (FR-003's contract). Moved here from `portfolio-financial-analysis`, whose `quant` package probes exactly this route. | `GET /pricing/XOM/actions` over a range containing known ex-dates returns a non-empty `dividends` list with `source: "yfinance"`; the `1900-01-01`–`1900-01-02` probe range returns 200 with empty lists; `start_date > end_date` returns 400; mocked-`yf.Ticker` tests in `tests/pricing/test_fetcher.py` cover in-range/out-of-range/empty/failure cases with no network (NR-004). |
 
 ### 2.4 Non-functional requirements
 
@@ -403,7 +407,9 @@ There is no formal CD pipeline for this repo; what exists:
 ## 12. Dependencies & Integrations
 
 - **External services (required)**: Finnhub API (`pricing`, needs
-  `$FINNHUB_API_KEY`); SEC EDGAR via `edgartools` (`sec_edgar`, needs a real
+  `$FINNHUB_API_KEY`); Yahoo Finance via `yfinance` (`pricing`'s OHLCV
+  fallback and, once FR-012 lands, its corporate-actions source — no key,
+  unofficial, best-effort, §13 item 9); SEC EDGAR via `edgartools` (`sec_edgar`, needs a real
   `$NAME`/`$EMAIL` identity per SEC's programmatic-access policy); Wikipedia
   (live S&P 500 list scrape, `data_mining.portfolio`, and the "Historical
   components" change log, `data_mining.universe_history`); the seven news
@@ -456,6 +462,12 @@ treating a related FR/NR as done:
    forgotten** — if SQLite ever does become a real bottleneck, the sanctioned
    path is a new `portfolio-common` `Dialect`, not resurrecting that PR's
    repo-local shim (§9).
+9. **`yfinance` is an unofficial, best-effort source** (FR-012, and already
+   `pricing`'s OHLCV fallback) — it scrapes Yahoo Finance with no API key, no
+   SLA, and no stability guarantee, so a Yahoo-side change can silently break
+   or empty the corporate-actions endpoint. FR-012 surfaces that as a `warning`
+   with empty lists rather than a crash, but a consumer can't tell "no actions
+   in range" from "Yahoo failed" without reading the `warning`.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)
 
@@ -518,6 +530,7 @@ boundary of what this project is, not a gap someone forgot to close:
 | 6 — raw SQL bypassing `extractor.db`'s query pattern | Accepted; already tracked as a follow-up in `docs/portfolio-common-v1.2-engine-agnostic.md` | A DB-engine swap ever needed every SQL fragment centralized, including this one |
 | 7 — Windows-only `hypothesis` flake | Accepted as a known, non-blocking, platform-specific flake | It started failing on the actual CI/dev platform, not just Windows |
 | 8 — Turso/libSQL prototype (PR #12) closed unmerged | Accepted; deliberate choice of the `Dialect` seam over a bespoke shim | — |
+| 9 — `yfinance` is unofficial/best-effort | Accepted; free, keyless, and already a dependency — a paid vendor feed is a separate cost/access decision, not this project's scope | A consumer needed guaranteed, auditable corporate-actions data rather than best-effort exact ex-dates |
 
 Item 5 is the one item on this list worth doing regardless of scope — it's
 CI-plumbing, not new infrastructure, and it's the same category of "cheap,
@@ -542,4 +555,4 @@ than silently diverging (constitution: Governance).
 | Author | Dovaribi Carupia Yagari | | Universidad Pontificia Bolivariana (UPB) |
 | Reviewer | Camilo Andrés Soto Montoya | | Universidad Pontificia Bolivariana (UPB) |
 
-**Version**: 1.0.0 | **Last Amended**: 2026-09-12
+**Version**: 1.1.0 | **Last Amended**: 2026-09-19

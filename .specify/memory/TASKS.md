@@ -53,8 +53,54 @@ renumber; mark a cancelled/superseded task in place instead.
       (workflow exists *and* is enforced), distinct from T-007's "exists"
       milestone. → `PLAN.md` Work item 2, second acceptance criterion.
 
+## Work item 3 — yfinance corporate-actions endpoint (code, moved from `portfolio-financial-analysis`)
+
+- [ ] **T-020** Add `StockPriceFetcher.get_corporate_actions(ticker,
+      start_date, end_date)` to `src/pricing/fetcher.py`: `yf.Ticker(t).
+      dividends`/`.splits`, filtered to the inclusive range by the series'
+      own index date (tz-aware index normalized to `YYYY-MM-DD`), returning
+      `{ticker, start_date, end_date, source: "yfinance", dividends:
+      [{date, value}], splits: [{date, value}], warning}`; never raises — a
+      yfinance failure yields empty lists plus `warning`. Tests in
+      `tests/pricing/test_fetcher.py` mocking `yf.Ticker`: in-range
+      dividends + splits, out-of-range rows excluded, empty range, tz-aware
+      index, yfinance raising, the `1900-01-01`–`1900-01-02` probe range. →
+      `PLAN.md` Work item 3, steps 1–2.
+- [ ] **T-021** Add `GET /pricing/{ticker}/actions?start_date=&end_date=` to
+      `apps/pricing_api.py` (tag `Pricing`, `start_date > end_date` → 400,
+      empty range → 200 with empty lists, never 404). → step 3.
+- [ ] **T-022** Add an `actions` subcommand to `cli/pricing_cli.py`
+      mirroring the route. → step 4.
+- [ ] **T-023** Update `docs/modules/pricing.md`, and the endpoint/subcommand
+      lists in the `apps/pricing_api.py` and `cli/pricing_cli.py` docstrings
+      and `README.md` wherever they enumerate pricing routes. → step 5.
+- [ ] **T-024** Finalize the specs once the code exists: `FR-012`,
+      `SPEC.md` §2.1 and §12 were written ahead of the code marked
+      "planned" — drop that marker, and update the §10/NR-004 test count
+      (213 today) and the constitution's "Executable cmds" test-count line.
+      Separately, as its own reviewed change per the constitution's
+      Governance section, amend Technological stock #2 and AI behavior #1
+      so `yfinance` is listed under `pricing` (MINOR bump). → `PLAN.md`
+      Work item 3, "Constitution notes".
+- [ ] **T-025** Verify live: run `uv run apps/pricing_api.py`, `curl` the XOM
+      range and the `1900-01-01` probe range from `PLAN.md` Work item 3's
+      acceptance criteria, and run the `actions` CLI subcommand. State
+      yfinance's unofficial/no-SLA posture in the PR. → acceptance criteria.
+- [ ] **T-026** *(cross-repo)* After this lands and the pricing service is
+      redeployed, hand off to `portfolio-financial-analysis`'s `T-052`
+      (`QuantPricingClient.probe('XOM')` → `True`, then `quant
+      backfill-actions` → `corpact-v1` rows). That check lives in PFA, not
+      here. → acceptance criteria, PFA bullet.
+- [ ] **T-027** Reconcile both architecture artifacts (Portfolio Thesis +
+      Portfolio Data Mining) per constitution AI behavior #11 — content
+      only, never the title. → `PLAN.md` Work item 3, last acceptance
+      bullet.
+
 ## Status
 
 Nothing above is started. T-001–T-007 have no blockers and can begin
 immediately; T-010–T-014 are blocked on T-004 (a successful CI run must
-exist before it can be made a required check).
+exist before it can be made a required check). T-020–T-027 (Work item 3) are
+independent of both — they touch only `pricing` code, tests and docs — so
+they can begin immediately, in either order relative to the CI work;
+`portfolio-financial-analysis`'s `T-052` is downstream of them.
