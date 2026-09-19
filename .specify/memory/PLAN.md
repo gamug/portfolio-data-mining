@@ -61,8 +61,9 @@ went green; a deliberate `ruff` violation on a throwaway draft PR (#33,
 closed unmerged) turned the check red at "Ruff lint" with the later steps
 skipped. One deliberate deviation from the wording below: the install step is
 `uv sync --locked --group dev`, so a stale `uv.lock` fails the run instead of
-being silently re-resolved. The README badge (`T-006`) waits on a green run on
-`master`; Work item 2 is the remaining maintainer step.
+being silently re-resolved. The README badge
+(`T-006`) followed once `master` had a green run; Work item 2 is the remaining
+maintainer step.
 
 **Why**: `SPEC.md` NR-007 / §13 item 5 — this repo has no
 `.github/workflows/` at all today. The four-step gate (`ruff check` →

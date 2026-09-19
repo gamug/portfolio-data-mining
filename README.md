@@ -1,5 +1,7 @@
 # portfolio-data-mining
 
+[![CI](https://github.com/gamug/portfolio-data-mining/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/gamug/portfolio-data-mining/actions/workflows/ci.yml)
+
 A single repository for a financial-news + SEC-filings data-mining pipeline, consolidated
 from four previously separate projects (`news-collector`, `news-crawler`, `news-nlp`,
 `finhub`) into one `src/`, one `.env`, one venv, and one dependency set — while keeping

@@ -39,9 +39,11 @@ renumber; mark a cancelled/superseded task in place instead.
       Committed with `--no-verify` on purpose — the repo's own
       pre-commit/pre-push hooks auto-fix or reject the violation before it
       reaches CI.
-- [ ] **T-006** Add a CI status badge to `README.md` once the workflow has
-      a green run on `master`. → `PLAN.md` Work item 1, approach step 4
-      (cosmetic, not a hard acceptance criterion).
+- [x] **T-006** Add a CI status badge to `README.md` once the workflow has a
+      green run on `master`. → `PLAN.md` Work item 1, approach step 4
+      (cosmetic, not a hard acceptance criterion). **Done 2026-09-19**: added
+      under the README title after the push-to-`master` run for PR #32's merge
+      (`96f7b0c`) went green.
 - [x] **T-007** Update `SPEC.md` NR-007 and §13 item 5 to note the workflow
       now exists (annotate in place, keep the item number). Also update the
       two architecture artifacts per constitution AI behavior #11 (Portfolio
@@ -114,12 +116,10 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Work item 1 is built (PR #32) except **T-006** (README badge — needs a green
-run on `master`, so it follows the merge as its own small PR). Work item 2
-(T-010–T-014) is maintainer-only and now unblocked once a run exists on
-`master`: require the check `CI / lint / type-check / test`. The two
-architecture artifacts named in T-007 already reflect the workflow and say
-plainly it is not yet a required check. T-020–T-027 (Work item 3)
-are independent of all of it — they touch only `pricing` code, tests and docs
-— and can begin in either order; `portfolio-financial-analysis`'s `T-052` is
-downstream of them.
+Work item 1 is done: the workflow is on `master` (PR #32), its push run is
+green, and the README badge is in (`T-006`). Work item 2 (T-010–T-014) is
+maintainer-only and is now unblocked, since a run exists on `master`: require
+the check `CI / lint / type-check / test` in branch protection. T-020–T-027
+(Work item 3) are independent of all of it — they touch only `pricing` code,
+tests and docs — and can begin now; `portfolio-financial-analysis`'s `T-052`
+is downstream of them.
