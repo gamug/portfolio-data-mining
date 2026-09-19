@@ -6,19 +6,26 @@ The implementation plan for the live backlog identified in
 "how, and in what order" for the work that contract still leaves open.
 
 **Scope of this plan is deliberately narrow.** `SPEC.md` §13 (Open
-Questions & Risks) lists eight items; §14 (Scope Boundaries) explicitly
-marks seven of them **accepted** — permanent characteristics of this
-project at its current, non-production scope. Only **one** item — §13
+Questions & Risks) lists nine items; §14 (Scope Boundaries) explicitly
+marks eight of them **accepted** — permanent characteristics of this
+project at its current, non-production scope (item 9, `yfinance` being an
+unofficial source, was added alongside Work item 3). Only **one** item — §13
 item 5, "no CI workflow file exists" — is flagged "should fix regardless of
-scope." This plan covers that item only. It is not a product roadmap, and
-it does not resurrect anything §14 already closed — see Non-goals below.
+scope." Work items 1–2 cover that item. Work item 3 is the one deliberate
+addition beyond it: a yfinance-backed corporate-actions endpoint moved here
+from `portfolio-financial-analysis`'s backlog (see Work item 3's "Why" —
+it is data acquisition, which is this repo's job, and a downstream repo is
+blocked on it). This is not a product roadmap, and it does not resurrect
+anything §14 already closed — see Non-goals below.
 
 ## Goal
 
 Close the one backlog item that is genuinely actionable without expanding
 this project's scope: turn the manual, convention-based lint/format/type/
 test sequence (constitution: Executable cmds #1) into an enforced CI
-workflow, and (a maintainer follow-up) make it a required check.
+workflow, and (a maintainer follow-up) make it a required check. Separately
+(Work item 3), serve the yfinance corporate-actions data a downstream repo
+already probes for.
 
 ## Non-goals
 
@@ -129,11 +136,93 @@ settings for `master`):
 - `SPEC.md` §13 item 5 annotated as fully resolved (workflow exists *and*
   is enforced), distinct from Work item 1's "workflow exists" milestone.
 
+## Work item 3 — yfinance corporate-actions endpoint (code, cross-repo origin)
+
+**Why**: `portfolio-financial-analysis` (PFA) tracked this as its own Work
+item 6 / `T-050`–`T-052`, but it is data mining, not analysis, so it moved
+here (PFA's copy of `T-050`/`T-051` is annotated "moved" in place). PFA's
+`src/quant/pricing_client.py::QuantPricingClient.actions` already probes
+`GET /pricing/{ticker}/actions` and `GET /pricing/{ticker}?actions=true`;
+neither exists on this repo's pricing service (`apps/pricing_api.py`'s
+`/pricing/{ticker}` returns OHLCV only), so `probe()` always returns `False`
+and PFA's `quant backfill-actions` falls back to `corpact-v0-approx`
+(fiscal-year dividends spread over four synthetic quarterly dates), leaving
+202 of 503 assets with zero recorded dividends. `yfinance` is already a
+dependency and already used by `src/pricing/fetcher.py`'s fallback path;
+`Ticker(t).dividends` / `.splits` return exact ex-dates and values with no
+API key.
+
+**Approach**:
+
+1. `StockPriceFetcher.get_corporate_actions(ticker, start_date, end_date)`
+   in `src/pricing/fetcher.py`, backed by `yf.Ticker(t).dividends` /
+   `.splits`. Filter to the inclusive date range **by the series' own index
+   date** (normalize the tz-aware index to `YYYY-MM-DD`), not through a
+   yfinance range argument — so PFA's probe range (`1900-01-01`–
+   `1900-01-02`) returns empty lists cleanly instead of erroring. Return the
+   same shape family as `get_daily_candles`: `{"ticker", "start_date",
+   "end_date", "source": "yfinance", "dividends": [{"date", "value"}],
+   "splits": [{"date", "value"}], "warning": str | None}`. `dividends[].value`
+   is cash per share; `splits[].value` is a ratio (`4.0` for a 4:1 split).
+2. Never raise (constitution AI behavior #3): a yfinance failure returns
+   empty lists plus a `warning`, mirroring `get_daily_candles`. An empty
+   range is **HTTP 200 with empty lists, never a 404** — a 404 reads to
+   PFA's probe as "endpoint doesn't exist" and it keeps falling back.
+3. `GET /pricing/{ticker}/actions?start_date=&end_date=` in
+   `apps/pricing_api.py` (tag `Pricing`), with `daily_pricing`'s existing
+   validation (`start_date > end_date` → 400). Dedicated route only; PFA's
+   client tries it before the `actions=true` form, so the query flag on the
+   existing route is not needed.
+4. `actions` subcommand in `cli/pricing_cli.py` (constitution Project
+   structure #3 — the CLI mirrors the routes 1:1).
+5. Docs: `docs/modules/pricing.md`, plus endpoint lists in the `apps/`/`cli/`
+   docstrings and `README.md` where they enumerate pricing routes.
+
+**Decision — yfinance-only, not Finnhub-first**: PFA's original plan said to
+reuse the candle endpoint's Finnhub-first/yfinance-fallback pattern. Finnhub's
+dividend/split endpoints have not been verified as free-tier here, and the
+purpose is exact ex-dates, so v1 is yfinance-only and `source` is always
+`"yfinance"`. Revisit only if a free Finnhub source is confirmed.
+
+**Constitution notes**: no new dependency and no new provider (`yfinance` is
+already in `pyproject.toml` and already used by `pricing`), so Technological
+stock #7 / AI behavior #10 are not triggered. Two constitution passages are
+stale against the code already, though — Technological stock #2 lists
+`yfinance` only under `news_collector`, and AI behavior #1 says `pricing`
+pulls from "exactly Finnhub and SEC EDGAR". Amending them is a separate,
+reviewed change per Governance (`T-024`), not folded silently into this work.
+Yahoo access through `yfinance` is unofficial with no SLA — state that
+rate-limit/ToS posture in the implementing PR (Technological stock #6).
+
+**Acceptance criteria**:
+
+- `curl "http://127.0.0.1:8004/pricing/XOM/actions?start_date=2022-01-01&end_date=2026-08-27"`
+  returns a non-empty `dividends` list with `source: "yfinance"`.
+- The same route with `start_date=1900-01-01&end_date=1900-01-02` returns
+  HTTP 200 with empty `dividends`/`splits` (not 404, not an error) — the
+  exact request PFA's `probe()` makes.
+- `start_date > end_date` returns 400; a yfinance failure returns 200 with
+  empty lists and a non-null `warning`.
+- `uv run cli/pricing_cli.py actions XOM --start ... --end ...` prints the
+  same JSON.
+- New tests in `tests/pricing/test_fetcher.py` mock `yf.Ticker` (no network,
+  NR-004): in-range dividends and splits, out-of-range rows excluded, empty
+  range, tz-aware index normalization, yfinance raising, and the 1900 probe
+  range.
+- From PFA, after this repo's pricing service is redeployed:
+  `QuantPricingClient(...).probe('XOM')` returns `True` — that check is
+  PFA's `T-052`, downstream of this item (`T-026`).
+- `SPEC.md` gains the corresponding requirement and reconciled test count;
+  the architecture artifacts are reconciled (`T-027`).
+
 ## Sequencing
 
 Work item 2 is blocked on Work item 1 (the check must exist and have run
-before it can be marked required) — otherwise there is no ordering
-constraint from the rest of the backlog, since every other `SPEC.md` §13
-item is accepted (Non-goals above) and not touched by this plan.
+before it can be marked required). Work item 3 is independent of Work items
+1–2 — it touches only `pricing` code, tests and docs, no CI or repo-settings
+surface — and can land in either order. PFA's `T-052` is downstream of it.
+Otherwise there is no ordering constraint from the rest of the backlog,
+since every other `SPEC.md` §13 item is accepted (Non-goals above) and not
+touched by this plan.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
