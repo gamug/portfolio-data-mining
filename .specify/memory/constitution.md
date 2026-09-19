@@ -265,7 +265,7 @@ uv run cli/pricing_cli.py universe-snapshot        # periodic, by hand: refresh 
 uv run cli/sec_edgar_cli.py filings AAPL --form 10-K
 uv run cli/<service>_cli.py --help          # full subcommand list per service
 
-uv run pytest                               # full suite (213 tests as of PR #26)
+uv run pytest                               # full suite (216 tests as of the CI workflow)
 uv run pytest tests/<package> -q            # one module's tests
 
 uv run ruff check .                         # lint (config: .code_quality/ruff.toml via root pointer)
@@ -275,12 +275,14 @@ uv run mypy --config-file=.code_quality/mypy.ini src apps cli   # types
 uv run pre-commit run --all-files           # all of the above hooks, plus hygiene checks
 ```
 
-1. **There is no CI workflow file in this repo yet** (no `.github/workflows/`
-   — unlike sibling repos such as `portfolio-nlp`). Until one exists, the
-   four checks above (ruff check, ruff format --check, mypy, pytest) are a
-   manual gate run locally before every PR, in that order — treat them as
-   mandatory by convention even though nothing enforces it automatically
-   yet (see `PLAN.md` for whether adding one is in scope).
+1. **CI runs the four checks above** (ruff check, ruff format --check,
+   mypy, pytest, in that order) via `.github/workflows/ci.yml` on every PR
+   and every push to `master`, as the single check `lint / type-check /
+   test`. Still run them locally before opening a PR — CI is the backstop,
+   not a substitute. The check is not yet a *required* status check for
+   merging (a branch-protection setting, `PLAN.md` Work item 2), so until a
+   maintainer enables that, a red run is stopped by convention, not by
+   GitHub.
 2. **Don't hardcode a different Python/uv invocation** (bare `python`,
    `pip install`, `pytest` without `uv run`) in scripts, docs, or CI-to-be —
    every command goes through `uv run` so it resolves the locked
@@ -322,13 +324,14 @@ uv run pre-commit run --all-files           # all of the above hooks, plus hygie
    placeholder values only; `detect-private-key` is a backstop, not the
    first line of defense — never paste a real key into a commit, issue, or
    PR description to "show" a config.
-7. **A red run doesn't merge — today by convention, not yet by CI.** There
-   is no `.github/workflows/` in this repo (Executable cmds #1), so the
-   "must be green" standard has no automated gate yet: a local `ruff check`
-   / `ruff format --check` / `mypy` / `pytest` failure means the PR doesn't
-   open or merge until it's fixed, never suppressed, exactly as it would if
-   a CI job enforced it. Once `PLAN.md`'s CI work item lands, this becomes
-   automatic instead of self-enforced.
+7. **A red run doesn't merge.** CI (`.github/workflows/ci.yml`, Executable
+   cmds #1) now reports the result on every PR: a `ruff check` / `ruff
+   format --check` / `mypy` / `pytest` failure — local or in CI — means the
+   PR doesn't merge until it's fixed, never suppressed. GitHub does not
+   *block* the merge button yet, because the check isn't required in branch
+   protection (`PLAN.md` Work item 2), so honoring a red run stays a
+   convention until a maintainer turns that on; don't merge over a red
+   check.
 8. **Leave the working tree checked out on the branch just pushed/PR'd.**
    After opening a PR, don't switch back to `master` (or anywhere else) —
    the local checkout stays on that branch so the user can review the
@@ -366,4 +369,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19
+**Version**: 1.4.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19

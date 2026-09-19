@@ -10,32 +10,48 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Work item 1 — Add a CI workflow (code, no blockers)
 
-- [ ] **T-001** Write `.github/workflows/ci.yml`: trigger on `push` to
-      `master` and `pull_request`, `runs-on: ubuntu-latest`. → `PLAN.md`
-      Work item 1, step 1.
-- [ ] **T-002** Add the job steps: checkout → `astral-sh/setup-uv` (pin
-      Python 3.12) → `uv sync --group dev` → `uv run ruff check .` →
-      `uv run ruff format --check .` → `uv run mypy --config-file=
-      .code_quality/mypy.ini src apps cli` → `uv run pytest -q`. → step 2.
-- [ ] **T-003** Verify locally first (so the first real CI run isn't a
-      surprise): run the same four commands from a clean `uv sync --group
-      dev` and confirm all pass. → `PLAN.md` Work item 1 acceptance,
-      second bullet.
-- [ ] **T-004** Push on a throwaway branch and confirm the workflow
-      triggers and completes successfully end to end. → same acceptance
-      bullet.
-- [ ] **T-005** Deliberately break one gate (e.g. a trivial `ruff`
-      violation) on that throwaway branch, confirm the workflow fails, then
-      revert the deliberate breakage before merging. → `PLAN.md` Work item
-      1, third acceptance bullet ("gate actually gates").
+- [x] **T-001** Write `.github/workflows/ci.yml`: trigger on `push` to
+      `master` and `pull_request`, `runs-on: ubuntu-latest`. → `PLAN.md` Work
+      item 1, step 1. **Done 2026-09-19** (PR #32).
+- [x] **T-002** Add the job steps: checkout → `astral-sh/setup-uv` (pin Python
+      3.12) → `uv sync --group dev` → `uv run ruff check .` → `uv run ruff
+      format --check .` → `uv run mypy --config-file= .code_quality/mypy.ini
+      src apps cli` → `uv run pytest -q`. → step 2. **Done 2026-09-19** (PR
+      #32) — with `uv sync --locked --group dev` rather than bare `uv sync`,
+      so a stale `uv.lock` fails the run.
+- [x] **T-003** Verify locally first (so the first real CI run isn't a
+      surprise): run the same four commands from a clean `uv sync --group dev`
+      and confirm all pass. → `PLAN.md` Work item 1 acceptance, second bullet.
+      **Done 2026-09-19**: from a clean `git archive` checkout with no
+      `.env`/`.venv` and API-key variables unset — ruff, format, mypy clean,
+      **216 passed** (the specs said 213; corrected).
+- [x] **T-004** Push on a throwaway branch and confirm the workflow triggers
+      and completes successfully end to end. → same acceptance bullet. **Done
+      2026-09-19**: PR #32's own run green (a bare branch push does not
+      trigger the workflow — only `pull_request` and push-to-`master`); all
+      nine steps ran, 216 passed.
+- [x] **T-005** Deliberately break one gate (e.g. a trivial `ruff` violation)
+      on that throwaway branch, confirm the workflow fails, then revert the
+      deliberate breakage before merging. → `PLAN.md` Work item 1, third
+      acceptance bullet ("gate actually gates"). **Done 2026-09-19**:
+      throwaway draft PR #33 (unused import, `F401`) failed at "Ruff lint"
+      with format/mypy/tests skipped; closed unmerged, branch deleted.
+      Committed with `--no-verify` on purpose — the repo's own
+      pre-commit/pre-push hooks auto-fix or reject the violation before it
+      reaches CI.
 - [ ] **T-006** Add a CI status badge to `README.md` once the workflow has
       a green run on `master`. → `PLAN.md` Work item 1, approach step 4
       (cosmetic, not a hard acceptance criterion).
-- [ ] **T-007** Update `SPEC.md` NR-007 and §13 item 5 to note the workflow
+- [x] **T-007** Update `SPEC.md` NR-007 and §13 item 5 to note the workflow
       now exists (annotate in place, keep the item number). Also update the
-      two architecture artifacts per constitution AI behavior #11
-      (Portfolio Thesis + Portfolio Data Mining) — reconcile, never rename.
-      → `PLAN.md` Work item 1, fourth acceptance bullet.
+      two architecture artifacts per constitution AI behavior #11 (Portfolio
+      Thesis + Portfolio Data Mining) — reconcile, never rename. → `PLAN.md`
+      Work item 1, fourth acceptance bullet. **Done 2026-09-19** (PR #32):
+      `SPEC.md` NR-007, §11 item 4, §13 item 5, §14 row 5, and the test count
+      (213 → 216); the constitution's Executable cmds #1 and Code & Git #7
+      (v1.4.1); `PLAN.md` Work item 1 status. The two architecture artifacts
+      are reconciled too (content only, titles untouched): Portfolio Data
+      Mining and Portfolio Thesis, both 2026-09-19.
 
 ## Work item 2 — Make the CI check required (ops, blocked on Work item 1)
 
@@ -77,7 +93,7 @@ renumber; mark a cancelled/superseded task in place instead.
 - [ ] **T-024** Finalize the specs once the code exists: `FR-012`,
       `SPEC.md` §2.1 and §12 were written ahead of the code marked
       "planned" — drop that marker, and update the §10/NR-004 test count
-      (213 today) and the constitution's "Executable cmds" test-count line.
+      (216 today) and the constitution's "Executable cmds" test-count line.
       Separately, as its own reviewed change per the constitution's
       Governance section, amend Technological stock #2 and AI behavior #1
       so `yfinance` is listed under `pricing` (MINOR bump). → `PLAN.md`
@@ -98,9 +114,12 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Nothing above is started. T-001–T-007 have no blockers and can begin
-immediately; T-010–T-014 are blocked on T-004 (a successful CI run must
-exist before it can be made a required check). T-020–T-027 (Work item 3) are
-independent of both — they touch only `pricing` code, tests and docs — so
-they can begin immediately, in either order relative to the CI work;
-`portfolio-financial-analysis`'s `T-052` is downstream of them.
+Work item 1 is built (PR #32) except **T-006** (README badge — needs a green
+run on `master`, so it follows the merge as its own small PR). Work item 2
+(T-010–T-014) is maintainer-only and now unblocked once a run exists on
+`master`: require the check `CI / lint / type-check / test`. The two
+architecture artifacts named in T-007 already reflect the workflow and say
+plainly it is not yet a required check. T-020–T-027 (Work item 3)
+are independent of all of it — they touch only `pricing` code, tests and docs
+— and can begin in either order; `portfolio-financial-analysis`'s `T-052` is
+downstream of them.
