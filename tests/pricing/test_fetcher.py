@@ -160,3 +160,143 @@ def test_get_daily_candles_missing_t_key_triggers_fallback(fetcher: StockPriceFe
         result = fetcher.get_daily_candles("XYZ", "2024-01-01", "2024-01-01")
 
     assert result["source"] == "yfinance"
+
+
+# ---------------------------------------------------------------------
+# get_corporate_actions -- dividends + splits from yfinance
+# ---------------------------------------------------------------------
+
+
+def _actions_series(rows: dict[str, float]) -> pd.Series:
+    """A yfinance-shaped actions series: exchange-tz-aware midnight index -> value."""
+    index = pd.DatetimeIndex(list(rows), tz="America/New_York")
+    return pd.Series(list(rows.values()), index=index, dtype=float)
+
+
+def _yf_ticker(dividends: pd.Series | None = None, splits: pd.Series | None = None) -> MagicMock:
+    ticker = MagicMock()
+    ticker.dividends = dividends if dividends is not None else _actions_series({})
+    ticker.splits = splits if splits is not None else _actions_series({})
+    return ticker
+
+
+def test_get_corporate_actions_returns_dividends_and_splits_in_range(
+    fetcher: StockPriceFetcher,
+) -> None:
+    ticker = _yf_ticker(
+        dividends=_actions_series({"2024-02-09": 0.24, "2024-05-10": 0.25}),
+        splits=_actions_series({"2024-06-10": 4.0}),
+    )
+
+    with patch("pricing.fetcher.yf.Ticker", return_value=ticker) as mock_ticker:
+        result = fetcher.get_corporate_actions("AAPL", "2024-01-01", "2024-12-31")
+
+    mock_ticker.assert_called_once_with("AAPL")
+    assert result == {
+        "ticker": "AAPL",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "source": "yfinance",
+        "dividends": [
+            {"date": "2024-02-09", "value": 0.24},
+            {"date": "2024-05-10", "value": 0.25},
+        ],
+        "splits": [{"date": "2024-06-10", "value": 4.0}],
+        "warning": None,
+    }
+
+
+def test_get_corporate_actions_excludes_rows_outside_the_range(
+    fetcher: StockPriceFetcher,
+) -> None:
+    ticker = _yf_ticker(
+        dividends=_actions_series(
+            {"2023-12-31": 0.10, "2024-01-01": 0.20, "2024-03-31": 0.30, "2024-04-01": 0.40}
+        ),
+    )
+
+    with patch("pricing.fetcher.yf.Ticker", return_value=ticker):
+        result = fetcher.get_corporate_actions("AAPL", "2024-01-01", "2024-03-31")
+
+    # Both bounds are inclusive; the day before and the day after are out.
+    assert [row["date"] for row in result["dividends"]] == ["2024-01-01", "2024-03-31"]
+
+
+def test_get_corporate_actions_empty_range_is_empty_lists_without_warning(
+    fetcher: StockPriceFetcher,
+) -> None:
+    with patch("pricing.fetcher.yf.Ticker", return_value=_yf_ticker()):
+        result = fetcher.get_corporate_actions("AAPL", "2024-01-01", "2024-01-31")
+
+    assert result["dividends"] == []
+    assert result["splits"] == []
+    assert result["warning"] is None
+
+
+def test_get_corporate_actions_probe_range_before_any_history_is_empty(
+    fetcher: StockPriceFetcher,
+) -> None:
+    # The exact range portfolio-financial-analysis's QuantPricingClient.probe() sends:
+    # it must read as "endpoint exists, nothing to report", not an error.
+    ticker = _yf_ticker(dividends=_actions_series({"2024-02-09": 0.24}))
+
+    with patch("pricing.fetcher.yf.Ticker", return_value=ticker):
+        result = fetcher.get_corporate_actions("XOM", "1900-01-01", "1900-01-02")
+
+    assert result["dividends"] == []
+    assert result["splits"] == []
+    assert result["warning"] is None
+
+
+def test_get_corporate_actions_uses_the_exchange_local_calendar_date(
+    fetcher: StockPriceFetcher,
+) -> None:
+    # 20:00 in New York on Feb 9 is already 01:00 UTC on Feb 10. The ex-date is the
+    # exchange-local day, so converting to UTC first would report the wrong date.
+    evening = pd.Series([0.24], index=pd.DatetimeIndex(["2024-02-09 20:00"], tz="America/New_York"))
+    ticker = _yf_ticker(dividends=evening)
+
+    with patch("pricing.fetcher.yf.Ticker", return_value=ticker):
+        result = fetcher.get_corporate_actions("AAPL", "2024-02-09", "2024-02-09")
+
+    assert result["dividends"] == [{"date": "2024-02-09", "value": 0.24}]
+
+
+def test_get_corporate_actions_yfinance_raises_returns_warning_not_exception(
+    fetcher: StockPriceFetcher,
+) -> None:
+    with patch("pricing.fetcher.yf.Ticker", side_effect=Exception("network down")):
+        result = fetcher.get_corporate_actions("AAPL", "2024-01-01", "2024-12-31")
+
+    assert result["source"] == "yfinance"
+    assert result["dividends"] == []
+    assert result["splits"] == []
+    assert "network down" in result["warning"]
+
+
+def test_get_corporate_actions_failure_on_second_series_drops_the_first(
+    fetcher: StockPriceFetcher,
+) -> None:
+    # If dividends were read but splits blew up, don't return a half answer that
+    # looks complete: both lists empty, warning set.
+    ticker = MagicMock()
+    ticker.dividends = _actions_series({"2024-02-09": 0.24})
+    type(ticker).splits = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad splits")))
+
+    with patch("pricing.fetcher.yf.Ticker", return_value=ticker):
+        result = fetcher.get_corporate_actions("AAPL", "2024-01-01", "2024-12-31")
+
+    assert result["dividends"] == []
+    assert result["splits"] == []
+    assert "bad splits" in result["warning"]
+
+
+def test_get_corporate_actions_malformed_date_returns_warning_not_exception(
+    fetcher: StockPriceFetcher,
+) -> None:
+    with patch("pricing.fetcher.yf.Ticker", return_value=_yf_ticker()) as mock_ticker:
+        result = fetcher.get_corporate_actions("AAPL", "not-a-date", "2024-12-31")
+
+    mock_ticker.assert_not_called()
+    assert result["dividends"] == []
+    assert result["warning"] is not None
