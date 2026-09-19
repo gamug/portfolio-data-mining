@@ -336,6 +336,17 @@ uv run pre-commit run --all-files           # all of the above hooks, plus hygie
    it themselves. Only move off it (per item 3, always to a fresh branch
    off up-to-date `master`) when starting genuinely new work, or when
    asked to.
+9. **Present the PR link when the work is finished.** The last thing a
+   finished task reports is the URL of every pull request it opened — a
+   plain, clickable link (`https://github.com/<owner>/<repo>/pull/<n>`),
+   not "a PR was opened" or a bare `#n`. When the work spans repos (a
+   change here plus a companion change in a sibling repo), list one link
+   per PR and name the repo each belongs to. This is a reporting rule, not
+   an exception to item 3: work still goes through a branch and a PR by
+   default. Where no PR was opened anyway (the user asked not to, or the
+   push was blocked), say so explicitly and why, rather than leaving the
+   reader to infer it. State the PR's CI status only if it is known —
+   never claim a green run that hasn't finished.
 
 ## Governance
 
@@ -355,4 +366,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.3.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19
