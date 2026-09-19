@@ -128,10 +128,10 @@ or time into portfolio-level signals (`financial-analysis` and
 | **NR-001** | None of the four services has authentication or authorization — every endpoint is open to anyone who can reach the port. | Acceptable today only because every service is expected to run on a private/trusted network with a single operator, not because it's been assessed as safe for broader exposure (§14). |
 | **NR-002** | SQLite is the only implemented database engine; a second backend is a `portfolio-common` `Dialect` implementation plus a re-pin here, never a repo-local shim. | `grep -rn "import sqlite3" src apps cli` returns nothing outside test fixtures (verified after `portfolio-common` v1.2.1's engine-agnostic seam, PR #26); a prior repo-local shim attempt (`db_backend.py`, PR #12, Turso/libSQL) was closed unmerged rather than adopted, precisely because the sanctioned path is the `Dialect` seam. |
 | **NR-003** | The shared connection applies `PRAGMA foreign_keys`/`busy_timeout=30000` per-connection (WAL persists at the file level) — a connection finding `urls.db` locked by another writer retries internally rather than immediately raising. | A concurrent `extractor` read and `news_collector` write against the same `urls.db` does not surface `sqlite3.OperationalError: database is locked` under normal single-writer contention. |
-| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `hypothesis` property tests for queueing logic) — 216 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
+| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `hypothesis` property tests for queueing logic) — 213 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
 | **NR-005** | One pre-existing platform-specific test flake is documented, not silently tolerated or hidden. | `tests/news_collector::test_enqueue_inserts_at_most_len_input` is a known Windows-only flake (a `hypothesis` property test racing temp-SQLite-file cleanup against an open connection) — recorded in `CLAUDE.md` and `docs/modules/news-collector.md` as not a logic bug, so it isn't mistaken for a regression. |
 | **NR-006** | A database-engine change away from SQLite must not require touching this repo's stage/query logic. | `grep -rn "import sqlite3" src apps cli` returns nothing (NR-002); every engine-specific SQL fragment goes through `conn.dialect`/`portfolio_common.db` helpers rather than a raw driver call. |
-| **NR-007** | A CI workflow (`.github/workflows/ci.yml`) runs the lint/format/type/test gate on every pull request and every push to `master`, in the constitution's order (`ruff check` → `ruff format --check` → `mypy` → `pytest`). It is **not yet a required status check** — making it one is a branch-protection setting outside this codebase (`PLAN.md` Work item 2). | The `lint / type-check / test` check appears on every PR and goes green on a clean tree; a deliberate `ruff` violation turned it red at the "Ruff lint" step with the later steps skipped (throwaway PR #33, closed unmerged, 2026-09-19). |
+| **NR-007** | There is no CI workflow configured for this repo — lint/format/type/test gating before merge is a manual, convention-based step (constitution: Executable cmds #1), not an automated one. | `.github/workflows/` does not exist in this repo as of this writing; see `PLAN.md` for whether adding one is the actionable next step. |
 
 ## 3. Technology Stack & Architecture Decisions
 
@@ -378,9 +378,8 @@ production system this project isn't. What exists instead:
   len_input` (Windows-only, `tests/news_collector`) is a known race in a
   `hypothesis` property test's temp-file cleanup, not a logic bug (NR-005) —
   don't "fix" it by weakening the property it tests.
-- **216 tests total** as of the CI workflow's introduction (was 213 at
-  `portfolio-common` v1.2.1 adoption, PR #26), across the five
-  `tests/<package>` directories above.
+- **213 tests total** as of `portfolio-common` v1.2.1 adoption (PR #26),
+  across the five `tests/<package>` directories above.
 
 ## 11. Deployment Procedures
 
@@ -399,12 +398,11 @@ There is no formal CD pipeline for this repo; what exists:
    four — and/or invoke the matching `cli/*_cli.py` on whatever cadence the
    batch stages (`discover`/`extract`) need (no scheduler is wired in — see
    §13).
-4. **The merge gate is automated but not yet enforced** (NR-007):
-   `.github/workflows/ci.yml` runs `uv run ruff check .` → `uv run ruff
-   format --check .` → `uv run mypy --config-file=.code_quality/mypy.ini src
-   apps cli` → `uv run pytest -q` on every PR and push to `master`. It only
-   *blocks* a merge once a maintainer marks the `lint / type-check / test`
-   check as required in branch protection — see `PLAN.md` Work item 2.
+4. **No automated merge gate exists today** (NR-007): `uv run ruff check .`
+   → `uv run ruff format --check .` → `uv run mypy --config-file=
+   .code_quality/mypy.ini src apps cli` → `uv run pytest` is a manual,
+   convention-based sequence run locally before opening a PR, not enforced
+   by a `.github/workflows/` CI job — see `PLAN.md`.
 
 ## 12. Dependencies & Integrations
 
@@ -448,12 +446,9 @@ treating a related FR/NR as done:
 4. **No authentication on any of the four services** (NR-001) — acceptable
    only under the private/trusted-network, single-operator assumption this
    project currently operates under.
-5. ~~**No CI workflow file exists** (NR-007) — the lint/format/type/test gate
+5. **No CI workflow file exists** (NR-007) — the lint/format/type/test gate
    is a human remembering to run it locally before a PR, not an automated
-   check blocking a bad merge.~~ **Workflow added (2026-09-19, PR #32)** —
-   `.github/workflows/ci.yml` now runs the gate on every PR. Still open: it
-   is not a *required* check yet, so a red run can still be merged by hand
-   (`PLAN.md` Work item 2, a maintainer setting).
+   check blocking a bad merge.
 6. **Raw SQL in `apps/news_crawler_api.py` bypasses `extractor.db`'s named-
    query pattern** — documented as a known follow-up in
    `docs/portfolio-common-v1.2-engine-agnostic.md`, not yet done; a
@@ -531,16 +526,16 @@ boundary of what this project is, not a gap someone forgot to close:
 | 2 — SQLite single-writer/single-file model | Accepted for current corpus scale; the `Dialect` seam exists if this changes | SQLite's write throughput or file-locking became a measured bottleneck |
 | 3 — universe backfill/snapshot are manual | Accepted; same reasoning as item 1 | Universe drift between snapshots started causing missed tickers in practice |
 | 4 — no authentication on any service | Accepted for a private/trusted-network, single-operator setup | These services were exposed beyond that trust boundary |
-| 5 — no CI workflow file | **Workflow added (PR #32, 2026-09-19)**; only the maintainer step of making it a required check remains (`PLAN.md` Work item 2) | — |
+| 5 — no CI workflow file | Should fix regardless of scope — cheap, and closes a real gap between "convention" and "enforced" | — |
 | 6 — raw SQL bypassing `extractor.db`'s query pattern | Accepted; already tracked as a follow-up in `docs/portfolio-common-v1.2-engine-agnostic.md` | A DB-engine swap ever needed every SQL fragment centralized, including this one |
 | 7 — Windows-only `hypothesis` flake | Accepted as a known, non-blocking, platform-specific flake | It started failing on the actual CI/dev platform, not just Windows |
 | 8 — Turso/libSQL prototype (PR #12) closed unmerged | Accepted; deliberate choice of the `Dialect` seam over a bespoke shim | — |
 | 9 — `yfinance` is unofficial/best-effort | Accepted; free, keyless, and already a dependency — a paid vendor feed is a separate cost/access decision, not this project's scope | A consumer needed guaranteed, auditable corporate-actions data rather than best-effort exact ex-dates |
 
-Item 5 was the one item on this list worth doing regardless of scope — it's
+Item 5 is the one item on this list worth doing regardless of scope — it's
 CI-plumbing, not new infrastructure, and it's the same category of "cheap,
 should fix regardless of scope" item `portfolio-nlp`'s own SPEC.md identifies
-for its own repo. The workflow now exists; enforcing it is the remaining half. Everything else here is a permanent characteristic of this
+for its own repo. Everything else here is a permanent characteristic of this
 project as scoped, not a queued task.
 
 ## 15. Sign-off
@@ -560,4 +555,4 @@ than silently diverging (constitution: Governance).
 | Author | Dovaribi Carupia Yagari | | Universidad Pontificia Bolivariana (UPB) |
 | Reviewer | Camilo Andrés Soto Montoya | | Universidad Pontificia Bolivariana (UPB) |
 
-**Version**: 1.1.1 | **Last Amended**: 2026-09-19
+**Version**: 1.1.0 | **Last Amended**: 2026-09-19
