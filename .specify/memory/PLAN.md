@@ -223,7 +223,7 @@ rate-limit/ToS posture in the implementing PR (Technological stock #6).
 
 ## Work item 4 — Fix `sec_edgar` `filing_by_year`/`financials` for multi-filing-per-year forms (code, priority)
 
-**Status: built and verified live (2026-09-21), not yet merged.**
+**Status: built, verified live, and merged (PR #39, 2026-09-21).**
 
 **Why**: a user-reported bug — requesting `10-Q` filings for a ticker/year
 returned only one filing when a company typically files three per fiscal
