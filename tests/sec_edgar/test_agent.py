@@ -197,17 +197,34 @@ def test_get_filing_by_year_returns_match(agent: EdgarAgent) -> None:
         result = agent.get_filing_by_year("AAPL", form="10-K", year=2023)
 
     assert result["success"] is True
-    assert result["data"]["filing_date"] == "2023-03-15"
+    assert len(result["data"]) == 1
+    assert result["data"][0]["filing_date"] == "2023-03-15"
 
 
-def test_get_filing_by_year_no_match_returns_error(agent: EdgarAgent) -> None:
+def test_get_filing_by_year_no_match_returns_empty_list(agent: EdgarAgent) -> None:
     mock_company = MagicMock()
     mock_company.get_filings.return_value = [make_filing(filing_date=date(2022, 3, 15))]
     with patch("sec_edgar.agent.Company", return_value=mock_company):
         result = agent.get_filing_by_year("AAPL", form="10-K", year=1800)
 
-    assert result["success"] is False
-    assert "1800" in result["error"]
+    assert result == {"success": True, "data": []}
+
+
+def test_get_filing_by_year_returns_all_matches_for_form_and_year(agent: EdgarAgent) -> None:
+    q3 = make_filing(form="10-Q", filing_date=date(2023, 11, 1), accession_number="acc-q3")
+    q2 = make_filing(form="10-Q", filing_date=date(2023, 8, 1), accession_number="acc-q2")
+    q1 = make_filing(form="10-Q", filing_date=date(2023, 5, 1), accession_number="acc-q1")
+    other_year = make_filing(
+        form="10-Q", filing_date=date(2022, 11, 1), accession_number="acc-other"
+    )
+    mock_company = MagicMock()
+    # edgartools returns filings most-recent-first.
+    mock_company.get_filings.return_value = [q3, q2, q1, other_year]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_filing_by_year("AAPL", form="10-Q", year=2023)
+
+    assert result["success"] is True
+    assert [f["accession_number"] for f in result["data"]] == ["acc-q3", "acc-q2", "acc-q1"]
 
 
 def test_get_filing_by_year_failure_returns_error_dict(agent: EdgarAgent) -> None:
@@ -304,6 +321,70 @@ def test_get_financials_success(agent: EdgarAgent) -> None:
     assert result["data"]["income_statement"] == [{"line": "Revenue", "amount": 1000.0}]
     assert result["data"]["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
     assert result["data"]["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
+
+
+def test_get_financials_multiple_matches_without_accession_number_returns_error(
+    agent: EdgarAgent,
+) -> None:
+    q1 = make_filing(form="10-Q", filing_date=date(2023, 5, 1), accession_number="acc-q1")
+    q2 = make_filing(form="10-Q", filing_date=date(2023, 8, 1), accession_number="acc-q2")
+    q3 = make_filing(form="10-Q", filing_date=date(2023, 11, 1), accession_number="acc-q3")
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [q3, q2, q1]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_financials("AAPL", form="10-Q", year=2023)
+
+    assert result["success"] is False
+    assert "3" in result["error"]
+    assert "acc-q1" in result["error"]
+    assert "acc-q2" in result["error"]
+    assert "acc-q3" in result["error"]
+    for f in (q1, q2, q3):
+        f.xbrl.assert_not_called()
+
+
+def test_get_financials_multiple_matches_with_accession_number_selects_correct_filing(
+    agent: EdgarAgent,
+) -> None:
+    q1 = make_filing(form="10-Q", filing_date=date(2023, 5, 1), accession_number="acc-q1")
+    q1.xbrl.return_value = _mock_xbrl_with_frames(
+        pd.DataFrame({"line": ["Revenue"], "amount": [111.0]}),
+        pd.DataFrame({"line": ["Assets"], "amount": [111.0]}),
+        pd.DataFrame({"line": ["Operating"], "amount": [111.0]}),
+    )
+    q2 = make_filing(form="10-Q", filing_date=date(2023, 8, 1), accession_number="acc-q2")
+    q2.xbrl.return_value = _mock_xbrl_with_frames(
+        pd.DataFrame({"line": ["Revenue"], "amount": [222.0]}),
+        pd.DataFrame({"line": ["Assets"], "amount": [222.0]}),
+        pd.DataFrame({"line": ["Operating"], "amount": [222.0]}),
+    )
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [q2, q1]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_financials("AAPL", form="10-Q", year=2023, accession_number="acc-q1")
+
+    assert result["success"] is True
+    assert result["data"]["income_statement"] == [{"line": "Revenue", "amount": 111.0}]
+    q1.xbrl.assert_called_once()
+    q2.xbrl.assert_not_called()
+
+
+def test_get_financials_accession_number_not_among_matches_returns_error(
+    agent: EdgarAgent,
+) -> None:
+    q1 = make_filing(form="10-Q", filing_date=date(2023, 5, 1), accession_number="acc-q1")
+    q2 = make_filing(form="10-Q", filing_date=date(2023, 8, 1), accession_number="acc-q2")
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [q2, q1]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_financials(
+            "AAPL", form="10-Q", year=2023, accession_number="does-not-exist"
+        )
+
+    assert result["success"] is False
+    assert "does-not-exist" in result["error"]
+    assert "acc-q1" in result["error"]
+    assert "acc-q2" in result["error"]
 
 
 def test_get_financials_no_filing_for_year_returns_error(agent: EdgarAgent) -> None:

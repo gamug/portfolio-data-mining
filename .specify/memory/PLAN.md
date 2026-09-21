@@ -221,14 +221,74 @@ rate-limit/ToS posture in the implementing PR (Technological stock #6).
 - `SPEC.md` gains the corresponding requirement and reconciled test count;
   the architecture artifacts are reconciled (`T-027`).
 
+## Work item 4 — Fix `sec_edgar` `filing_by_year`/`financials` for multi-filing-per-year forms (code, priority)
+
+**Status: built and verified live (2026-09-21), not yet merged.**
+
+**Why**: a user-reported bug — requesting `10-Q` filings for a ticker/year
+returned only one filing when a company typically files three per fiscal
+year. Root cause: `EdgarAgent.get_filing_by_year` and `EdgarAgent.
+get_financials` (`src/sec_edgar/agent.py`) both used `next((f for f in
+filings if f.filing_date.year == year), None)` to find "the" filing for a
+form+year — an implicit one-filing-per-year assumption that holds for
+`10-K` (so the bug was invisible there) but not `10-Q` (or any other form
+that recurs within a year, e.g. `8-K`). No existing test constructed
+multiple same-year filings for one form, which is why it shipped uncaught.
+
+**Approach**:
+
+1. Add failing tests reproducing the bug (multiple same-year filings for
+   one form) in `tests/sec_edgar/test_agent.py`.
+2. Fix `EdgarAgent.get_filing_by_year` to return *all* matching filings as
+   a list (most-recent-first, trusting `company.get_filings()`'s existing
+   ordering), not just the first. An empty match becomes `{"success":
+   True, "data": []}` (aligned with `get_filings`/`search_filings`'s
+   existing "empty list is not an error" convention), not an error —
+   breaking response-shape change for this one route, flagged in the PR.
+3. Fix `EdgarAgent.get_financials` to accept an optional `accession_number`
+   to disambiguate when form+year matches more than one filing (reusing
+   the existing unique-filing identifier rather than inventing a new
+   "quarter" concept): 0 matches → unchanged error; 1 match → unchanged
+   behavior; >1 matches with no `accession_number` → new error listing the
+   candidates; >1 matches with an `accession_number` → select it, or error
+   if it doesn't match one of the candidates.
+4. Update `apps/sec_edgar_api.py` (`edgar_financials` gains
+   `accession_number`) and `cli/sec_edgar_cli.py` (`financials` subcommand
+   gains `--accession-number`); `filing_by_year`/`filing-by-year` need no
+   signature change, only their response shape changes.
+5. Docs: `src/sec_edgar/examples.py` updated for the list shape and a new
+   10-Q/`accession_number` example; `docs/modules/sec-edgar.md` gets a note
+   under "Endpoints" describing both behavior changes;
+   `docs/modules/edgar_examples.txt` (captured live output) regenerated
+   from a real run when network access is available.
+
+**No constitution change** — no new dependency, provider, or stack-level
+rule; this is a within-service bug fix, so constitution AI behavior #10
+("ask before expanding scope") doesn't apply here.
+
+**Acceptance criteria**:
+
+- `uv run pytest tests/sec_edgar -q` passes, including new tests for the
+  multi-filing case (34 → 38 tests).
+- `GET /edgar/filing_by_year/{ticker}?form=10-Q&year=<Y>` for a
+  three-10-Q year returns all three, most-recent-first, as `data`; an
+  empty match returns `{"success": true, "data": []}`, not an error.
+- `GET /edgar/financials/{ticker}?form=10-Q&year=<Y>` without
+  `accession_number` errors listing the available accession numbers when
+  more than one filing matches, and succeeds when `accession_number`
+  selects one of them; the `10-K` (single-match) path is unchanged.
+- `SPEC.md` FR-004 and the §10/NR-004 test count (230 → 234) reconciled;
+  the architecture artifacts (Portfolio Thesis + Portfolio Data Mining)
+  reconciled per constitution AI behavior #11.
+
 ## Sequencing
 
-Work item 2 is blocked on Work item 1 (the check must exist and have run
-before it can be marked required). Work item 3 is independent of Work items
-1–2 — it touches only `pricing` code, tests and docs, no CI or repo-settings
-surface — and can land in either order. PFA's `T-052` is downstream of it.
-Otherwise there is no ordering constraint from the rest of the backlog,
-since every other `SPEC.md` §13 item is accepted (Non-goals above) and not
-touched by this plan.
+**Work item 4 is the top priority** — a user-reported correctness bug,
+ahead of any other open backlog item. Work items 1–2 stay reverted/on hold
+at the maintainer's prior request. Work item 3's only remaining open task
+(`T-026`, the cross-repo redeploy hand-off) has no code-level dependency on
+Work item 4 and can proceed independently. Otherwise there is no ordering
+constraint from the rest of the backlog, since every other `SPEC.md` §13
+item is accepted (Non-goals above) and not touched by this plan.
 
 See `TASKS.md` for the discrete, checkable task breakdown.

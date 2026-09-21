@@ -13,6 +13,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py filing-by-year AAPL --form 10-K --year 2023
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py latest-filing AAPL --form 8-K
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py financials AAPL --form 10-K --year 2023
+    .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py financials AAPL --form 10-Q --year 2023 --accession-number 0000320193-23-000064
     .venv\\Scripts\\python.exe cli\\sec_edgar_cli.py search-filings AAPL --form 10-K --keyword climate
 """
 
@@ -62,7 +63,14 @@ def cmd_latest_filing(args: argparse.Namespace, agent: EdgarAgent) -> None:
 
 
 def cmd_financials(args: argparse.Namespace, agent: EdgarAgent) -> None:
-    print_json(agent.get_financials(args.ticker, form=args.form, year=args.year))
+    print_json(
+        agent.get_financials(
+            args.ticker,
+            form=args.form,
+            year=args.year,
+            accession_number=args.accession_number,
+        )
+    )
 
 
 def cmd_search_filings(args: argparse.Namespace, agent: EdgarAgent) -> None:
@@ -112,6 +120,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("ticker")
     p.add_argument("--form", choices=FILING_FORMS, required=True)
     p.add_argument("--year", type=int, required=True)
+    p.add_argument(
+        "--accession-number",
+        dest="accession_number",
+        default=None,
+        help="Disambiguate when --form/--year match multiple filings (e.g. "
+        "10-Q); get it from `filing-by-year` first.",
+    )
     p.set_defaults(func=cmd_financials)
 
     p = sub.add_parser("search-filings", help="Full-text keyword search across recent filings")
