@@ -185,8 +185,8 @@ renumber; mark a cancelled/superseded task in place instead.
 
 Work item 4 (sec_edgar multi-filing bug fix) is built, unit-tested, and
 verified live (`T-028`–`T-035` all done 2026-09-21). This was made the top
-priority per the bug report, ahead of the rest of the backlog. Not yet
-merged — awaiting PR review.
+priority per the bug report, ahead of the rest of the backlog. **Merged**
+2026-09-21 (PR #39).
 
 Work item 3 is built and merged (PR #36), its artifacts are reconciled
 (`T-027`) and its constitution wording is amended (`T-024`). One item remains
