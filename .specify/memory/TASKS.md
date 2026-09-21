@@ -125,7 +125,68 @@ renumber; mark a cancelled/superseded task in place instead.
       yfinance contract — and the "queued" wording is gone. Content only,
       titles unchanged.
 
+## Work item 4 — Fix sec_edgar filing-by-year/financials for multi-filing-per-year forms (code, priority)
+
+- [x] **T-028** Add failing tests reproducing the bug (multiple same-year
+      filings for one form) in `tests/sec_edgar/test_agent.py`, confirming
+      today's `next()`-based code only returns one. → `PLAN.md` Work item
+      4, step 1. **Done 2026-09-21**: `test_get_filing_by_year_returns_all_matches_for_form_and_year`
+      (three 10-Qs, one different-year filing) plus three new
+      `get_financials` disambiguation tests.
+- [x] **T-029** Fix `EdgarAgent.get_filing_by_year` in `src/sec_edgar/agent.py`
+      to return all matching filings as a list; update its docstring/
+      response shape. → step 2. **Done 2026-09-21**: returns `{"success":
+      True, "data": [...]}` (list comprehension over the year-filtered
+      matches, most-recent-first); no-match is now an empty list, not an
+      error.
+- [x] **T-030** Fix `EdgarAgent.get_financials` to accept an optional
+      `accession_number` disambiguator, per the design above; update its
+      docstring. → step 3. **Done 2026-09-21**: 0/1/>1-match branches per
+      `PLAN.md`; ambiguous-without-`accession_number` and
+      unmatched-`accession_number` both error listing the candidates.
+- [x] **T-031** Update `apps/sec_edgar_api.py` (`edgar_financials`) and
+      `cli/sec_edgar_cli.py` (`financials` subcommand + usage docstring)
+      for the new `accession_number` parameter. → step 4. **Done
+      2026-09-21**.
+- [x] **T-032** Update `src/sec_edgar/examples.py` and regenerate
+      `docs/modules/edgar_examples.txt`; add the note to
+      `docs/modules/sec-edgar.md`. → step 5. **Done 2026-09-21**:
+      `examples.py` and `sec-edgar.md` updated; `edgar_examples.txt`
+      regenerated from a real run against SEC EDGAR (`NAME`/`EMAIL` from
+      `.env`) — network access turned out to be available in this
+      environment. The captured output shows AAPL's three real 2025 10-Qs
+      coming back from `get_filing_by_year`, confirming the fix live.
+- [x] **T-033** Update `.specify/memory/SPEC.md` FR-004's requirement text/
+      acceptance criteria to describe the corrected multi-filing behavior
+      and `accession_number` disambiguation, and update the §10/NR-004
+      test count. → `PLAN.md` Work item 4, acceptance criteria. **Done
+      2026-09-21**: FR-004 text/acceptance criteria updated; test count
+      230 → 234, `tests/sec_edgar/test_agent.py` 34 → 38.
+- [x] **T-034** Reconcile the two architecture artifacts (Portfolio Thesis +
+      Portfolio Data Mining) per constitution AI behavior #11 — content
+      only, never the title. → same acceptance criteria. **Done
+      2026-09-21**: both artifacts updated (test counts, the fix itself,
+      footer changelog entries); titles unchanged.
+- [x] **T-035** Verify live: run `apps/sec_edgar_api.py`, `curl`
+      `filing_by_year` for a real ticker/10-Q/year with 3 filings and
+      confirm all 3 come back; call `financials` with and without
+      `accession_number` to confirm the disambiguation error and the
+      success path; run the CLI equivalents. → acceptance criteria.
+      **Done 2026-09-21**: `GET /edgar/filing_by_year/AAPL?form=10-Q&year=2023`
+      returned all three real filings (accessions ending `-000077`,
+      `-000064`, `-000006`); `GET /edgar/financials/AAPL?form=10-Q&year=2023`
+      with no `accession_number` returned the ambiguity error listing all
+      three; with `accession_number=...-000064` it returned a real income
+      statement; the `10-K` (single-match) path on both routes was
+      unaffected. `cli/sec_edgar_cli.py filing-by-year`/`financials
+      --accession-number` mirrored the API exactly.
+
 ## Status
+
+Work item 4 (sec_edgar multi-filing bug fix) is built, unit-tested, and
+verified live (`T-028`–`T-035` all done 2026-09-21). This was made the top
+priority per the bug report, ahead of the rest of the backlog. Not yet
+merged — awaiting PR review.
 
 Work item 3 is built and merged (PR #36), its artifacts are reconciled
 (`T-027`) and its constitution wording is amended (`T-024`). One item remains

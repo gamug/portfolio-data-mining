@@ -48,16 +48,38 @@ latest_year = max(result["data"]) if result["success"] and result["data"] else 2
 
 
 # ---------------------------------------------------------------------
-# 4. Get a specific filing's metadata by year
+# 4. Get a specific form's filings for a given year (a year can have more
+#    than one filing of the same form, e.g. "10-K" usually has exactly one
+#    but "10-Q" usually has three -- see section 4b)
 # ---------------------------------------------------------------------
 result = agent.get_filing_by_year("AAPL", form="10-K", year=latest_year)
 pretty(f"get_filing_by_year('AAPL', '10-K', {latest_year})", result)
+if result["success"] and result["data"]:
+    print(
+        f"  {len(result['data'])} matching filing(s); most recent accession: "
+        f"{result['data'][0]['accession_number']}"
+    )
 
-# Handle the "not found" case explicitly -- this is a normal outcome, not a crash
+# Handle the "not found" case explicitly -- an empty list, not an error
 result_missing = agent.get_filing_by_year("AAPL", form="10-K", year=1800)
 pretty("get_filing_by_year('AAPL', '10-K', 1800)  # deliberately invalid", result_missing)
-if not result_missing["success"]:
-    print(f"Handled gracefully: {result_missing['error']}")
+if result_missing["success"] and not result_missing["data"]:
+    print("Handled gracefully: no filings found for that year (empty list, not an error).")
+
+
+# ---------------------------------------------------------------------
+# 4b. A form with multiple filings per year (10-Q) needs accession_number
+#     to tell get_financials which one to use
+# ---------------------------------------------------------------------
+result = agent.get_filing_by_year("AAPL", form="10-Q", year=latest_year)
+pretty(f"get_filing_by_year('AAPL', '10-Q', {latest_year})", result)
+if result["success"] and len(result["data"]) > 1:
+    chosen = result["data"][0]["accession_number"]
+    quarterly = agent.get_financials("AAPL", form="10-Q", year=latest_year, accession_number=chosen)
+    pretty(
+        f"get_financials('AAPL', '10-Q', {latest_year}, accession_number={chosen!r})",
+        quarterly,
+    )
 
 
 # ---------------------------------------------------------------------

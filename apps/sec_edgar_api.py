@@ -84,8 +84,12 @@ def edgar_latest_filing(ticker: str, form: FilingForm) -> dict:
 
 
 @app.get("/edgar/financials/{ticker}", tags=["Edgar"])
-def edgar_financials(ticker: str, form: FilingForm, year: int) -> JSONResponse:
-    result = edgar_agent.get_financials(ticker, form=form.value, year=year)
+def edgar_financials(
+    ticker: str, form: FilingForm, year: int, accession_number: str | None = None
+) -> JSONResponse:
+    result = edgar_agent.get_financials(
+        ticker, form=form.value, year=year, accession_number=accession_number
+    )
     return JSONResponse(content=jsonable_encoder(result))
 
 

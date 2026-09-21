@@ -70,8 +70,14 @@ class EdgarAgent:
     --------------------
         1. get_company_info(...)        -- confirm the company/ticker is right
         2. list_years_available(...)    -- see which years/forms actually exist
-        3. get_financials(...) / get_filing_by_year(...) -- pull a specific filing
-        4. search_filings(...)          -- find filings mentioning a keyword
+        3. get_filing_by_year(...)      -- list filings for a form+year (a
+                                            year can have more than one, e.g.
+                                            three "10-Q"s)
+        4. get_financials(..., accession_number=...) -- pull a specific
+                                            filing's financials; pass the
+                                            accession_number from step 3 if
+                                            more than one filing matched
+        5. search_filings(...)          -- find filings mentioning a keyword
     """
 
     def __init__(self, name: str | None = None, email: str | None = None) -> None:
@@ -171,7 +177,13 @@ class EdgarAgent:
 
     def get_filing_by_year(self, cik_or_symbol: str, form: str, year: int) -> dict:
         """
-        Get metadata for a specific filing, identified by form type and year.
+        Get metadata for all filings of a given form type in a given year.
+
+        A single calendar year can have more than one filing of the same
+        form -- e.g. a company typically files three "10-Q"s per year, one
+        per fiscal quarter. This returns all of them, most-recent-first.
+        For forms that are inherently one-per-year (e.g. "10-K") the list
+        will normally have exactly one element.
 
         Args:
             cik_or_symbol: Ticker symbol or CIK number.
@@ -179,22 +191,21 @@ class EdgarAgent:
             year: Four-digit calendar year of the filing date, e.g. 2023.
 
         Returns:
-            On success: {"success": True, "data": {"form": str,
-                "filing_date": str, "accession_number": str}}
-            On failure: {"success": False, "error": str} -- e.g. no such filing.
+            On success: {"success": True, "data": [{"form": str,
+                "filing_date": str, "accession_number": str}, ...]}
+                An empty list is a valid, non-error result (no filing of
+                that form in that year).
+            On failure: {"success": False, "error": str}
             Tip: call list_years_available first if you're not sure which
-            years actually have a filing of this form.
+            years actually have a filing of this form. If more than one
+            filing comes back (e.g. "10-Q"), pass the accession_number of
+            the one you want to get_financials to disambiguate.
         """
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            match = next((f for f in filings if f.filing_date.year == year), None)  # type: ignore[union-attr]
-            if match is None:
-                return {
-                    "success": False,
-                    "error": f"No '{form}' filing found for '{cik_or_symbol}' in {year}.",
-                }
-            return {"success": True, "data": self._filing_to_dict(match)}
+            matches = [f for f in filings if f.filing_date.year == year]  # type: ignore[union-attr]
+            return {"success": True, "data": [self._filing_to_dict(f) for f in matches]}
         except Exception as e:
             return {"success": False, "error": f"Failed to retrieve filing: {e}"}
 
@@ -234,7 +245,13 @@ class EdgarAgent:
         income_statement: list[Any] = df.to_dict(orient="records")
         return income_statement
 
-    def get_financials(self, cik_or_symbol: str, form: str, year: int) -> dict:
+    def get_financials(
+        self,
+        cik_or_symbol: str,
+        form: str,
+        year: int,
+        accession_number: str | None = None,
+    ) -> dict:
         """
         Extract the three core financial statements (income statement, balance
         sheet, cash flow statement) from a company's filing for a given year.
@@ -248,6 +265,12 @@ class EdgarAgent:
             cik_or_symbol: Ticker symbol or CIK number.
             form: "10-K" or "10-Q".
             year: Four-digit calendar year of the filing, e.g. 2023.
+            accession_number: Required when form+year matches more than one
+                filing (e.g. "10-Q", which has up to three filings per
+                year). Call get_filing_by_year first to list the
+                candidates and pass the accession_number of the one you
+                want. Ignored when form+year matches exactly one filing
+                (e.g. "10-K").
 
         Returns:
             On success: {"success": True, "data": {
@@ -255,17 +278,45 @@ class EdgarAgent:
                 "balance_sheet": [<row dicts>],
                 "cash_flow": [<row dicts>]}}
             On failure: {"success": False, "error": str} -- e.g. filing not
-            found, or it has no XBRL financial data.
+            found, no XBRL data, or form+year is ambiguous (multiple
+            filings matched and accession_number wasn't given or didn't
+            match one of them).
         """
         try:
             company = self._resolve_company(cik_or_symbol)
             filings = company.get_filings(form=form)
-            filing = next((f for f in filings if f.filing_date.year == year), None)  # type: ignore[union-attr]
-            if filing is None:
+            matches = [f for f in filings if f.filing_date.year == year]  # type: ignore[union-attr]
+            if not matches:
                 return {
                     "success": False,
                     "error": f"No '{form}' filing found for '{cik_or_symbol}' in {year}.",
                 }
+            if len(matches) == 1:
+                filing = matches[0]
+            else:
+                available = ", ".join(f.accession_number for f in matches)  # type: ignore[union-attr]
+                if not accession_number:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"Found {len(matches)} '{form}' filings for '{cik_or_symbol}' in "
+                            f"{year}; call get_filing_by_year to list them, then pass the "
+                            f"accession_number of the one you want. Available: {available}"
+                        ),
+                    }
+                filing = next(
+                    (f for f in matches if f.accession_number == accession_number),  # type: ignore[union-attr]
+                    None,
+                )
+                if filing is None:
+                    return {
+                        "success": False,
+                        "error": (
+                            f"accession_number '{accession_number}' does not match any "
+                            f"'{form}' filing for '{cik_or_symbol}' in {year}. "
+                            f"Available: {available}"
+                        ),
+                    }
             xbrl = filing.xbrl()
             if xbrl is None:
                 return {

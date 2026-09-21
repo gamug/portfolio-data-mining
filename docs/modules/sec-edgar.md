@@ -43,3 +43,10 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 `/edgar/years_available/{ticker}`, `/edgar/filing_by_year/{ticker}`,
 `/edgar/latest_filing/{ticker}`, `/edgar/financials/{ticker}`,
 `/edgar/search_filings/{ticker}`.
+
+> **Note:** `/edgar/filing_by_year` returns a *list* of matching filings — a
+> form/year can have more than one (e.g. a company typically files three
+> "10-Q"s per year, one per fiscal quarter), and an empty list means no
+> match, not an error. `/edgar/financials` takes an optional
+> `accession_number` query param, required to disambiguate when form+year
+> matches more than one filing; get it from `/edgar/filing_by_year` first.

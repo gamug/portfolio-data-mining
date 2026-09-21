@@ -83,27 +83,97 @@ Resolved to: Apple Inc. (CIK 320193)
 --- get_filing_by_year('AAPL', '10-K', 2025) ---
 {
   "success": true,
-  "data": {
-    "form": "10-K",
-    "filing_date": "2025-10-31",
-    "accession_number": "0000320193-25-000079"
-  }
+  "data": [
+    {
+      "form": "10-K",
+      "filing_date": "2025-10-31",
+      "accession_number": "0000320193-25-000079"
+    }
+  ]
 }
+  1 matching filing(s); most recent accession: 0000320193-25-000079
 
 --- get_filing_by_year('AAPL', '10-K', 1800)  # deliberately invalid ---
 {
-  "success": false,
-  "error": "No '10-K' filing found for 'AAPL' in 1800."
+  "success": true,
+  "data": []
 }
-Handled gracefully: No '10-K' filing found for 'AAPL' in 1800.
+Handled gracefully: no filings found for that year (empty list, not an error).
+
+--- get_filing_by_year('AAPL', '10-Q', 2025) ---
+{
+  "success": true,
+  "data": [
+    {
+      "form": "10-Q",
+      "filing_date": "2025-08-01",
+      "accession_number": "0000320193-25-000073"
+    },
+    {
+      "form": "10-Q",
+      "filing_date": "2025-05-02",
+      "accession_number": "0000320193-25-000057"
+    },
+    {
+      "form": "10-Q",
+      "filing_date": "2025-01-31",
+      "accession_number": "0000320193-25-000008"
+    }
+  ]
+}
+
+--- get_financials('AAPL', '10-Q', 2025, accession_number='0000320193-25-000073') ---
+{
+  "success": true,
+  "data": {
+    "income_statement": [
+      {
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "label": "Net sales",
+        "standard_concept": "Revenue",
+        "2025-06-28 (Q3)": 94036000000.0,
+        "2024-06-29 (Q3)": 85777000000.0,
+        "2025-06-28 (YTD)": 313695000000.0,
+        "2024-06-29 (YTD)": 296105000000.0,
+        "level": 4,
+        "abstract": false,
+        "dimension": false,
+        "is_breakdown": false,
+        "dimension_axis": null,
+        "dimension_member": null,
+        "dimension_member_label": null,
+        "dimension_label": null,
+        "balance": "credit",
+        "weight": 1.0,
+        "preferred_sign": 1.0,
+        "parent_concept": "us-gaap_GrossProfit",
+        "parent_abstract_concept": "us-gaap_StatementLineItems"
+      },
+      {
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "label": "Products",
+        "standard_concept": null,
+        "2025-06-28 (Q3)": 66613000000.0,
+        "2024-06-29 (Q3)": 61564000000.0,
+        "2025-06-28 (YTD)": 233287000000.0,
+        "2024-06-29 (YTD)": 224908000000.0,
+        "level": 4,
+        "abstract": false,
+        "dimension": true,
+        "is_breakdown": false,
+        "dimension_axis": "srt:ProductOrServiceAxis",
+        "dimension_member": "us-gaap_ProductMember",
+        "dimension_member_label": "Products",
+        "dimension_label": "srt:ProductOrServiceAxis: Products",
+        "bal
 
 --- get_latest_filing('AAPL', '8-K') ---
 {
   "success": true,
   "data": {
-    "form": "8-K",
-    "filing_date": "2026-07-30",
-    "accession_number": "0000320193-26-000018"
+    "form": "8-K/A",
+    "filing_date": "2026-09-01",
+    "accession_number": "0001140361-26-035325"
   }
 }
 
@@ -123,10 +193,10 @@ Handled gracefully: No '10-K' filing found for 'AAPL' in 1800.
         "abstract": false,
         "dimension": false,
         "is_breakdown": false,
-        "dimension_axis": NaN,
-        "dimension_member": NaN,
-        "dimension_member_label": NaN,
-        "dimension_label": NaN,
+        "dimension_axis": null,
+        "dimension_member": null,
+        "dimension_member_label": null,
+        "dimension_label": null,
         "balance": "credit",
         "weight": 1.0,
         "preferred_sign": 1.0,
@@ -136,7 +206,7 @@ Handled gracefully: No '10-K' filing found for 'AAPL' in 1800.
       {
         "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
         "label": "Products",
-        "standard_concept": NaN,
+        "standard_concept": null,
         "2025-09-27 (FY)": 307003000000.0,
         "2024-09-28 (FY)": 294866000000.0,
         "2023-09-30 (FY)": 298085000000.0,
@@ -151,5 +221,50 @@ Handled gracefully: No '10-K' filing found for 'AAPL' in 1800.
         "balance": "credit",
         "weight": 1.0,
         "preferred_sign": 1.0,
-        "parent_conc
+        "parent
 Income statement has 47 line items
+
+--- search_filings('AAPL', 'climate', form='10-K', max_filings_to_search=5) ---
+{
+  "success": true,
+  "data": [
+    {
+      "form": "10-K",
+      "filing_date": "2025-10-31",
+      "accession_number": "0000320193-25-000079"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2024-11-01",
+      "accession_number": "0000320193-24-000123"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2023-11-03",
+      "accession_number": "0000320193-23-000106"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2022-10-28",
+      "accession_number": "0000320193-22-000108"
+    },
+    {
+      "form": "10-K",
+      "filing_date": "2021-10-29",
+      "accession_number": "0000320193-21-000105"
+    }
+  ]
+}
+  Found in 10-K filed 2025-10-31 (accession 0000320193-25-000079)
+  Found in 10-K filed 2024-11-01 (accession 0000320193-24-000123)
+  Found in 10-K filed 2023-11-03 (accession 0000320193-23-000106)
+  Found in 10-K filed 2022-10-28 (accession 0000320193-22-000108)
+  Found in 10-K filed 2021-10-29 (accession 0000320193-21-000105)
+
+--- get_company_info('NOT_A_REAL_TICKER_XYZ') ---
+{
+  "success": false,
+  "error": "Could not find company 'NOT_A_REAL_TICKER_XYZ': Company not found: 'NOT_A_REAL_TICKER_XYZ'\n  Tip: Search by name with find_company(\"...\") or pass a CIK directly."
+}
+Agent should relay this to the user: Could not find company 'NOT_A_REAL_TICKER_XYZ': Company not found: 'NOT_A_REAL_TICKER_XYZ'
+  Tip: Search by name with find_company("...") or pass a CIK directly.
