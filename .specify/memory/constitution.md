@@ -109,7 +109,8 @@ stack actually pinned in `pyproject.toml`.
    under `docs/modules/*.md`, cross-cutting migration notes named by
    topic/date (`portfolio-common-v1-migration-plan.md`,
    `portfolio-common-v1.2-engine-agnostic.md`). A spec-kit artifact (this
-   constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`) goes under
+   constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`,
+   `CHANGELOG.md`) goes under
    `.specify/memory/` instead — the one Claude-Code-adjacent path that stays
    tracked (see AI behavior #9); `docs/superpowers/` (earlier, pre-spec-kit
    planning artifacts predating `.specify/memory` adoption) is gitignored,
@@ -248,6 +249,15 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
     stable forever, independent of content changes. (See `Artifact` tool
     guidance: title changes are an explicit, separate, user-directed
     action, never a side effect of a content update.)
+12. **Once a Work Item is finished, move the entire work item to
+    `.specify/memory/CHANGELOG.md`.** When every task in a `TASKS.md` work
+    item is checked (or explicitly superseded/moved elsewhere), cut its whole
+    `## Work item N` section — heading, preamble, and every task, verbatim,
+    task IDs unchanged — out of `TASKS.md` and into `CHANGELOG.md`, in the
+    same change that closes it. `TASKS.md` carries only open work, so the
+    spec-driven loop doesn't re-read closed history on every pass;
+    `CHANGELOG.md` is the legacy record, read only when that history is
+    actually needed.
 
 ## Executable cmds
 
@@ -373,4 +383,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.5.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-19
+**Version**: 1.6.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-24
