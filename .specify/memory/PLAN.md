@@ -140,9 +140,10 @@ settings for `master`):
 
 **Status: built and merged (PR #36, 2026-09-19).** Verified live against yfinance
 (XOM dividends, NVDA split, the `1900-01-01` probe range over HTTP), and against
-the downstream client (`QuantPricingClient.probe('XOM')` → `True`). Remaining:
-the redeploy hand-off (`T-026`). The architecture artifacts (`T-027`) and the
-constitution wording (`T-024`, constitution 1.5.0) are done.
+the downstream client (`QuantPricingClient.probe('XOM')` → `True`). The redeploy
+hand-off (`T-026`) is done too: PFA's `T-052` verified the redeployed gateway live
+on 2026-09-21. The architecture artifacts (`T-027`) and the constitution wording
+(`T-024`, constitution 1.5.0) are done. **Closed** — tasks in `CHANGELOG.md`.
 
 **Why**: `portfolio-financial-analysis` (PFA) tracked this as its own Work
 item 6 / `T-050`–`T-052`, but it is data mining, not analysis, so it moved
@@ -283,11 +284,8 @@ rule; this is a within-service bug fix, so constitution AI behavior #10
 
 ## Sequencing
 
-**Work item 4 is the top priority** — a user-reported correctness bug,
-ahead of any other open backlog item. Work items 1–2 stay reverted/on hold
-at the maintainer's prior request. Work item 3's only remaining open task
-(`T-026`, the cross-repo redeploy hand-off) has no code-level dependency on
-Work item 4 and can proceed independently. Otherwise there is no ordering
+Work items 3 and 4 are closed (merged and verified; tasks in `CHANGELOG.md`).
+Work items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
