@@ -59,16 +59,10 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Work item 4 (sec_edgar multi-filing bug fix) is built, unit-tested, and
-verified live (`T-028`–`T-035` all done 2026-09-21). This was made the top
-priority per the bug report, ahead of the rest of the backlog. **Merged**
-2026-09-21 (PR #39).
+Closed Work items 3 and 4 are in `CHANGELOG.md` (Work item 3's last task,
+`T-026`, closed once `portfolio-financial-analysis`'s `T-052` verified the
+redeployed gateway live on 2026-09-21).
 
-Work item 3 is built and merged (PR #36), its artifacts are reconciled
-(`T-027`) and its constitution wording is amended (`T-024`). One item remains
-open on purpose: `T-026`'s redeploy hand-off — the operator redeploys, then
-`portfolio-financial-analysis`'s `T-052` runs `quant backfill-actions`. The
-downstream client's `probe('XOM')` has already been shown to return `True`
-against the merged code. Work item 1 (CI workflow) was built and then reverted
-at the maintainer's request (#35), so T-001–T-007 stay unchecked and
-T-010–T-014 are moot until CI is wanted again.
+Work item 1 (CI workflow) was built and then reverted at the maintainer's
+request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
+CI is wanted again.
