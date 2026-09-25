@@ -258,6 +258,14 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
     spec-driven loop doesn't re-read closed history on every pass;
     `CHANGELOG.md` is the legacy record, read only when that history is
     actually needed.
+    Moving the section is not enough on its own: in the same change, reduce
+    every other mention of the closed work item in `TASKS.md` (the preamble/
+    priority notes, the `## Status` section) to a one-line pointer to
+    `CHANGELOG.md` — keeping only cross-references an open task genuinely
+    depends on — and mark the work item closed in `PLAN.md`'s own status/
+    sequencing text, so no summary of it is left behind to re-read. "Verbatim"
+    governs the move, not the closing: check off the last task and record its
+    closure evidence first, then move the section as it then stands.
     Work items already closed when this rule was adopted (2026-09-24)
     were backfilled into `CHANGELOG.md` by the change that introduced it —
     the one sanctioned exception to "the same change that closes it".
