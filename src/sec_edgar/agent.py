@@ -20,12 +20,139 @@ Design notes for whoever wires this into the agent framework:
 
 import logging
 import os
+import re
 from typing import Any
 
 import numpy as np
 from edgar import Company, set_identity
 
 logger = logging.getLogger(__name__)
+
+# T-118 (tracks portfolio-financial-analysis's T-117, docs/model_fixes.md): the aggregate
+# revenue concepts a filer's income statement tags for a consolidated total -- mirrors
+# portfolio-financial-analysis/src/fundamental_agent/statements.py's
+# REGISTRY["revenue"].total_concepts, the downstream consumer of this payload.
+_REVENUE_TOTAL_CONCEPTS = (
+    "us-gaap_Revenues",
+    "us-gaap_RevenuesNetOfInterestExpense",
+    "us-gaap_RegulatedAndUnregulatedOperatingRevenue",
+)
+# A row's label reads as a revenue total independent of any filer's own custom-taxonomy
+# extension concept. Excludes "Total cost of revenue(s)" -- a near-universal COGS-line label
+# that otherwise matches "total"/"revenue" as bare substrings (found, and excluded, by a
+# full-universe scan in portfolio-financial-analysis before T-117 shipped: ADBE, STE, TER,
+# TSLA, URI, XYZ all use this exact phrase, none a real revenue-total defect).
+_LABEL_TOTAL_RE = re.compile(r"\btotal\b.{0,40}\brevenues?\b", re.IGNORECASE)
+_LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcost\b", re.IGNORECASE)
+# A later candidate must be no more than this fraction of the first total to count as a
+# contradiction, not rounding/immaterial noise.
+_LABEL_TOTAL_CONTRADICTION_RATIO = 0.75
+# Each row between the two totals must be no larger than this fraction of the later, trusted
+# total, or the correction is too uncertain to trust -- drop the value rather than guess.
+_BETWEEN_ROW_CEILING = 0.25
+# Row-metadata keys edgartools' income-statement dataframe carries alongside each period's
+# value column -- everything else on a row is a period column (e.g. "2023-12-31 (FY)").
+_ROW_METADATA_KEYS = frozenset(
+    {
+        "concept",
+        "label",
+        "standard_concept",
+        "level",
+        "abstract",
+        "dimension",
+        "is_breakdown",
+        "dimension_axis",
+        "dimension_member",
+        "dimension_member_label",
+        "dimension_label",
+        "balance",
+        "weight",
+        "preferred_sign",
+        "parent_concept",
+        "parent_abstract_concept",
+    }
+)
+
+
+def _numeric(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _period_columns(rows: list[dict[str, Any]]) -> list[str]:
+    """Every dict key across *rows* that isn't a fixed metadata column -- i.e. a period
+    column, in first-seen order."""
+    keys: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in _ROW_METADATA_KEYS and key not in keys:
+                keys.append(key)
+    return keys
+
+
+def correct_revenue_totals(income_statement: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """T-118: a filer's aggregate revenue concept (:data:`_REVENUE_TOTAL_CONCEPTS`) can be a
+    component/breakdown figure edgartools' own XBRL rendering surfaces as if it were the
+    consolidated total, not merely a filer-side tagging slip -- verified live against APA
+    (CIK 0001841666, ``data.sec.gov`` ``companyconcept``/``companyfacts``, read-only): APA has
+    never filed a real ``us-gaap:Revenues`` fact at all, and its FY2023-2025 "Total revenues"
+    is exactly ~2x its own later, smaller "Total revenues and other" subtotal every year.
+
+    Detected structurally (document order, the non-dimensional-row filter
+    ``portfolio-financial-analysis``'s ``Statements._rows_for`` also applies downstream), not
+    by filer: a later, non-dimensional row whose label also reads as a revenue total
+    (:data:`_LABEL_TOTAL_RE`) and is materially smaller than the first
+    :data:`_REVENUE_TOTAL_CONCEPTS` match is the contradiction itself -- a well-formed
+    statement's later, broader total is never smaller than an earlier one labeled the same
+    way. When found, and every row between the two is individually small enough to trust as
+    an adjustment item, that period's value is corrected to the later row's value less those
+    in-between rows (recovers APA's real "Total revenues" to the dollar). Otherwise the value
+    is dropped (``None``) rather than trusted or guessed.
+
+    Ported from ``portfolio-financial-analysis``'s ``Statements._label_total_correction``
+    (T-117, ``docs/model_fixes.md``), which validated this exact algorithm against every
+    filing stored across that repo's full 503-asset production universe: 16 filing-periods
+    flagged, all APA, all safely corrected, 0 false positives elsewhere. Returns a new list;
+    *income_statement* is not mutated."""
+    rows = [dict(r) for r in income_statement]
+    non_dim = [i for i, r in enumerate(rows) if not r.get("abstract") and not r.get("dimension")]
+    winner_pos = next(
+        (i for i in non_dim if rows[i].get("concept") in _REVENUE_TOTAL_CONCEPTS), None
+    )
+    if winner_pos is None:
+        return rows
+    for column in _period_columns(rows):
+        total_value = _numeric(rows[winner_pos].get(column))
+        if total_value is None:
+            continue
+        for i in non_dim:
+            if i <= winner_pos:
+                continue
+            label = str(rows[i].get("label") or "")
+            if not _LABEL_TOTAL_RE.search(label) or _LABEL_TOTAL_EXCLUDE_RE.search(label):
+                continue
+            later_value = _numeric(rows[i].get(column))
+            if later_value is None or later_value <= 0:
+                continue
+            if later_value >= total_value * _LABEL_TOTAL_CONTRADICTION_RATIO:
+                continue
+            between = [
+                v
+                for j in non_dim
+                if winner_pos < j < i
+                for v in [_numeric(rows[j].get(column))]
+                if v is not None
+            ]
+            if any(abs(v) > later_value * _BETWEEN_ROW_CEILING for v in between):
+                rows[winner_pos][column] = None
+            else:
+                rows[winner_pos][column] = later_value - sum(between)
+            break
+    return rows
 
 
 class EdgarAgent:
@@ -326,9 +453,9 @@ class EdgarAgent:
             return {
                 "success": True,
                 "data": {
-                    "income_statement": self.clean_data_frame(
-                        xbrl.statements.income_statement().to_dataframe()
-                    ),  # type: ignore[union-attr]
+                    "income_statement": correct_revenue_totals(
+                        self.clean_data_frame(xbrl.statements.income_statement().to_dataframe())  # type: ignore[union-attr]
+                    ),
                     "balance_sheet": self.clean_data_frame(
                         xbrl.statements.balance_sheet().to_dataframe()
                     ),  # type: ignore[union-attr]

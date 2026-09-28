@@ -50,3 +50,18 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > match, not an error. `/edgar/financials` takes an optional
 > `accession_number` query param, required to disambiguate when form+year
 > matches more than one filing; get it from `/edgar/filing_by_year` first.
+
+> **Note (T-118):** `/edgar/financials`' `income_statement` runs through
+> `correct_revenue_totals` (`src/sec_edgar/agent.py`) before it's returned — edgartools'
+> own XBRL rendering can surface a component/breakdown figure as if it were a filer's
+> consolidated `us-gaap:Revenues`/`RevenuesNetOfInterestExpense`/
+> `RegulatedAndUnregulatedOperatingRevenue` total (verified live against APA, CIK
+> `0001841666`: FY2023-2025's "Total revenues" is exactly ~2x the statement's own later,
+> smaller "Total revenues and other" subtotal every year — APA has never filed a real
+> `us-gaap:Revenues` fact at all, per `data.sec.gov`'s `companyconcept` API). Detected
+> structurally (a later, non-dimensional row whose label also reads as a revenue total and
+> is materially smaller — never a filer's own concept name), corrected by subtracting the
+> rows between the two when they're individually small enough to trust, or dropped
+> (`None`, not guessed) otherwise. Tracks and closes `portfolio-financial-analysis`'s
+> `T-117`/`T-118` (`docs/model_fixes.md`, that repo's own local guard, which stays in
+> place as a backstop).

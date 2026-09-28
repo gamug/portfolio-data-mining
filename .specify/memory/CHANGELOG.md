@@ -137,3 +137,49 @@ acceptance criteria. Ordered by work item number.
       statement; the `10-K` (single-match) path on both routes was
       unaffected. `cli/sec_edgar_cli.py filing-by-year`/`financials
       --accession-number` mirrored the API exactly.
+
+## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
+
+- [x] **T-036** Trace `portfolio-financial-analysis`'s `T-117`/`T-118` root cause live
+      against this repo: reproduce APA's (CIK `0001841666`) FY2023-2025 `us-gaap_Revenues`
+      defect through `EdgarAgent.get_financials`, and against `data.sec.gov`'s
+      `companyconcept`/`companyfacts` APIs confirm APA has never filed a real
+      `us-gaap:Revenues` fact at all. → `PLAN.md` Work item 5, "Why". **Done 2026-09-28**:
+      `xbrl.statements.income_statement().to_dataframe()` (`edgartools==5.44.1`) is the
+      only source of `get_financials`' income-statement rows; it returns the wrong
+      non-dimensional `us-gaap_Revenues` row (`$16,558M` for FY2023) alongside the correct
+      figure ($8,279M) sitting a few rows later as a genuinely dimensional "Oil and gas"
+      product-axis row (`dimension: True`) that `portfolio-financial-analysis`'s own
+      `Statements._rows_for` filters out by design, so it never reaches that repo at all.
+- [x] **T-037** Add `correct_revenue_totals(income_statement)` to `src/sec_edgar/agent.py`,
+      ported from `portfolio-financial-analysis`'s `Statements._label_total_correction`
+      (`T-117`): a first aggregate revenue concept contradicted by a later, non-dimensional,
+      label-matched, materially smaller "total revenue" row is corrected by subtracting the
+      rows between the two, or dropped when those rows are too large to trust. Wire it into
+      `get_financials`'s `income_statement`. → step 1-2. **Done 2026-09-28**.
+- [x] **T-038** Tests in `tests/sec_edgar/test_agent.py`: `correct_revenue_totals` unit
+      tests (APA's real FY2023 shape recovers $8,279M; FY2022's genuinely larger "and
+      other" total left alone; "Total cost of revenues" excluded; an unsafe-to-derive
+      contradiction drops the value; a dimensional row never picked as either candidate;
+      a no-op with no aggregate concept present; no mutation of the input) plus one
+      `get_financials` end-to-end test. → step 3. **Done 2026-09-28**: 8 new tests
+      (38 → 46); `uv run pytest tests/sec_edgar -q` and the full suite (242) both green.
+- [x] **T-039** Update `SPEC.md` FR-004 with the correction's contract and a live-verified
+      APA figure citation; add the note to `docs/modules/sec-edgar.md`. → step 4,
+      acceptance criteria. **Done 2026-09-28**.
+- [x] **T-040** Verify live against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking,
+      no network calls skipped): every available APA 10-K (FY2021-FY2025, filed
+      2022-2026) and every 2024 10-Q. → acceptance criteria. **Done 2026-09-28**: FY2023
+      10-K → $8,279M/$11,075M/$7,985M (2023/2022/2021 columns); FY2024 10-K (filed 2025)
+      → $9,737M/$8,279M/$11,075M; FY2025 10-K (filed 2026) → $8,920M/$9,737M/$8,279M —
+      exact match to `portfolio-financial-analysis`'s `T-117` acceptance figures. FY2021's
+      own 10-K (filed 2022) is correctly left untouched at $1,082M (a pre-existing,
+      differently-shaped too-small defect, that repo's own `T-095`, out of this fix's
+      scope). All three 2024 10-Qs (accessions `...-000003`, `...-000013`, `...-000008`)
+      resolved correctly, including both YTD columns.
+- [x] **T-041** *(cross-repo)* Hand off to `portfolio-financial-analysis`'s `T-118`: once
+      this lands and the `sec_edgar` service is redeployed, that repo's own `T-117` guard
+      should find nothing left to correct on APA. → `PLAN.md` Work item 5 acceptance
+      criteria; that repo's own `T-118` closure. **Recorded 2026-09-28** — the redeploy and
+      that repo's own re-verification are PFA's own operational step, not tracked further
+      here.
