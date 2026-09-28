@@ -57,6 +57,72 @@ renumber; mark a cancelled/superseded task in place instead.
       (workflow exists *and* is enforced), distinct from T-007's "exists"
       milestone. → `PLAN.md` Work item 2, second acceptance criterion.
 
+## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
+
+**Open — PR #44, APA revenue instance only. Does not close
+`portfolio-financial-analysis`'s `T-117`/`T-118`, which stay open there.**
+
+- [x] **T-036** Trace `portfolio-financial-analysis`'s `T-117`/`T-118` root cause live
+      against this repo: reproduce APA's (CIK `0001841666`) FY2023-2025 `us-gaap_Revenues`
+      defect through `EdgarAgent.get_financials`, and confirm against `data.sec.gov`'s
+      `companyconcept`/`companyfacts` APIs that APA has never filed a real
+      `us-gaap:Revenues` fact at all. → `PLAN.md` Work item 5, "Why". **Done 2026-09-28**,
+      mechanism confirmed and re-verified in PR #44 review: `edgartools==5.44.1`
+      synthesizes a non-dimensional "total" row for a concept by summing that concept's
+      dimensional axis members, and double-counts when one member is a parent whose value
+      already includes its own children — APA FY2023: `8279 (parent) + 7385 (its
+      children) + 894 (unrelated member) = 16558` synthesized vs. the correct `8279`;
+      FY2024: `9737 + 8196 + 1541 = 19474` vs. `9737`. A full-universe scan of every
+      stored filing found this is general, not APA/revenue-specific: 163 mismatched
+      values across 105 concept/period pairs, 1,101 synthesized non-dimensional rows
+      total.
+- [x] **T-037** Add `correct_revenue_totals(income_statement)` to `src/sec_edgar/agent.py`,
+      ported from `portfolio-financial-analysis`'s `Statements._label_total_correction`
+      (`T-117`): a first aggregate revenue concept contradicted by a later, non-dimensional,
+      label-matched, materially smaller "total revenue" row is corrected by subtracting the
+      rows between the two, or dropped when those rows are too large to trust. Wire it into
+      `get_financials`'s `income_statement`. Scoped to revenue only — **fixes APA's revenue
+      instance, not the general synthesis defect**. → `PLAN.md` Work item 5, step 1-2.
+      **Done 2026-09-28**.
+- [x] **T-038** Tests in `tests/sec_edgar/test_agent.py`: `correct_revenue_totals` unit
+      tests (APA's real FY2023 shape recovers $8,279M; FY2022's genuinely larger "and
+      other" total left alone; "Total cost of revenues" excluded; an unsafe-to-derive
+      contradiction drops the value; a dimensional row never picked as either candidate;
+      a no-op with no aggregate concept present; no mutation of the input; the returned
+      `corrections` list content for each case) plus one `get_financials` end-to-end test
+      asserting `data["corrections"]`. → step 3. **Done 2026-09-28**: 8 tests updated
+      (38 → 46 total); `uv run pytest tests/sec_edgar -q` and the full suite (242) both
+      green.
+- [x] **T-039** Update `SPEC.md` FR-004 with the correction's contract, the confirmed
+      parent-vs-summed-children mechanism, and a live-verified APA figure citation; add
+      the note to `docs/modules/sec-edgar.md`, explicitly scoped as "APA revenue instance
+      only". → step 4, acceptance criteria. **Done 2026-09-28**.
+- [x] **T-040** Verify live against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking,
+      no network calls skipped): every available APA 10-K (FY2021-FY2025, filed
+      2022-2026) and every 2024 10-Q. → acceptance criteria. **Done 2026-09-28**: FY2023
+      10-K → $8,279M/$11,075M/$7,985M (2023/2022/2021 columns); FY2024 10-K (filed 2025)
+      → $9,737M/$8,279M/$11,075M; FY2025 10-K (filed 2026) → $8,920M/$9,737M/$8,279M —
+      exact match to `portfolio-financial-analysis`'s `T-117` acceptance figures. FY2021's
+      own 10-K (filed 2022) is correctly left untouched at $1,082M (a pre-existing,
+      differently-shaped too-small defect, that repo's own `T-095`, out of this fix's
+      scope). All three 2024 10-Qs (accessions `...-000003`, `...-000013`, `...-000008`)
+      resolved correctly, including both YTD columns. `data["corrections"]` recorded each
+      correction/drop made, live-verified against the same filings.
+- [ ] **T-041** *(cross-repo)* Hand off findings to `portfolio-financial-analysis`'s
+      `T-118` — this fix corrects APA's revenue instance only and does **not** close
+      `T-117`/`T-118` there; leave both open until the general synthesis defect (T-042) is
+      addressed and that repo's own re-verification against a redeployed `sec_edgar`
+      confirms nothing is left to correct on APA. → `PLAN.md` Work item 5 acceptance
+      criteria; that repo's own `T-118`. **Not done** — do not check this until that
+      repo's own `T-117` guard is confirmed to find nothing left, post-redeploy.
+- [ ] **T-042** *(follow-up, still under this work item's `T-118` origin)* General fix:
+      validate every synthesized non-dimensional value (not just revenue, not just
+      label-pattern detection) against the filer's actually-filed facts
+      (`data.sec.gov` `companyconcept`/`companyfacts`, or an equivalent structural check
+      within `edgartools`' own output) across all 163 mismatched values/105 pairs found
+      in the full-universe scan, and mark or drop whatever doesn't reconcile. → `PLAN.md`
+      Work item 5 follow-up (not yet planned in detail). **Not started.**
+
 ## Status
 
 Closed Work items 3 and 4 are in `CHANGELOG.md` (Work item 3's last task,
@@ -66,3 +132,7 @@ redeployed gateway live on 2026-09-21).
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
 CI is wanted again.
+
+Work item 5 is open (PR #44): T-036–T-040 are done but scoped to APA's revenue
+instance only; T-041 (cross-repo closure of `portfolio-financial-analysis`'s
+`T-117`/`T-118`) and T-042 (the general synthesis-defect fix) stay unchecked.
