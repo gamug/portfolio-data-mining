@@ -51,17 +51,36 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > `accession_number` query param, required to disambiguate when form+year
 > matches more than one filing; get it from `/edgar/filing_by_year` first.
 
-> **Note (T-118):** `/edgar/financials`' `income_statement` runs through
-> `correct_revenue_totals` (`src/sec_edgar/agent.py`) before it's returned — edgartools'
-> own XBRL rendering can surface a component/breakdown figure as if it were a filer's
-> consolidated `us-gaap:Revenues`/`RevenuesNetOfInterestExpense`/
-> `RegulatedAndUnregulatedOperatingRevenue` total (verified live against APA, CIK
-> `0001841666`: FY2023-2025's "Total revenues" is exactly ~2x the statement's own later,
-> smaller "Total revenues and other" subtotal every year — APA has never filed a real
-> `us-gaap:Revenues` fact at all, per `data.sec.gov`'s `companyconcept` API). Detected
-> structurally (a later, non-dimensional row whose label also reads as a revenue total and
-> is materially smaller — never a filer's own concept name), corrected by subtracting the
-> rows between the two when they're individually small enough to trust, or dropped
-> (`None`, not guessed) otherwise. Tracks and closes `portfolio-financial-analysis`'s
-> `T-117`/`T-118` (`docs/model_fixes.md`, that repo's own local guard, which stays in
-> place as a backstop).
+> **Note (T-118, APA revenue instance only):** `/edgar/financials`' `income_statement`
+> runs through `correct_revenue_totals` (`src/sec_edgar/agent.py`) before it's returned.
+> The actual mechanism, confirmed against live SEC data (CIK `0001841666`, APA's FY2023
+> and FY2024 10-Ks): `edgar.xbrl.statements.income_statement().to_dataframe()`
+> *synthesizes* a non-dimensional "total" row for a concept by summing that concept's
+> dimensional members (e.g. `srt:ProductOrServiceAxis` breakdown rows) whenever the filer
+> didn't tag a non-dimensional fact for it directly. That summation double-counts when one
+> of the members is itself a parent whose value already includes its own children — APA's
+> case: FY2023 `8279 (parent "Oil") + 7385 (children rolled into it) + 894 (unrelated
+> member) = 16558`, a row edgartools then surfaces as if it were APA's own consolidated
+> `us-gaap:Revenues`, when APA has never filed that concept at all (`data.sec.gov`
+> `companyconcept` → 404) and the correct figure is `8279`. Same shape in FY2024:
+> `9737 + 8196 + 1541 = 19474` vs. the correct `9737`. `correct_revenue_totals` detects
+> this structurally for revenue only (a later, non-dimensional row whose label also reads
+> as a revenue total and is materially smaller than the synthesized one — never a filer's
+> own concept name), corrects it by subtracting the rows between the two when they're
+> individually small enough to trust, or drops it (`None`, not guessed) otherwise, and
+> now records every correction/drop it makes as a `{"concept", "column", "original",
+> "corrected", "rule": "T-118"}` entry in a new top-level `data["corrections"]` list
+> returned by `get_financials` — so callers can see exactly what was touched instead of
+> trusting the numbers silently.
+>
+> **This is confirmed to be a general `edgartools` synthesis defect, not an APA/revenue
+> quirk.** A full-universe scan of every stored filing found 163 mismatched
+> parent-vs-summed-children values across 105 concept/period pairs, spanning 1,101
+> synthesized non-dimensional rows total — revenue is only the one concept this PR
+> corrects. `correct_revenue_totals` fixes **APA's revenue instance only**; it does not
+> close `portfolio-financial-analysis`'s `T-117`/`T-118` (that repo's own local guard in
+> `docs/model_fixes.md` stays in place as the load-bearing backstop, not a redundant one).
+> A follow-up PR, still under `T-118`, is planned to validate every synthesized
+> non-dimensional value generally against the filer's actually-filed facts (not just
+> revenue, not just label-pattern detection) and mark or drop whatever doesn't
+> reconcile.

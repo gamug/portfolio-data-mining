@@ -284,23 +284,36 @@ rule; this is a within-service bug fix, so constitution AI behavior #10
 
 ## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
 
-**Status: built, verified live, and closed 2026-09-28.**
+**Status: built and live-verified for APA's revenue instance only; does not close
+`portfolio-financial-analysis`'s `T-117`/`T-118`, which stay open (PR #44 review,
+2026-09-28).**
 
 **Why**: `portfolio-financial-analysis`'s `T-117`/`T-118` (`docs/model_fixes.md`) —
 APA's (CIK `0001841666`) `us-gaap:Revenues` ("Total revenues") is exactly ~2x its own
 income statement's later, smaller "Total revenues and other" subtotal every fiscal year
-since FY2023. Root cause traced live to this repo, not APA's own filing: `edgartools`'
+since FY2023. Root cause traced live to this repo, not APA's own filing, and it is a
+**general `edgartools` synthesis defect, not an APA/revenue-specific one**: `edgartools`'
 (`==5.44.1`) `xbrl.statements.income_statement().to_dataframe()` — the only place
-`get_financials` sources income-statement rows from — surfaces a non-dimensional
-`us-gaap_Revenues` row (`dimension: False`) that does not correspond to any real fact APA
-ever filed (`data.sec.gov`'s `companyconcept` API returns `404 NoSuchKey` for
-`CIK0001841666/us-gaap/Revenues` — APA has never tagged that concept at all), alongside
-several genuinely dimensional breakdown rows (Kinetik equity investee, operating
-segments, product axis) edgartools itself correctly marks `dimension: True`. This repo's
-`get_financials` passed the wrong non-dimensional row through unexamined;
+`get_financials` sources income-statement rows from — synthesizes a non-dimensional
+"total" row for a concept by *summing that concept's dimensional axis members*
+(e.g. `srt:ProductOrServiceAxis` breakdown rows) whenever the filer didn't tag a
+non-dimensional fact for it directly. That summation double-counts whenever one of the
+members is itself a parent whose value already includes its own children. APA's case:
+FY2023's synthesized `us-gaap_Revenues` is `8279 (parent "Oil") + 7385 (children already
+rolled into that parent) + 894 (an unrelated member) = 16558`, surfaced as if it were
+APA's own consolidated total — APA has never filed a real `us-gaap:Revenues` fact at all
+(`data.sec.gov`'s `companyconcept` API returns `404 NoSuchKey` for
+`CIK0001841666/us-gaap/Revenues`); the correct figure is `8279`. Same shape in FY2024:
+`9737 + 8196 + 1541 = 19474` vs. the correct `9737`. A full-universe scan of every stored
+filing confirms this is not isolated: 163 mismatched parent-vs-summed-children values
+across 105 concept/period pairs, spanning 1,101 synthesized non-dimensional rows total —
+revenue is only the one concept this work item corrects. This repo's `get_financials`
+passed the synthesized, double-counted row through unexamined;
 `portfolio-financial-analysis`'s own downstream `Statements._rows_for` filters out every
-dimensional row by design, so it never even saw the correct, dimensionally-tagged "Oil
-and gas" total ($8,279M for FY2023) sitting a few rows later in the same payload.
+dimensional row by design, so it never even saw the correct, dimensionally-tagged "Oil"
+parent-member total ($8,279M for FY2023) sitting a few rows later in the same payload —
+that later row is corroborating evidence of the correct figure, not itself the
+confirmed mechanism (the parent-vs-summed-children arithmetic above is).
 
 **Approach**:
 
@@ -319,16 +332,23 @@ and gas" total ($8,279M for FY2023) sitting a few rows later in the same payload
    substrings) that scan caught and excluded before T-117 shipped, reused verbatim here
    rather than re-discovered.
 2. Wire it into `get_financials`: `income_statement` is the corrected list, not the raw
-   `clean_data_frame` output. `balance_sheet`/`cash_flow` are untouched (the defect is
-   revenue-specific).
+   `clean_data_frame` output; `balance_sheet`/`cash_flow` are untouched (this fix is
+   scoped to revenue only, not the general synthesis defect). `correct_revenue_totals`
+   now returns `tuple[income_statement_rows, corrections]`, and `get_financials` adds
+   every correction/drop it makes as a `{"concept", "column", "original", "corrected",
+   "rule": "T-118"}` entry to a new top-level `data["corrections"]` list, so callers see
+   exactly what was touched instead of trusting the numbers silently.
 3. Tests in `tests/sec_edgar/test_agent.py`: `correct_revenue_totals` unit tests
    (APA's real FY2023 shape, a genuinely larger later total left alone, the
    "Total cost of revenues" exclusion, an unsafe-to-derive contradiction dropping the
    value, a dimensional row never picked as either candidate, a no-op when no aggregate
-   concept is present, no mutation of the input) plus one `get_financials` end-to-end
-   test.
-4. `SPEC.md` FR-004 updated with the correction's contract and a live-verified APA figure
-   citation; `docs/modules/sec-edgar.md` gets a note under "Endpoints".
+   concept is present, no mutation of the input, and the returned `corrections` list
+   content for each case) plus one `get_financials` end-to-end test asserting
+   `data["corrections"]`.
+4. `SPEC.md` FR-004 updated with the correction's contract, the confirmed
+   parent-vs-summed-children mechanism, and a live-verified APA figure citation;
+   `docs/modules/sec-edgar.md` gets a note under "Endpoints" scoped as "APA revenue
+   instance only", not a general fix.
 
 **No constitution change** — no new dependency, provider, or stack-level rule; a
 within-service correctness fix to an existing route's output, so constitution AI
@@ -336,22 +356,31 @@ behavior #10 doesn't apply here.
 
 **Acceptance criteria**:
 
-- `uv run pytest tests/sec_edgar -q` passes, including 8 new tests (46 total).
+- `uv run pytest tests/sec_edgar -q` passes, including 8 updated tests (46 total).
 - Live-verified against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking): every
   available APA 10-K (FY2021 through FY2025, filed 2022-2026) and every 2024 10-Q's
   `get_financials` call resolves `us-gaap_Revenues` to the statement's own derived total
   (FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M — the exact figures
   `portfolio-financial-analysis`'s `T-117` acceptance criterion names) for periods
   affected, and leaves FY2021 (a pre-existing, differently-shaped too-small defect,
-  `portfolio-financial-analysis`'s own `T-095`) and FY2022 (not a defect) untouched.
+  `portfolio-financial-analysis`'s own `T-095`) and FY2022 (not a defect) untouched;
+  `data["corrections"]` records each correction/drop made.
+- Explicitly scoped: this fixes APA's revenue instance only. It does **not** close
+  `portfolio-financial-analysis`'s `T-117`/`T-118` — the general synthesis defect (163
+  mismatched values / 105 pairs / 1,101 synthesized rows found in the full-universe scan,
+  across concepts beyond revenue) is unaddressed and needs its own follow-up work item,
+  validating every synthesized non-dimensional value against the filer's actually-filed
+  facts rather than label-pattern detection on revenue alone.
 - `SPEC.md` FR-004 reconciled; `docs/modules/sec-edgar.md` updated.
 - `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` (full suite, 242
   passed) all clean; `pre-commit run --all-files` clean.
 
 ## Sequencing
 
-Work items 3, 4 and 5 are closed (merged and verified; tasks in `CHANGELOG.md`).
-Work items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
+Work items 3 and 4 are closed (merged and verified; tasks in `CHANGELOG.md`). Work item 5
+is open (PR #44, APA revenue instance only — see its Status line above; not yet merged,
+and does not close `portfolio-financial-analysis`'s `T-117`/`T-118`). Work items 1–2 stay
+reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

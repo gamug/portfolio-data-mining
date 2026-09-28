@@ -336,27 +336,39 @@ def _apa_fy2023_rows(key: str) -> list[dict]:
 def test_correct_revenue_totals_recovers_apa_s_real_total() -> None:
     """The mirror-image defect: a `total_concepts`-style match that is implausibly
     *large*, corrected to the statement's own derived "Total revenues" ($8,279M) -- the
-    exact figure portfolio-financial-analysis's T-117 acceptance criterion names."""
+    exact figure portfolio-financial-analysis's T-117 acceptance criterion names. The
+    correction is also recorded (T-118, PR #44 review) so a derived number is never
+    indistinguishable from a filed fact."""
     key = "2023-12-31 (FY)"
-    corrected = correct_revenue_totals(_apa_fy2023_rows(key))
+    corrected, corrections = correct_revenue_totals(_apa_fy2023_rows(key))
 
     total_row = next(r for r in corrected if r["concept"] == "us-gaap_Revenues")
     assert total_row[key] == 8_279_000_000.0
+    assert corrections == [
+        {
+            "concept": "us-gaap_Revenues",
+            "column": key,
+            "original": 16_558_000_000.0,
+            "corrected": 8_279_000_000.0,
+            "rule": "T-118",
+        }
+    ]
 
 
 def test_correct_revenue_totals_leaves_a_genuinely_larger_total_alone() -> None:
     """A later, larger "and other" total (APA's own FY2022, not a defect: "Total revenues
     and other" $12,132M >= "Total revenues" $11,075M) must not be treated as a
-    contradiction."""
+    contradiction -- and no correction is recorded for it."""
     key = "2022-12-31 (FY)"
     rows = [
         _row("us-gaap_Revenues", "Total revenues", **{key: 11_075_000_000.0}),
         _row("apa_RevenuesAndOther", "Total revenues and other", **{key: 12_132_000_000.0}),
     ]
 
-    corrected = correct_revenue_totals(rows)
+    corrected, corrections = correct_revenue_totals(rows)
 
     assert corrected[0][key] == 11_075_000_000.0
+    assert corrections == []
 
 
 def test_correct_revenue_totals_ignores_cost_of_revenue_lines() -> None:
@@ -375,15 +387,17 @@ def test_correct_revenue_totals_ignores_cost_of_revenue_lines() -> None:
         ),
     ]
 
-    corrected = correct_revenue_totals(rows)
+    corrected, corrections = correct_revenue_totals(rows)
 
     assert corrected[0][key] == 3_702_881_000.0
+    assert corrections == []
 
 
 def test_correct_revenue_totals_drops_the_value_when_between_rows_are_too_large() -> None:
     """When a later, smaller "total"-labeled row is found but the rows between it and the
     first match are too large relative to it to trust as a clean subtraction, the value is
-    dropped (`None`) rather than guessed or left at the untrustworthy original."""
+    dropped (`None`) rather than guessed or left at the untrustworthy original -- and the
+    drop is itself recorded as a correction with `corrected: None`."""
     key = "2023-12-31 (FY)"
     rows = [
         _row("us-gaap_Revenues", "Total revenues", **{key: 16_558_000_000.0}),
@@ -395,9 +409,18 @@ def test_correct_revenue_totals_drops_the_value_when_between_rows_are_too_large(
         _row("apa_RevenuesAndOther", "Total revenues and other", **{key: 8_192_000_000.0}),
     ]
 
-    corrected = correct_revenue_totals(rows)
+    corrected, corrections = correct_revenue_totals(rows)
 
     assert corrected[0][key] is None
+    assert corrections == [
+        {
+            "concept": "us-gaap_Revenues",
+            "column": key,
+            "original": 16_558_000_000.0,
+            "corrected": None,
+            "rule": "T-118",
+        }
+    ]
 
 
 def test_correct_revenue_totals_ignores_dimensional_breakdown_rows() -> None:
@@ -415,7 +438,7 @@ def test_correct_revenue_totals_ignores_dimensional_breakdown_rows() -> None:
         *_apa_fy2023_rows(key),
     ]
 
-    corrected = correct_revenue_totals(rows)
+    corrected, _corrections = correct_revenue_totals(rows)
 
     dimensional = next(r for r in corrected if r["label"] == "Kinetik")
     total_row = next(r for r in corrected if r["label"] == "Total revenues")
@@ -426,7 +449,9 @@ def test_correct_revenue_totals_ignores_dimensional_breakdown_rows() -> None:
 def test_correct_revenue_totals_no_total_concept_present_is_a_no_op() -> None:
     rows = [_row("us-gaap_CostOfRevenue", "Total cost of revenue", **{"2023 (FY)": 500.0})]
 
-    assert correct_revenue_totals(rows) == rows
+    corrected, corrections = correct_revenue_totals(rows)
+    assert corrected == rows
+    assert corrections == []
 
 
 def test_correct_revenue_totals_does_not_mutate_its_input() -> None:
@@ -470,6 +495,7 @@ def test_get_financials_success(agent: EdgarAgent) -> None:
     assert result["data"]["income_statement"] == [{"line": "Revenue", "amount": 1000.0}]
     assert result["data"]["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
     assert result["data"]["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
+    assert result["data"]["corrections"] == []
 
 
 def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
@@ -496,6 +522,15 @@ def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
         r for r in result["data"]["income_statement"] if r["concept"] == "us-gaap_Revenues"
     )
     assert total_row[key] == 8_279_000_000.0
+    assert result["data"]["corrections"] == [
+        {
+            "concept": "us-gaap_Revenues",
+            "column": key,
+            "original": 16_558_000_000.0,
+            "corrected": 8_279_000_000.0,
+            "rule": "T-118",
+        }
+    ]
 
 
 def test_get_financials_multiple_matches_without_accession_number_returns_error(

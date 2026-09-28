@@ -28,9 +28,13 @@ from edgar import Company, set_identity
 
 logger = logging.getLogger(__name__)
 
-# T-118 (tracks portfolio-financial-analysis's T-117, docs/model_fixes.md): the aggregate
-# revenue concepts a filer's income statement tags for a consolidated total -- mirrors
-# portfolio-financial-analysis/src/fundamental_agent/statements.py's
+# T-118 (tracks portfolio-financial-analysis's T-117, docs/model_fixes.md). Scope: this is a
+# targeted stopgap for APA's (CIK 0001841666) revenue instance only, not a general fix -- see
+# correct_revenue_totals' docstring for the actual mechanism (broader than first described) and
+# PR #44 review (@eldova1702, 2026-09-28) for the full-universe scan that found it recurs
+# elsewhere (163 mismatched values, 1,101 entirely-synthesized rows across the stored
+# universe). The aggregate revenue concepts a filer's income statement tags for a consolidated
+# total -- mirrors portfolio-financial-analysis/src/fundamental_agent/statements.py's
 # REGISTRY["revenue"].total_concepts, the downstream consumer of this payload.
 _REVENUE_TOTAL_CONCEPTS = (
     "us-gaap_Revenues",
@@ -94,13 +98,36 @@ def _period_columns(rows: list[dict[str, Any]]) -> list[str]:
     return keys
 
 
-def correct_revenue_totals(income_statement: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def correct_revenue_totals(
+    income_statement: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """T-118: a filer's aggregate revenue concept (:data:`_REVENUE_TOTAL_CONCEPTS`) can be a
-    component/breakdown figure edgartools' own XBRL rendering surfaces as if it were the
-    consolidated total, not merely a filer-side tagging slip -- verified live against APA
-    (CIK 0001841666, ``data.sec.gov`` ``companyconcept``/``companyfacts``, read-only): APA has
-    never filed a real ``us-gaap:Revenues`` fact at all, and its FY2023-2025 "Total revenues"
-    is exactly ~2x its own later, smaller "Total revenues and other" subtotal every year.
+    value edgartools' own XBRL rendering surfaces as if it were the consolidated total, not
+    merely a filer-side tagging slip.
+
+    **The actual mechanism (PR #44 review, @eldova1702, 2026-09-28) is broader than this
+    function's fix.** APA (CIK 0001841666) never filed a real, non-dimensional
+    ``us-gaap:Revenues`` fact at all -- edgartools *synthesizes* the non-dimensional row by
+    summing dimensional members of an axis, and when that axis has a parent member whose own
+    value already includes its children (APA's ``srt:ProductOrServiceAxis``: "Oil and gas",
+    the parent, equals "Oil and gas, excluding purchased" + "Purchased oil and gas costs", its
+    two children), the parent is counted twice: verified to the dollar for two independent
+    fiscal years -- FY2023 `8,279 + 7,385 + 894 = 16,558`; FY2024
+    `9,737 + 8,196 + 1,541 = 19,474`. The same synthesis-with-double-counting shape reproduces
+    on other filers/concepts entirely unrelated to revenue (the review's live example: SNA's
+    10-Q "Operating earnings"), and a full-universe scan (500 companies, the 61 ``us-gaap``
+    concepts ``fundamental_agent`` reads, compared against each company's own SEC
+    ``companyfacts``) found 163 stored values matching no SEC-filed value at that period end
+    (after excluding sign-convention flips) and 105 ``(company, concept)`` pairs (1,101 rows)
+    that were never filed non-dimensionally at all, so every one is synthesized.
+
+    **This function fixes APA's revenue instance only** -- a targeted stopgap, not a general
+    fix for the mechanism above. It stays the right shape for APA specifically because APA has
+    no filed non-dimensional revenue total to fall back on at all (`T-117`'s local guard in
+    ``portfolio-financial-analysis`` needs *some* trustworthy value). The general fix -- validate
+    every non-dimensional row against the filing's own default-context (no-dimension) XBRL
+    facts, pass through what was genuinely filed, replace what wasn't with the filed value if
+    one exists, or mark it synthesized -- is a separate, later `T-118` PR, not this one.
 
     Detected structurally (document order, the non-dimensional-row filter
     ``portfolio-financial-analysis``'s ``Statements._rows_for`` also applies downstream), not
@@ -116,15 +143,21 @@ def correct_revenue_totals(income_statement: list[dict[str, Any]]) -> list[dict[
     Ported from ``portfolio-financial-analysis``'s ``Statements._label_total_correction``
     (T-117, ``docs/model_fixes.md``), which validated this exact algorithm against every
     filing stored across that repo's full 503-asset production universe: 16 filing-periods
-    flagged, all APA, all safely corrected, 0 false positives elsewhere. Returns a new list;
-    *income_statement* is not mutated."""
+    flagged, all APA, all safely corrected, 0 false positives elsewhere.
+
+    Returns ``(rows, corrections)`` -- a new list (*income_statement* is not mutated) and one
+    ``{"concept", "column", "original", "corrected", "rule": "T-118"}`` record per value this
+    function changed (``corrected`` is ``None`` for a dropped, not-safely-derivable value) --
+    a derived number must never reach a caller looking indistinguishable from a filed fact."""
     rows = [dict(r) for r in income_statement]
+    corrections: list[dict[str, Any]] = []
     non_dim = [i for i, r in enumerate(rows) if not r.get("abstract") and not r.get("dimension")]
     winner_pos = next(
         (i for i in non_dim if rows[i].get("concept") in _REVENUE_TOTAL_CONCEPTS), None
     )
     if winner_pos is None:
-        return rows
+        return rows, corrections
+    concept = str(rows[winner_pos].get("concept"))
     for column in _period_columns(rows):
         total_value = _numeric(rows[winner_pos].get(column))
         if total_value is None:
@@ -147,12 +180,21 @@ def correct_revenue_totals(income_statement: list[dict[str, Any]]) -> list[dict[
                 for v in [_numeric(rows[j].get(column))]
                 if v is not None
             ]
-            if any(abs(v) > later_value * _BETWEEN_ROW_CEILING for v in between):
-                rows[winner_pos][column] = None
-            else:
-                rows[winner_pos][column] = later_value - sum(between)
+            corrected_value = None
+            if not any(abs(v) > later_value * _BETWEEN_ROW_CEILING for v in between):
+                corrected_value = later_value - sum(between)
+            rows[winner_pos][column] = corrected_value
+            corrections.append(
+                {
+                    "concept": concept,
+                    "column": column,
+                    "original": total_value,
+                    "corrected": corrected_value,
+                    "rule": "T-118",
+                }
+            )
             break
-    return rows
+    return rows, corrections
 
 
 class EdgarAgent:
@@ -403,7 +445,12 @@ class EdgarAgent:
             On success: {"success": True, "data": {
                 "income_statement": [<row dicts>],
                 "balance_sheet": [<row dicts>],
-                "cash_flow": [<row dicts>]}}
+                "cash_flow": [<row dicts>],
+                "corrections": [<{concept, column, original, corrected, rule}>]}}
+            "corrections" (T-118) lists every income-statement value this method derived or
+            dropped rather than returning as-is from edgartools -- APA's revenue instance only
+            today, see correct_revenue_totals' docstring; empty when nothing was corrected.
+            A derived number is never indistinguishable from a filed fact in this response.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -450,18 +497,20 @@ class EdgarAgent:
                     "success": False,
                     "error": f"The {year} '{form}' filing for '{cik_or_symbol}' has no XBRL financial data.",
                 }
+            income_statement, revenue_corrections = correct_revenue_totals(
+                self.clean_data_frame(xbrl.statements.income_statement().to_dataframe())  # type: ignore[union-attr]
+            )
             return {
                 "success": True,
                 "data": {
-                    "income_statement": correct_revenue_totals(
-                        self.clean_data_frame(xbrl.statements.income_statement().to_dataframe())  # type: ignore[union-attr]
-                    ),
+                    "income_statement": income_statement,
                     "balance_sheet": self.clean_data_frame(
                         xbrl.statements.balance_sheet().to_dataframe()
                     ),  # type: ignore[union-attr]
                     "cash_flow": self.clean_data_frame(
                         xbrl.statements.cashflow_statement().to_dataframe()
                     ),  # type: ignore[union-attr]
+                    "corrections": revenue_corrections,
                 },
             }
         except Exception as e:
