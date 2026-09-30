@@ -118,3 +118,13 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > This closes `T-042` (`TASKS.md`, Work item 5) but still does not by itself close
 > `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo needs to re-verify against a
 > redeployed `sec_edgar` itself before its own local guard is retired (`T-041`).
+>
+> **Failure isolation (PR #45 review):** `reconcile_with_filed_facts`' `xbrl.facts.query()`
+> call is live and can fail for a given statement (an unusual filing shape, a transient
+> issue). `get_financials` calls it through `_safe_reconcile_with_filed_facts`, which
+> catches that failure per statement, logs a warning, and returns that statement's rows
+> rendered but unvalidated (no `T-042` corrections for it) rather than letting the
+> exception reach `get_financials`' one outer `try/except` — which would otherwise convert
+> the *entire* response to `{"success": False}` and discard the other two statements'
+> already-successfully-rendered data along with it. `reconcile_with_filed_facts` itself is
+> unchanged and still raises on failure, so it stays directly unit-testable.

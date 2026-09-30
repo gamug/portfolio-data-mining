@@ -392,6 +392,32 @@ def reconcile_with_filed_facts(
     return rows, corrections
 
 
+def _safe_reconcile_with_filed_facts(
+    rows: list[dict[str, Any]],
+    xbrl: Any,
+    statement: str,
+    skip: frozenset[tuple[str, str]] = frozenset(),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``get_financials``' call site for :func:`reconcile_with_filed_facts` -- isolates a
+    failure in this one (enhancement, not load-bearing) layer so it can never discard
+    *statement*'s already-successfully-rendered rows. ``xbrl.facts.query()`` is a live call
+    into `edgartools`' own parsing of the filing; an unusual filing shape or a transient
+    failure there must not turn an otherwise-successful `get_financials` response into
+    ``{"success": False}`` and discard the other two statements along with it (reported
+    against PR #45, T-042's own review). On failure, logs a warning and returns *rows*
+    unchanged with no corrections for *statement* -- the caller still gets the rendered
+    data, just without T-042's validation for that one statement."""
+    try:
+        return reconcile_with_filed_facts(rows, xbrl, statement, skip=skip)
+    except Exception:
+        logger.warning(
+            "T-042 reconciliation failed for statement=%s -- returning its rows unvalidated",
+            statement,
+            exc_info=True,
+        )
+        return rows, []
+
+
 class EdgarAgent:
     """
     Tool for looking up U.S. public companies' SEC EDGAR filings and financial data.
@@ -651,7 +677,9 @@ class EdgarAgent:
             rendering synthesized rather than the filer actually tagging non-dimensionally is
             replaced with the genuinely filed value, or dropped (None) when none exists. Empty
             when nothing was corrected. A derived number is never indistinguishable from a
-            filed fact in this response.
+            filed fact in this response. "T-042" validation failing for one statement (see
+            _safe_reconcile_with_filed_facts) never fails this call -- that statement's rows
+            are returned rendered-but-unvalidated rather than discarding all three statements.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -704,15 +732,15 @@ class EdgarAgent:
             for correction in revenue_corrections:
                 correction["statement"] = "income_statement"
             already_corrected = frozenset((c["concept"], c["column"]) for c in revenue_corrections)
-            income_statement, general_income_corrections = reconcile_with_filed_facts(
+            income_statement, general_income_corrections = _safe_reconcile_with_filed_facts(
                 income_statement, xbrl, "income_statement", skip=already_corrected
             )
-            balance_sheet, balance_sheet_corrections = reconcile_with_filed_facts(
+            balance_sheet, balance_sheet_corrections = _safe_reconcile_with_filed_facts(
                 self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),  # type: ignore[union-attr]
                 xbrl,
                 "balance_sheet",
             )
-            cash_flow, cash_flow_corrections = reconcile_with_filed_facts(
+            cash_flow, cash_flow_corrections = _safe_reconcile_with_filed_facts(
                 self.clean_data_frame(xbrl.statements.cashflow_statement().to_dataframe()),  # type: ignore[union-attr]
                 xbrl,
                 "cash_flow",

@@ -19,6 +19,7 @@ from sec_edgar.agent import (
     EdgarAgent,
     _filed_nondimensional_values,
     _parse_period_column,
+    _safe_reconcile_with_filed_facts,
     correct_revenue_totals,
     reconcile_with_filed_facts,
 )
@@ -721,6 +722,39 @@ def test_reconcile_with_filed_facts_does_not_mutate_its_input() -> None:
 
 
 # ---------------------------------------------------------------------
+# _safe_reconcile_with_filed_facts (T-042 review, PR #45)
+# ---------------------------------------------------------------------
+
+
+def test_safe_reconcile_with_filed_facts_returns_result_on_success() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[500.0]):
+        corrected, corrections = _safe_reconcile_with_filed_facts(
+            rows, MagicMock(), "balance_sheet"
+        )
+
+    assert corrected[0]["2023-12-31"] == 500.0
+    assert corrections == []
+
+
+def test_safe_reconcile_with_filed_facts_isolates_a_query_failure() -> None:
+    """A failure inside `reconcile_with_filed_facts` (e.g. `xbrl.facts.query()` raising for
+    an unusual filing) must not propagate -- it's an enhancement layer on top of
+    already-successfully-rendered rows, not load-bearing data. Reported in PR #45's review:
+    an uncaught exception here previously converted `get_financials`' entire response to
+    `success: False`, discarding the other two statements' already-loaded data along with
+    it."""
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent.reconcile_with_filed_facts", side_effect=RuntimeError("boom")):
+        corrected, corrections = _safe_reconcile_with_filed_facts(
+            rows, MagicMock(), "balance_sheet"
+        )
+
+    assert corrected == rows  # returned rendered-but-unvalidated, not discarded
+    assert corrections == []
+
+
+# ---------------------------------------------------------------------
 # get_financials
 # ---------------------------------------------------------------------
 
@@ -870,6 +904,82 @@ def test_get_financials_t042_general_check_runs_alongside_t118_end_to_end(
     assert operating_correction["statement"] == "income_statement"
     assert operating_correction["reason"] == "no_filed_nondimensional_fact"
     assert not any(c["concept"] == "us-gaap_Assets" for c in corrections)
+
+
+def test_get_financials_survives_a_t042_reconciliation_failure_on_one_statement(
+    agent: EdgarAgent,
+) -> None:
+    """PR #45 review: `reconcile_with_filed_facts` raising for one statement (a live
+    `xbrl.facts.query()` call, can fail for reasons outside this module's control) must not
+    turn the whole `get_financials` response into `success: False` and discard the other
+    two statements' already-successfully-rendered data. `balance_sheet`'s reconciliation is
+    made to fail here; `income_statement` (T-118 still applies) and `cash_flow` must come
+    back normally."""
+    key = "2023-12-31 (FY)"
+    income_rows = [
+        _row("us-gaap_Revenues", "Total revenues", **{key: 16_558_000_000.0}),
+        _row("apa_RevenuesAndOther", "Total revenues and other", **{key: 8_279_000_000.0}),
+    ]
+    balance_rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 480.0})]
+    cash_flow_rows = [
+        _row(
+            "us-gaap_NetCashProvidedByUsedInOperatingActivities",
+            "Operating cash flow",
+            **{key: 100.0},
+        )
+    ]
+    filing = make_filing(filing_date=date(2024, 2, 22))
+    filing.xbrl.return_value = _mock_xbrl_with_facts(
+        pd.DataFrame(income_rows),
+        pd.DataFrame(balance_rows),
+        pd.DataFrame(cash_flow_rows),
+        facts_by_concept={
+            "us-gaap:NetCashProvidedByUsedInOperatingActivities": pd.DataFrame(
+                {"value": [100.0], "period_start": ["2023-01-01"], "period_end": ["2023-12-31"]}
+            )
+        },
+    )
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [filing]
+
+    real_reconcile = reconcile_with_filed_facts
+
+    def fail_only_for_balance_sheet(rows, xbrl, statement, skip=frozenset()):
+        if statement == "balance_sheet":
+            raise RuntimeError("simulated xbrl.facts.query() failure")
+        return real_reconcile(rows, xbrl, statement, skip=skip)
+
+    with (
+        patch("sec_edgar.agent.Company", return_value=mock_company),
+        patch(
+            "sec_edgar.agent.reconcile_with_filed_facts",
+            side_effect=fail_only_for_balance_sheet,
+        ),
+    ):
+        result = agent.get_financials("APA", form="10-K", year=2024)
+
+    assert result["success"] is True
+    income = result["data"]["income_statement"]
+    revenue_row = next(r for r in income if r["concept"] == "us-gaap_Revenues")
+    assert revenue_row[key] == 8_279_000_000.0  # T-118 still applied
+
+    # balance_sheet's reconciliation failed -- rendered rows come back unvalidated, not lost
+    assert result["data"]["balance_sheet"] == [
+        {
+            "concept": "us-gaap_Assets",
+            "label": "Total assets",
+            "2023-12-31": 480.0,
+            "standard_concept": None,
+            "abstract": False,
+            "dimension": False,
+            "is_breakdown": False,
+        }
+    ]
+
+    cash_flow = result["data"]["cash_flow"]
+    assert cash_flow[0]["2023-12-31 (FY)"] == 100.0  # cash_flow's own reconciliation unaffected
+
+    assert not any(c["statement"] == "balance_sheet" for c in result["data"]["corrections"])
 
 
 def test_get_financials_multiple_matches_without_accession_number_returns_error(
