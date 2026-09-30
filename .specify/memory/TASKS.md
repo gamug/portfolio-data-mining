@@ -148,7 +148,30 @@ renumber; mark a cancelled/superseded task in place instead.
       gap flags); SNA's FY2026 10-Qs (the PR #44 review's cited non-revenue example —
       genuinely-filed non-dimensional rows like `OperatingIncomeLoss` pass through,
       never-filed ones like `OperatingExpenses` drop). `SPEC.md` FR-004,
-      `docs/modules/sec-edgar.md`, `PLAN.md` Work item 5 all updated.
+      `docs/modules/sec-edgar.md`, `PLAN.md` Work item 5 all updated. Merged as PR #45.
+      **Follow-up, same day**: PR #45's own review (`sourcery-ai`, 2026-09-30) found a
+      correctness gap in the wiring, not the algorithm — `reconcile_with_filed_facts`'
+      live `xbrl.facts.query()` call could raise for a statement, and `get_financials`'
+      one outer `try/except` would convert the *entire* response to `success: False`,
+      discarding the other two statements' already-successfully-rendered data along with
+      it. Fixed in a follow-up PR (`fix/t042-reconciliation-failure-isolation`, #46): a new
+      `_safe_reconcile_with_filed_facts` wrapper at each of the three call sites in
+      `get_financials` catches a `reconcile_with_filed_facts` failure per statement and
+      returns that statement's rows rendered-but-unvalidated (empty corrections for it)
+      instead of failing the whole call — `reconcile_with_filed_facts` itself stays
+      exception-raising and unit-testable as before. 4 new tests (69 total in
+      `tests/sec_edgar`, 265 full suite).
+      **Follow-up to the follow-up, same day**: PR #46's own review (`sourcery-ai`,
+      2026-09-30) flagged that the broad `except Exception` also swallows a genuine bug in
+      this module's own logic, and that returning empty corrections on failure looks
+      identical to "verified, nothing to correct." Addressed without narrowing the catch
+      (no fixed, enumerable set of "expected" failure types exists for a live third-party
+      library, and narrowing risks reopening the exact PR #45 failure this wrapper
+      prevents): failures now log at `error` level with a full traceback, and
+      `_safe_reconcile_with_filed_facts` returns a third value (an error message, `None` on
+      success) that `get_financials` surfaces in a new top-level `data["reconciliation_
+      errors"]` list (`{"statement", "error"}`, empty when nothing failed), so a caller can
+      always distinguish the two cases. Same PR #46, additional commit.
 
 ## Status
 

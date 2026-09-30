@@ -118,3 +118,25 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > This closes `T-042` (`TASKS.md`, Work item 5) but still does not by itself close
 > `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo needs to re-verify against a
 > redeployed `sec_edgar` itself before its own local guard is retired (`T-041`).
+>
+> **Failure isolation (PR #45 review):** `reconcile_with_filed_facts`' `xbrl.facts.query()`
+> call is live and can fail for a given statement (an unusual filing shape, a transient
+> issue). `get_financials` calls it through `_safe_reconcile_with_filed_facts`, which
+> catches that failure per statement and returns that statement's rows rendered but
+> unvalidated (no `T-042` corrections for it) rather than letting the exception reach
+> `get_financials`' one outer `try/except` — which would otherwise convert the *entire*
+> response to `{"success": False}` and discard the other two statements'
+> already-successfully-rendered data along with it. `reconcile_with_filed_facts` itself is
+> unchanged and still raises on failure, so it stays directly unit-testable.
+>
+> **Surfacing that failure (PR #46 review):** the catch above is deliberately broad
+> (`except Exception`, not a narrower "expected filing-query failure" list) — `reconcile_
+> with_filed_facts` runs against a third-party library's live, evolving internals, so there
+> is no fixed, enumerable set of exception types to narrow to, and missing one would
+> silently reopen the exact failure this wrapper exists to prevent; it isn't needed to catch
+> a bug in this module's own logic either, since `reconcile_with_filed_facts` is separately
+> unit-tested and unaffected by this wrapper. What the broad catch must not do is make a real
+> failure look identical to "verified, nothing to correct": a failure now logs at `error`
+> level with a full traceback, and `get_financials` records it in a top-level
+> `data["reconciliation_errors"]` list (`[{"statement", "error"}]`, empty when nothing
+> failed) alongside `data["corrections"]`, so a caller can always tell the two cases apart.

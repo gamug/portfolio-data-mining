@@ -392,6 +392,44 @@ def reconcile_with_filed_facts(
     return rows, corrections
 
 
+def _safe_reconcile_with_filed_facts(
+    rows: list[dict[str, Any]],
+    xbrl: Any,
+    statement: str,
+    skip: frozenset[tuple[str, str]] = frozenset(),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    """``get_financials``' call site for :func:`reconcile_with_filed_facts` -- isolates a
+    failure in this one (enhancement, not load-bearing) layer so it can never discard
+    *statement*'s already-successfully-rendered rows. ``xbrl.facts.query()`` is a live call
+    into `edgartools`' own parsing of the filing; an unusual filing shape or a transient
+    failure there must not turn an otherwise-successful `get_financials` response into
+    ``{"success": False}`` and discard the other two statements along with it (reported
+    against PR #45, T-042's own review).
+
+    Deliberately catches ``Exception`` broadly, not a narrower set of "expected" filing-query
+    failure types (PR #46 review raised this) -- ``reconcile_with_filed_facts`` is exercised
+    against a third-party library's live, evolving internals (:func:`_filed_nondimensional_values`'
+    own docstring already documents one shape `edgartools` changed under it), so there is no
+    fixed, enumerable list of "expected" exception types to narrow to; missing one would silently
+    reopen exactly the failure this wrapper exists to prevent. Narrowing isn't needed to catch a
+    bug in this module's own logic either, since :func:`reconcile_with_filed_facts` is separately
+    unit-tested and unaffected by this wrapper -- it still raises on failure there.
+
+    What *is* addressed: silently returning empty corrections here would make a real failure
+    indistinguishable from "verified, nothing to correct". So a failure is: logged at ``error``
+    level with a full traceback (this is unexpected, not routine); *rows* passed back unchanged
+    (rendered-but-unvalidated, not lost); and the third return value is an error message string
+    instead of ``None``, so ``get_financials`` can record it in a top-level
+    ``data["reconciliation_errors"]`` list rather than the failure disappearing into an empty
+    ``corrections`` list."""
+    try:
+        rows, corrections = reconcile_with_filed_facts(rows, xbrl, statement, skip=skip)
+    except Exception as e:
+        logger.error("T-042 reconciliation failed for statement=%s", statement, exc_info=True)
+        return rows, [], f"{type(e).__name__}: {e}"
+    return rows, corrections, None
+
+
 class EdgarAgent:
     """
     Tool for looking up U.S. public companies' SEC EDGAR filings and financial data.
@@ -642,7 +680,8 @@ class EdgarAgent:
                 "balance_sheet": [<row dicts>],
                 "cash_flow": [<row dicts>],
                 "corrections": [<{statement, concept, column, original, corrected, rule,
-                reason?}>]}}
+                reason?}>],
+                "reconciliation_errors": [<{statement, error}>]}}
             "corrections" lists every value this method derived, replaced, or dropped rather
             than returning as-is from edgartools, across all three statements: rule "T-118"
             (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
@@ -651,7 +690,13 @@ class EdgarAgent:
             rendering synthesized rather than the filer actually tagging non-dimensionally is
             replaced with the genuinely filed value, or dropped (None) when none exists. Empty
             when nothing was corrected. A derived number is never indistinguishable from a
-            filed fact in this response.
+            filed fact in this response. "T-042" validation failing for one statement (see
+            _safe_reconcile_with_filed_facts' docstring for why this catches broadly) never
+            fails this call -- that statement's rows are returned rendered-but-unvalidated
+            rather than discarding all three statements, and the failure is recorded in
+            "reconciliation_errors" (empty when nothing failed) so a caller can tell "verified,
+            nothing to correct" apart from "not verified because this layer itself failed" --
+            those two cases must never look identical.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -704,15 +749,19 @@ class EdgarAgent:
             for correction in revenue_corrections:
                 correction["statement"] = "income_statement"
             already_corrected = frozenset((c["concept"], c["column"]) for c in revenue_corrections)
-            income_statement, general_income_corrections = reconcile_with_filed_facts(
-                income_statement, xbrl, "income_statement", skip=already_corrected
+            income_statement, general_income_corrections, income_error = (
+                _safe_reconcile_with_filed_facts(
+                    income_statement, xbrl, "income_statement", skip=already_corrected
+                )
             )
-            balance_sheet, balance_sheet_corrections = reconcile_with_filed_facts(
-                self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),  # type: ignore[union-attr]
-                xbrl,
-                "balance_sheet",
+            balance_sheet, balance_sheet_corrections, balance_sheet_error = (
+                _safe_reconcile_with_filed_facts(
+                    self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),  # type: ignore[union-attr]
+                    xbrl,
+                    "balance_sheet",
+                )
             )
-            cash_flow, cash_flow_corrections = reconcile_with_filed_facts(
+            cash_flow, cash_flow_corrections, cash_flow_error = _safe_reconcile_with_filed_facts(
                 self.clean_data_frame(xbrl.statements.cashflow_statement().to_dataframe()),  # type: ignore[union-attr]
                 xbrl,
                 "cash_flow",
@@ -731,6 +780,15 @@ class EdgarAgent:
                         *general_income_corrections,
                         *balance_sheet_corrections,
                         *cash_flow_corrections,
+                    ],
+                    "reconciliation_errors": [
+                        {"statement": statement, "error": error}
+                        for statement, error in (
+                            ("income_statement", income_error),
+                            ("balance_sheet", balance_sheet_error),
+                            ("cash_flow", cash_flow_error),
+                        )
+                        if error is not None
                     ],
                 },
             }
