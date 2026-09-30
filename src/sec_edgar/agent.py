@@ -19,8 +19,10 @@ Design notes for whoever wires this into the agent framework:
 """
 
 import logging
+import math
 import os
 import re
+from datetime import date
 from typing import Any
 
 import numpy as np
@@ -54,6 +56,20 @@ _LABEL_TOTAL_CONTRADICTION_RATIO = 0.75
 # Each row between the two totals must be no larger than this fraction of the later, trusted
 # total, or the correction is too uncertain to trust -- drop the value rather than guess.
 _BETWEEN_ROW_CEILING = 0.25
+# T-042: a rendered statement's duration-period column is "<end_date> (Q1|Q2|Q3|Q4|YTD|FY)";
+# an instant-period column (balance sheet) is a bare "<end_date>". Mirrors the bucketing
+# edgartools' own xbrl/statements.py uses when it builds these column names, so a fact's own
+# (period_start, period_end) span can be classified back into the same bucket a column name
+# implies -- day-span thresholds duplicated from there, not derived independently.
+_PERIOD_COLUMN_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\s*\((Q[1-4]|YTD|FY)\))?$")
+# Keyed by category, not specific quarter -- a fact's day-span alone can confirm "this is a
+# quarter-length period" but never which quarter number it is.
+_DURATION_DAY_BUCKETS = {"Q": (80, 100), "YTD": (175, 285), "FY": (351, 10**6)}
+# A filed fact's value is trusted as matching a rendered value within this absolute tolerance
+# -- XBRL monetary facts are whole numbers; this only absorbs float round-tripping, not a real
+# discrepancy.
+_VALUE_MATCH_TOLERANCE = 1.0
+
 # Row-metadata keys edgartools' income-statement dataframe carries alongside each period's
 # value column -- everything else on a row is a period column (e.g. "2023-12-31 (FY)").
 _ROW_METADATA_KEYS = frozenset(
@@ -194,6 +210,185 @@ def correct_revenue_totals(
                 }
             )
             break
+    return rows, corrections
+
+
+def _parse_period_column(column: str) -> tuple[str, str | None] | None:
+    """Parse a rendered statement column name back into ``(end_date, duration_kind)`` -- the
+    inverse of the naming `edgartools`' own `xbrl/statements.py` builds when it renders a
+    statement. ``duration_kind`` is ``None`` for an instant (point-in-time, e.g. balance sheet)
+    column, otherwise one of "Q1".."Q4"/"YTD"/"FY". Returns ``None`` for a column that doesn't
+    match either shape -- the caller must leave it alone rather than guess."""
+    match = _PERIOD_COLUMN_RE.match(column.strip())
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def _duration_days(start: Any, end: Any) -> int | None:
+    try:
+        d0 = date.fromisoformat(str(start)[:10])
+        d1 = date.fromisoformat(str(end)[:10])
+    except (TypeError, ValueError):
+        return None
+    return (d1 - d0).days
+
+
+def _new_nondimensional_query(xbrl: Any, concept: str) -> Any:
+    return xbrl.facts.query().by_concept(concept, exact=True).by_dimension(None)
+
+
+def _instant_fact_values(xbrl: Any, concept: str, end_date: str) -> list[float]:
+    df = (
+        _new_nondimensional_query(xbrl, concept)
+        .by_instant_date(end_date, exact=True)
+        .to_dataframe()
+    )
+    if df.empty or "value" not in df.columns:
+        return []
+    return [v for v in (_numeric(x) for x in df["value"]) if v is not None]
+
+
+def _duration_fact_values(
+    xbrl: Any, concept: str, end_date: str, duration_kind: str
+) -> list[float]:
+    df = (
+        _new_nondimensional_query(xbrl, concept)
+        .by_date_range(end_date=end_date, exact=True)
+        .to_dataframe()
+    )
+    if df.empty or "value" not in df.columns:
+        return []
+    bucket = "Q" if duration_kind.startswith("Q") else duration_kind
+    low, high = _DURATION_DAY_BUCKETS[bucket]
+    values: list[float] = []
+    for _, row in df.iterrows():
+        days = _duration_days(row.get("period_start"), row.get("period_end"))
+        if days is None or not (low <= days <= high):
+            continue
+        value = _numeric(row.get("value"))
+        if value is not None:
+            values.append(value)
+    return values
+
+
+def _filed_nondimensional_values(
+    xbrl: Any, concept: str, end_date: str, duration_kind: str | None
+) -> list[float]:
+    """T-042: the one place this module touches `edgartools`' `FactQuery` API. Returns the
+    value of every genuinely filed, non-dimensional (default-context) XBRL fact for *concept*
+    whose period ends on *end_date* -- an empty list means nothing was filed there at all (a
+    rendered value for that concept/period is synthesized by `edgartools`' own rendering, not
+    filed), not an error.
+
+    *duration_kind* disambiguates same-end-date facts of different lengths (a quarter and a
+    YTD period can share an end date): ``None`` queries an instant fact; otherwise a duration
+    fact's own ``period_start``/``period_end`` span is classified into the same day-span bucket
+    (:data:`_DURATION_DAY_BUCKETS`) `edgartools` used to label the column, and only matching
+    candidates are returned. More than one value coming back means the match is ambiguous --
+    the caller must not guess which one the rendered value corresponds to.
+
+    Known conservative gap: a cash-flow statement's "beginning of period"/"end of period" cash
+    row is rendered under a duration column but is genuinely filed as an *instant* fact at the
+    period's start/end date respectively (live-verified against MSFT's FY2024 10-K, concept
+    `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`) -- an earlier version of
+    this function fell back to an instant lookup at the column's end date to catch that shape,
+    but the "beginning of period" row needs the period's *start* date, not its end date, and
+    both rows share one concept with no reliable way to tell them apart here; the fallback
+    picked the wrong endpoint's instant fact and silently substituted a different period's
+    value; live-verified regression. Removed rather than fixed with a label heuristic -- this
+    function returns ``[]`` for that shape instead (the caller drops it to ``None``, same as
+    "never filed"), which loses that one row's value but never corrupts it.
+    """
+    if duration_kind is None:
+        return _instant_fact_values(xbrl, concept, end_date)
+    return _duration_fact_values(xbrl, concept, end_date, duration_kind)
+
+
+def reconcile_with_filed_facts(
+    rows: list[dict[str, Any]],
+    xbrl: Any,
+    statement: str,
+    skip: frozenset[tuple[str, str]] = frozenset(),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """T-042: the general counterpart to :func:`correct_revenue_totals` -- validates every
+    non-dimensional row's value, any concept, against what the filer's own XBRL actually
+    tagged non-dimensionally for that concept/period (:func:`_filed_nondimensional_values`),
+    instead of a label-pattern heuristic scoped to revenue-total concepts. A rendered value
+    that matches a genuinely filed fact passes through untouched; one that differs is replaced
+    with the filed value; one with no filed non-dimensional fact at all for that concept/period
+    is dropped (``None``) rather than trusted -- there is no general way to reconstruct it
+    (unlike :func:`correct_revenue_totals`'s label-based subtraction, which is why that
+    function still runs first and this one must skip whatever it already corrected via *skip*,
+    or it would find "nothing filed" for revenue again and wipe out that reconstruction).
+
+    A column whose name doesn't parse as a period, or where more than one filed value matches
+    equally well (ambiguous -- can't tell which one the rendered value should be compared
+    against), is left alone: never guess.
+
+    Returns ``(rows, corrections)`` -- a new list (*rows* argument not mutated) and one
+    ``{"statement", "concept", "column", "original", "corrected", "rule": "T-042", "reason"}``
+    record per value changed or dropped."""
+    rows = [dict(r) for r in rows]
+    corrections: list[dict[str, Any]] = []
+    non_dim = [i for i, r in enumerate(rows) if not r.get("abstract") and not r.get("dimension")]
+    for i in non_dim:
+        concept = rows[i].get("concept")
+        if not concept:
+            continue
+        concept = str(concept)
+        for column in _period_columns(rows):
+            if (concept, column) in skip:
+                continue
+            rendered_value = _numeric(rows[i].get(column))
+            if rendered_value is None:
+                continue
+            parsed = _parse_period_column(column)
+            if parsed is None:
+                continue
+            end_date, duration_kind = parsed
+            filed_values = _filed_nondimensional_values(xbrl, concept, end_date, duration_kind)
+            if len(filed_values) > 1:
+                continue
+            if not filed_values:
+                rows[i][column] = None
+                corrections.append(
+                    {
+                        "statement": statement,
+                        "concept": concept,
+                        "column": column,
+                        "original": rendered_value,
+                        "corrected": None,
+                        "rule": "T-042",
+                        "reason": "no_filed_nondimensional_fact",
+                    }
+                )
+                continue
+            filed_value = filed_values[0]
+            if abs(abs(filed_value) - abs(rendered_value)) <= _VALUE_MATCH_TOLERANCE:
+                # Same magnitude, opposite sign: edgartools' presentation layer applies a
+                # per-concept sign convention (contra accounts, cash-flow decreases, etc,
+                # driven by the row's own "weight"/"preferred_sign" metadata) on top of the
+                # filed fact's raw tagged sign -- a genuinely filed value, not a defect. The
+                # full-universe scan that found this defect explicitly excluded these
+                # ("after excluding sign-convention flips"); flipping the sign back here
+                # would silently reintroduce that false-positive shape.
+                continue
+            corrected_value = (
+                math.copysign(abs(filed_value), rendered_value) if rendered_value else filed_value
+            )
+            rows[i][column] = corrected_value
+            corrections.append(
+                {
+                    "statement": statement,
+                    "concept": concept,
+                    "column": column,
+                    "original": rendered_value,
+                    "corrected": corrected_value,
+                    "rule": "T-042",
+                    "reason": "filed_value_mismatch",
+                }
+            )
     return rows, corrections
 
 
@@ -446,11 +641,17 @@ class EdgarAgent:
                 "income_statement": [<row dicts>],
                 "balance_sheet": [<row dicts>],
                 "cash_flow": [<row dicts>],
-                "corrections": [<{concept, column, original, corrected, rule}>]}}
-            "corrections" (T-118) lists every income-statement value this method derived or
-            dropped rather than returning as-is from edgartools -- APA's revenue instance only
-            today, see correct_revenue_totals' docstring; empty when nothing was corrected.
-            A derived number is never indistinguishable from a filed fact in this response.
+                "corrections": [<{statement, concept, column, original, corrected, rule,
+                reason?}>]}}
+            "corrections" lists every value this method derived, replaced, or dropped rather
+            than returning as-is from edgartools, across all three statements: rule "T-118"
+            (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
+            specifically; rule "T-042" (see reconcile_with_filed_facts' docstring) is the
+            general check -- any non-dimensional value on any statement that edgartools'
+            rendering synthesized rather than the filer actually tagging non-dimensionally is
+            replaced with the genuinely filed value, or dropped (None) when none exists. Empty
+            when nothing was corrected. A derived number is never indistinguishable from a
+            filed fact in this response.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -500,21 +701,39 @@ class EdgarAgent:
             income_statement, revenue_corrections = correct_revenue_totals(
                 self.clean_data_frame(xbrl.statements.income_statement().to_dataframe())  # type: ignore[union-attr]
             )
+            for correction in revenue_corrections:
+                correction["statement"] = "income_statement"
+            already_corrected = frozenset((c["concept"], c["column"]) for c in revenue_corrections)
+            income_statement, general_income_corrections = reconcile_with_filed_facts(
+                income_statement, xbrl, "income_statement", skip=already_corrected
+            )
+            balance_sheet, balance_sheet_corrections = reconcile_with_filed_facts(
+                self.clean_data_frame(xbrl.statements.balance_sheet().to_dataframe()),  # type: ignore[union-attr]
+                xbrl,
+                "balance_sheet",
+            )
+            cash_flow, cash_flow_corrections = reconcile_with_filed_facts(
+                self.clean_data_frame(xbrl.statements.cashflow_statement().to_dataframe()),  # type: ignore[union-attr]
+                xbrl,
+                "cash_flow",
+            )
+        except Exception as e:
+            return {"success": False, "error": f"Failed to extract financials: {e}"}
+        else:
             return {
                 "success": True,
                 "data": {
                     "income_statement": income_statement,
-                    "balance_sheet": self.clean_data_frame(
-                        xbrl.statements.balance_sheet().to_dataframe()
-                    ),  # type: ignore[union-attr]
-                    "cash_flow": self.clean_data_frame(
-                        xbrl.statements.cashflow_statement().to_dataframe()
-                    ),  # type: ignore[union-attr]
-                    "corrections": revenue_corrections,
+                    "balance_sheet": balance_sheet,
+                    "cash_flow": cash_flow,
+                    "corrections": [
+                        *revenue_corrections,
+                        *general_income_corrections,
+                        *balance_sheet_corrections,
+                        *cash_flow_corrections,
+                    ],
                 },
             }
-        except Exception as e:
-            return {"success": False, "error": f"Failed to extract financials: {e}"}
 
     def list_years_available(self, cik_or_symbol: str, form: str) -> dict:
         """

@@ -73,14 +73,48 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > returned by `get_financials` — so callers can see exactly what was touched instead of
 > trusting the numbers silently.
 >
-> **This is confirmed to be a general `edgartools` synthesis defect, not an APA/revenue
-> quirk.** A full-universe scan of every stored filing found 163 mismatched
+> **This was confirmed to be a general `edgartools` synthesis defect, not an APA/revenue
+> quirk** — a full-universe scan of every stored filing found 163 mismatched
 > parent-vs-summed-children values across 105 concept/period pairs, spanning 1,101
-> synthesized non-dimensional rows total — revenue is only the one concept this PR
-> corrects. `correct_revenue_totals` fixes **APA's revenue instance only**; it does not
-> close `portfolio-financial-analysis`'s `T-117`/`T-118` (that repo's own local guard in
-> `docs/model_fixes.md` stays in place as the load-bearing backstop, not a redundant one).
-> A follow-up PR, still under `T-118`, is planned to validate every synthesized
-> non-dimensional value generally against the filer's actually-filed facts (not just
-> revenue, not just label-pattern detection) and mark or drop whatever doesn't
-> reconcile.
+> synthesized non-dimensional rows total. `correct_revenue_totals` fixes **APA's revenue
+> instance only**; it does not by itself close `portfolio-financial-analysis`'s
+> `T-117`/`T-118` (that repo's own local guard in `docs/model_fixes.md` stays in place as
+> the load-bearing backstop, not a redundant one) — see `T-042` immediately below for the
+> general fix that's meant to.
+
+> **Note (T-042, the general fix):** `/edgar/financials` also runs
+> `reconcile_with_filed_facts` (`src/sec_edgar/agent.py`) on all three statements
+> (`income_statement` — after `correct_revenue_totals`, `balance_sheet`, `cash_flow`)
+> before returning. Where `correct_revenue_totals` detects the contradiction shape by label
+> pattern and reconstructs a value, `reconcile_with_filed_facts` instead validates every
+> remaining non-dimensional row, any concept, directly against the filing's own XBRL facts
+> (`xbrl.facts.query().by_concept(...).by_dimension(None)` — the already-loaded filing, no
+> extra network call): a rendered value matching a genuinely filed non-dimensional fact for
+> that concept/period (by magnitude — a same-magnitude, opposite-sign match is `edgartools`'
+> own presentation-layer sign convention for contra accounts/cash-flow decreases, not a
+> defect, and is left alone) passes through untouched; one with no filed non-dimensional
+> fact at all for that concept/period is dropped (`None`) — there's no general way to
+> reconstruct it the way `T-118`'s label-based subtraction can for revenue, which is why
+> that layer still runs first and `T-042` skips whatever it already corrected. A column
+> whose period can't be parsed, or where more than one filed value matches ambiguously, is
+> left alone rather than guessed. Corrections/drops from both layers share one
+> `data["corrections"]` list, now with a `"statement"` field and, on `T-042` entries, a
+> `"reason"` (`"no_filed_nondimensional_fact"` or `"filed_value_mismatch"`).
+>
+> **Known conservative gap:** a cash-flow statement's "beginning of period"/"end of period"
+> cash balance is rendered under a duration column but genuinely filed as an *instant*
+> fact at the period's start/end date respectively (live-verified against MSFT's FY2024
+> 10-K). An earlier version of this fix tried falling back to an instant lookup at the
+> column's end date to catch that shape — but the "beginning of period" row needs the
+> period's *start* date, and both rows share one concept with no reliable way to
+> distinguish them here, so the fallback silently substituted the wrong endpoint's value
+> (caught live, not shipped). `reconcile_with_filed_facts` drops that one row instead:
+> loses the value, never corrupts it. Live-verified elsewhere as low-noise: MSFT's FY2024
+> 10-K flags only that one known shape; SNA's FY2026 10-Qs (segment-breakdown-heavy
+> filings) correctly pass through non-dimensional rows that are genuinely filed (e.g.
+> `us-gaap:OperatingIncomeLoss` "Operating earnings") while dropping ones that aren't (e.g.
+> `us-gaap:OperatingExpenses`, never filed non-dimensionally).
+>
+> This closes `T-042` (`TASKS.md`, Work item 5) but still does not by itself close
+> `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo needs to re-verify against a
+> redeployed `sec_edgar` itself before its own local guard is retired (`T-041`).
