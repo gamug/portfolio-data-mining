@@ -108,6 +108,11 @@ renumber; mark a cancelled/superseded task in place instead.
       scope). All three 2024 10-Qs (accessions `...-000003`, `...-000013`, `...-000008`)
       resolved correctly, including both YTD columns. `data["corrections"]` recorded each
       correction/drop made, live-verified against the same filings.
+      **Superseded in part by `T-042`, 2026-09-30**: FY2021-filed-2022's $1,082M is no
+      longer left untouched — `T-042`'s general check also catches it (APA never filed
+      `us-gaap:Revenues` non-dimensionally in any period, T-095's defect included) and
+      drops it to `None`. This extends correctness to a case this task's own reconstruction
+      couldn't reach, not a regression of the figures above, which are unaffected.
 - [ ] **T-041** *(cross-repo)* Hand off findings to `portfolio-financial-analysis`'s
       `T-118` — this fix corrects APA's revenue instance only and does **not** close
       `T-117`/`T-118` there; leave both open until the general synthesis defect (T-042) is
@@ -115,13 +120,35 @@ renumber; mark a cancelled/superseded task in place instead.
       confirms nothing is left to correct on APA. → `PLAN.md` Work item 5 acceptance
       criteria; that repo's own `T-118`. **Not done** — do not check this until that
       repo's own `T-117` guard is confirmed to find nothing left, post-redeploy.
-- [ ] **T-042** *(follow-up, still under this work item's `T-118` origin)* General fix:
+- [x] **T-042** *(follow-up, still under this work item's `T-118` origin)* General fix:
       validate every synthesized non-dimensional value (not just revenue, not just
       label-pattern detection) against the filer's actually-filed facts
       (`data.sec.gov` `companyconcept`/`companyfacts`, or an equivalent structural check
       within `edgartools`' own output) across all 163 mismatched values/105 pairs found
       in the full-universe scan, and mark or drop whatever doesn't reconcile. → `PLAN.md`
-      Work item 5 follow-up (not yet planned in detail). **Not started.**
+      Work item 5, step 5. **Done 2026-09-30**: `reconcile_with_filed_facts` added to
+      `src/sec_edgar/agent.py` — validates every non-dimensional row on all three
+      statements against the already-loaded filing's own XBRL facts
+      (`xbrl.facts.query()`, no extra `data.sec.gov` call needed), replacing label-pattern
+      detection with the filing's own ground truth. Runs after `correct_revenue_totals`,
+      skipping whatever it already corrected. 21 new tests (`tests/sec_edgar/test_agent.py`
+      — 66 total in that file, 262 full suite), plus 3 live-verification passes that each
+      caught and fixed a real bug before landing: (1) a raw-filed-fact sign convention
+      (contra accounts like `TreasuryStockCommonValue`, cash-flow decreases) was initially
+      flagged as a false "mismatch" and had its sign flipped — fixed by comparing
+      magnitude only, matching the original full-universe scan's own methodology
+      ("excluding sign-convention flips"); (2) an instant-lookup fallback added to catch a
+      cash-flow statement's "beginning/end of period" balance (genuinely an instant fact
+      under a duration column) silently substituted the *wrong* endpoint's value for the
+      "beginning of period" row — removed rather than fixed with a label heuristic; that
+      row now drops instead of guessing wrong, a documented known gap. Live-verified: APA
+      FY2021-FY2025 10-Ks + all three 2024 10-Qs (T-118's reconstruction unaffected
+      wherever it applies; FY2021-filed-2022 now also drops to `None`, see the note on
+      `T-040` above); MSFT's FY2024 10-K (clean filer, only the known cash-roll-forward
+      gap flags); SNA's FY2026 10-Qs (the PR #44 review's cited non-revenue example —
+      genuinely-filed non-dimensional rows like `OperatingIncomeLoss` pass through,
+      never-filed ones like `OperatingExpenses` drop). `SPEC.md` FR-004,
+      `docs/modules/sec-edgar.md`, `PLAN.md` Work item 5 all updated.
 
 ## Status
 
@@ -133,6 +160,8 @@ Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
 CI is wanted again.
 
-Work item 5 is open (PR #44): T-036–T-040 are done but scoped to APA's revenue
-instance only; T-041 (cross-repo closure of `portfolio-financial-analysis`'s
-`T-117`/`T-118`) and T-042 (the general synthesis-defect fix) stay unchecked.
+Work item 5 is open: T-036–T-040 (PR #44) and T-042 are done — the general
+synthesis-defect fix now exists alongside `T-118`'s APA-revenue-specific
+reconstruction. T-041 (cross-repo closure of `portfolio-financial-analysis`'s
+`T-117`/`T-118`) stays unchecked until that repo re-verifies against a
+redeployed `sec_edgar` itself.

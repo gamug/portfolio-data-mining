@@ -15,7 +15,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sec_edgar.agent import EdgarAgent, correct_revenue_totals
+from sec_edgar.agent import (
+    EdgarAgent,
+    _filed_nondimensional_values,
+    _parse_period_column,
+    correct_revenue_totals,
+    reconcile_with_filed_facts,
+)
 
 
 @pytest.fixture
@@ -465,6 +471,256 @@ def test_correct_revenue_totals_does_not_mutate_its_input() -> None:
 
 
 # ---------------------------------------------------------------------
+# _parse_period_column (T-042)
+# ---------------------------------------------------------------------
+
+
+def test_parse_period_column_instant() -> None:
+    assert _parse_period_column("2023-12-31") == ("2023-12-31", None)
+
+
+def test_parse_period_column_fiscal_year() -> None:
+    assert _parse_period_column("2023-12-31 (FY)") == ("2023-12-31", "FY")
+
+
+def test_parse_period_column_quarter() -> None:
+    assert _parse_period_column("2023-12-31 (Q2)") == ("2023-12-31", "Q2")
+
+
+def test_parse_period_column_ytd() -> None:
+    assert _parse_period_column("2023-12-31 (YTD)") == ("2023-12-31", "YTD")
+
+
+def test_parse_period_column_unparseable_returns_none() -> None:
+    assert _parse_period_column("concept") is None
+    assert _parse_period_column("Total revenues") is None
+
+
+# ---------------------------------------------------------------------
+# _filed_nondimensional_values (T-042)
+# ---------------------------------------------------------------------
+
+
+def _mock_facts_xbrl(df: pd.DataFrame) -> MagicMock:
+    """A minimal `xbrl` mock whose `.facts.query()...to_dataframe()` chain always returns
+    *df*, regardless of which filter methods are chained -- good enough for exercising
+    `_filed_nondimensional_values`' own logic without depending on edgartools' real
+    `FactQuery`."""
+    xbrl = MagicMock()
+    query = xbrl.facts.query.return_value
+    query.by_concept.return_value = query
+    query.by_dimension.return_value = query
+    query.by_instant_date.return_value = query
+    query.by_date_range.return_value = query
+    query.to_dataframe.return_value = df
+    return xbrl
+
+
+def test_filed_nondimensional_values_instant_match() -> None:
+    xbrl = _mock_facts_xbrl(pd.DataFrame({"value": [15_244_000_000.0]}))
+    assert _filed_nondimensional_values(xbrl, "us-gaap_Assets", "2023-12-31", None) == [
+        15_244_000_000.0
+    ]
+
+
+def test_filed_nondimensional_values_nothing_filed_is_empty() -> None:
+    """APA's real shape: `us-gaap:Revenues` was never filed non-dimensionally at all."""
+    xbrl = _mock_facts_xbrl(pd.DataFrame())
+    assert _filed_nondimensional_values(xbrl, "us-gaap_Revenues", "2023-12-31", "FY") == []
+
+
+def test_filed_nondimensional_values_never_falls_back_to_instant_for_duration_columns() -> None:
+    """A cash-flow statement's "beginning of period"/"end of period" cash balance is rendered
+    under a duration column but genuinely filed as an *instant* fact -- live-verified against
+    MSFT's FY2024 10-K (`CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents``). An
+    earlier version fell back to an instant lookup at the column's end date to catch this, but
+    the "beginning of period" row actually needs the period's *start* date -- the fallback
+    silently substituted the wrong endpoint's value (live-verified regression). No fallback:
+    a duration lookup finding nothing stays empty, so the caller drops the value rather than
+    risk substituting a wrong one."""
+    xbrl = MagicMock()
+    duration_query = MagicMock()
+    duration_query.by_concept.return_value = duration_query
+    duration_query.by_dimension.return_value = duration_query
+    duration_query.by_date_range.return_value = duration_query
+    duration_query.to_dataframe.return_value = pd.DataFrame()
+    xbrl.facts.query.return_value = duration_query
+
+    result = _filed_nondimensional_values(
+        xbrl,
+        "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+        "2024-06-30",
+        "FY",
+    )
+
+    assert result == []
+    duration_query.by_instant_date.assert_not_called()
+
+
+def test_filed_nondimensional_values_disambiguates_same_end_date_by_duration() -> None:
+    """A quarter and a fiscal year can share an end date -- only the candidate whose own
+    day-span lands in the requested bucket is returned."""
+    df = pd.DataFrame(
+        {
+            "value": [9_737_000_000.0, 2_500_000_000.0],
+            "period_start": ["2023-01-01", "2023-10-01"],  # 364 days vs. 91 days
+            "period_end": ["2023-12-31", "2023-12-31"],
+        }
+    )
+    xbrl = _mock_facts_xbrl(df)
+    assert _filed_nondimensional_values(xbrl, "us-gaap_Revenues", "2023-12-31", "FY") == [
+        9_737_000_000.0
+    ]
+    assert _filed_nondimensional_values(xbrl, "us-gaap_Revenues", "2023-12-31", "Q4") == [
+        2_500_000_000.0
+    ]
+
+
+def test_filed_nondimensional_values_ambiguous_returns_every_candidate() -> None:
+    """Two distinct facts land in the same bucket for the same concept/end-date -- the
+    function itself doesn't pick one; the caller (`reconcile_with_filed_facts`) must treat
+    more than one candidate as ambiguous rather than guess."""
+    df = pd.DataFrame(
+        {
+            "value": [100.0, 200.0],
+            "period_start": ["2023-01-01", "2023-01-02"],
+            "period_end": ["2023-12-31", "2023-12-31"],
+        }
+    )
+    xbrl = _mock_facts_xbrl(df)
+    assert _filed_nondimensional_values(xbrl, "us-gaap_Revenues", "2023-12-31", "FY") == [
+        100.0,
+        200.0,
+    ]
+
+
+# ---------------------------------------------------------------------
+# reconcile_with_filed_facts (T-042)
+# ---------------------------------------------------------------------
+
+
+def test_reconcile_with_filed_facts_drops_value_with_no_filed_fact() -> None:
+    key = "2023-12-31 (FY)"
+    rows = [_row("us-gaap_OperatingIncomeLoss", "Operating earnings", **{key: 999.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[]):
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "income_statement")
+
+    assert corrected[0][key] is None
+    assert corrections == [
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_OperatingIncomeLoss",
+            "column": key,
+            "original": 999.0,
+            "corrected": None,
+            "rule": "T-042",
+            "reason": "no_filed_nondimensional_fact",
+        }
+    ]
+
+
+def test_reconcile_with_filed_facts_replaces_value_that_differs_from_filed() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[480.0]):
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    assert corrected[0]["2023-12-31"] == 480.0
+    assert corrections == [
+        {
+            "statement": "balance_sheet",
+            "concept": "us-gaap_Assets",
+            "column": "2023-12-31",
+            "original": 500.0,
+            "corrected": 480.0,
+            "rule": "T-042",
+            "reason": "filed_value_mismatch",
+        }
+    ]
+
+
+def test_reconcile_with_filed_facts_leaves_a_matching_value_untouched() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[500.0]):
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    assert corrected[0]["2023-12-31"] == 500.0
+    assert corrections == []
+
+
+def test_reconcile_with_filed_facts_leaves_a_sign_convention_flip_untouched() -> None:
+    """A rendered value's sign can legitimately differ from the raw filed fact's own sign --
+    edgartools' presentation layer applies a per-concept convention (contra accounts like
+    Treasury Stock, cash-flow decreases, etc.) on top of whatever sign the filer tagged.
+    Live-verified against APA: `us-gaap:TreasuryStockCommonValue` is filed as a positive
+    5,790,000,000 but correctly rendered as -5,790,000,000. Flipping it back to the filed
+    fact's raw sign would be wrong, not a fix -- the same-magnitude-opposite-sign shape the
+    full-universe scan explicitly excluded ("after excluding sign-convention flips")."""
+    rows = [
+        _row(
+            "us-gaap_TreasuryStockCommonValue", "Treasury stock", **{"2023-12-31": -5_790_000_000.0}
+        )
+    ]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[5_790_000_000.0]):
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    assert corrected[0]["2023-12-31"] == -5_790_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_with_filed_facts_skips_ambiguous_multiple_filed_values() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[480.0, 500.0]):
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    assert corrected[0]["2023-12-31"] == 500.0  # left alone -- never guess
+    assert corrections == []
+
+
+def test_reconcile_with_filed_facts_respects_skip() -> None:
+    """A `(concept, column)` T-118 already corrected must never be re-evaluated here -- doing
+    so would find "nothing filed" for revenue again and wipe out T-118's reconstruction."""
+    key = "2023-12-31 (FY)"
+    rows = [_row("us-gaap_Revenues", "Total revenues", **{key: 8_279_000_000.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values") as mocked:
+        corrected, corrections = reconcile_with_filed_facts(
+            rows, MagicMock(), "income_statement", skip=frozenset({("us-gaap_Revenues", key)})
+        )
+
+    mocked.assert_not_called()
+    assert corrected[0][key] == 8_279_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_with_filed_facts_ignores_unparseable_column() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"weird-column": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values") as mocked:
+        corrected, corrections = reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    mocked.assert_not_called()
+    assert corrected == rows
+    assert corrections == []
+
+
+def test_reconcile_with_filed_facts_skips_dimensional_and_abstract_rows() -> None:
+    rows = [
+        _row("us-gaap_Revenues", "Kinetik", dimension=True, **{"2023-12-31": 121.0}),
+        {**_row("us-gaap_Revenues", "Revenues", **{"2023-12-31": None}), "abstract": True},
+    ]
+    with patch("sec_edgar.agent._filed_nondimensional_values") as mocked:
+        reconcile_with_filed_facts(rows, MagicMock(), "income_statement")
+
+    mocked.assert_not_called()
+
+
+def test_reconcile_with_filed_facts_does_not_mutate_its_input() -> None:
+    rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
+    with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[]):
+        reconcile_with_filed_facts(rows, MagicMock(), "balance_sheet")
+
+    assert rows[0]["2023-12-31"] == 500.0
+
+
+# ---------------------------------------------------------------------
 # get_financials
 # ---------------------------------------------------------------------
 
@@ -504,7 +760,11 @@ def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
     """T-118: the income statement edgartools returns is run through
     `correct_revenue_totals` before `get_financials` hands it back -- APA's real FY2023
     shape resolves to the statement's own derived "Total revenues" ($8,279M), not the
-    mislabeled $16,558M edgartools' dataframe carries."""
+    mislabeled $16,558M edgartools' dataframe carries. `reconcile_with_filed_facts` (T-042)
+    is patched to a pass-through here so this test stays focused on T-118 in isolation --
+    without a filed-facts mock, its other (unrelated) rows would otherwise also be flagged
+    as "nothing filed" and dropped; the T-118+T-042 interaction has its own dedicated test
+    below."""
     key = "2023-12-31 (FY)"
     filing = make_filing(filing_date=date(2024, 2, 22))
     filing.xbrl.return_value = _mock_xbrl_with_frames(
@@ -514,7 +774,13 @@ def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
     )
     mock_company = MagicMock()
     mock_company.get_filings.return_value = [filing]
-    with patch("sec_edgar.agent.Company", return_value=mock_company):
+    with (
+        patch("sec_edgar.agent.Company", return_value=mock_company),
+        patch(
+            "sec_edgar.agent.reconcile_with_filed_facts",
+            side_effect=lambda rows, xbrl, statement, skip=frozenset(): (rows, []),
+        ),
+    ):
         result = agent.get_financials("APA", form="10-K", year=2024)
 
     assert result["success"] is True
@@ -529,8 +795,81 @@ def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
             "original": 16_558_000_000.0,
             "corrected": 8_279_000_000.0,
             "rule": "T-118",
+            "statement": "income_statement",
         }
     ]
+
+
+def _mock_xbrl_with_facts(
+    income: pd.DataFrame,
+    balance: pd.DataFrame,
+    cash_flow: pd.DataFrame,
+    facts_by_concept: dict[str, pd.DataFrame],
+) -> MagicMock:
+    """Like `_mock_xbrl_with_frames`, plus a `.facts.query()` chain that resolves to
+    *facts_by_concept*'s entry for whatever concept `by_concept` was called with (normalized
+    the same way edgartools' own `FactQuery.by_concept` does: underscores to colons) -- an
+    empty dataframe (nothing filed) for any concept not given an entry."""
+    xbrl = _mock_xbrl_with_frames(income, balance, cash_flow)
+
+    def by_concept(pattern: str, exact: bool = False) -> MagicMock:
+        query = MagicMock()
+        query.by_dimension.return_value = query
+        query.by_instant_date.return_value = query
+        query.by_date_range.return_value = query
+        query.to_dataframe.return_value = facts_by_concept.get(
+            pattern.replace("_", ":"), pd.DataFrame()
+        )
+        return query
+
+    xbrl.facts.query.return_value.by_concept.side_effect = by_concept
+    return xbrl
+
+
+def test_get_financials_t042_general_check_runs_alongside_t118_end_to_end(
+    agent: EdgarAgent,
+) -> None:
+    """T-042 alongside T-118, all in one `get_financials` call: revenue's label-based
+    reconstruction (T-118) survives untouched by the general check; an unrelated income
+    concept with no filed non-dimensional fact at all is dropped (T-042); a balance-sheet
+    concept whose rendered value matches what was actually filed passes through with no
+    correction at all."""
+    key = "2023-12-31 (FY)"
+    income_rows = [
+        _row("us-gaap_Revenues", "Total revenues", **{key: 16_558_000_000.0}),
+        _row("apa_RevenuesAndOther", "Total revenues and other", **{key: 8_279_000_000.0}),
+        _row("us-gaap_OperatingIncomeLoss", "Operating earnings", **{key: 500_000_000.0}),
+    ]
+    balance_rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 480.0})]
+    filing = make_filing(filing_date=date(2024, 2, 22))
+    filing.xbrl.return_value = _mock_xbrl_with_facts(
+        pd.DataFrame(income_rows),
+        pd.DataFrame(balance_rows),
+        pd.DataFrame(),
+        facts_by_concept={"us-gaap:Assets": pd.DataFrame({"value": [480.0]})},
+    )
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [filing]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_financials("APA", form="10-K", year=2024)
+
+    assert result["success"] is True
+    income = result["data"]["income_statement"]
+    revenue_row = next(r for r in income if r["concept"] == "us-gaap_Revenues")
+    operating_row = next(r for r in income if r["concept"] == "us-gaap_OperatingIncomeLoss")
+    assert revenue_row[key] == 8_279_000_000.0  # T-118's reconstruction, untouched by T-042
+    assert operating_row[key] is None  # T-042: no filed non-dimensional fact -> dropped
+
+    balance_sheet = result["data"]["balance_sheet"]
+    assert balance_sheet[0]["2023-12-31"] == 480.0  # matches what was filed -> untouched
+
+    corrections = result["data"]["corrections"]
+    by_concept_and_rule = {(c["concept"], c["rule"]): c for c in corrections}
+    assert by_concept_and_rule[("us-gaap_Revenues", "T-118")]["statement"] == "income_statement"
+    operating_correction = by_concept_and_rule[("us-gaap_OperatingIncomeLoss", "T-042")]
+    assert operating_correction["statement"] == "income_statement"
+    assert operating_correction["reason"] == "no_filed_nondimensional_fact"
+    assert not any(c["concept"] == "us-gaap_Assets" for c in corrections)
 
 
 def test_get_financials_multiple_matches_without_accession_number_returns_error(

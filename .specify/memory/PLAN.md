@@ -284,9 +284,10 @@ rule; this is a within-service bug fix, so constitution AI behavior #10
 
 ## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
 
-**Status: built and live-verified for APA's revenue instance only; does not close
-`portfolio-financial-analysis`'s `T-117`/`T-118`, which stay open (PR #44 review,
-2026-09-28).**
+**Status: `T-118` (APA's revenue instance) and `T-042` (the general synthesis-defect fix)
+are both built and live-verified. Still does not close `portfolio-financial-analysis`'s
+`T-117`/`T-118` (`T-041`, cross-repo, stays open until that repo re-verifies against a
+redeployed `sec_edgar`).**
 
 **Why**: `portfolio-financial-analysis`'s `T-117`/`T-118` (`docs/model_fixes.md`) —
 APA's (CIK `0001841666`) `us-gaap:Revenues` ("Total revenues") is exactly ~2x its own
@@ -349,6 +350,33 @@ confirmed mechanism (the parent-vs-summed-children arithmetic above is).
    parent-vs-summed-children mechanism, and a live-verified APA figure citation;
    `docs/modules/sec-edgar.md` gets a note under "Endpoints" scoped as "APA revenue
    instance only", not a general fix.
+5. **(`T-042`, the general fix)** New `reconcile_with_filed_facts(rows, xbrl, statement,
+   skip=frozenset())` in `src/sec_edgar/agent.py`: the general, concept-agnostic
+   counterpart to step 1's label heuristic. For every non-dimensional row not in *skip*,
+   queries the already-loaded filing's own XBRL facts (`xbrl.facts.query().by_concept(...)
+   .by_dimension(None)`, no extra network call — `_filed_nondimensional_values`, with
+   `_parse_period_column` turning a rendered column name back into `(end_date,
+   duration_kind)` and a day-span bucket match disambiguating same-end-date facts of
+   different lengths) for a genuinely filed, non-dimensional fact at that concept/period.
+   A rendered value matching one (by magnitude — same-magnitude-opposite-sign is
+   `edgartools`' own presentation-layer sign convention, not a defect, live-verified
+   against APA's `TreasuryStockCommonValue`) passes through; one with none filed at all is
+   dropped (`None`) — there is no general way to reconstruct it the way step 1's label
+   subtraction can for revenue, which is why `get_financials` runs step 1 first and passes
+   its `(concept, column)` pairs as *skip* here, or this function would find "nothing
+   filed" for revenue again and erase that reconstruction. A column that doesn't parse as
+   a period, or where more than one filed value matches ambiguously, is left alone —
+   never guessed. Wired into `get_financials` for all three statements (not just
+   `income_statement`), combining every layer's corrections into one
+   `data["corrections"]` list with an added `"statement"` field and, on `T-042` entries, a
+   `"reason"`. A first version added an instant-date fallback when a duration lookup found
+   nothing (to catch a cash-flow statement's "beginning/end of period" balance, genuinely
+   an instant fact under a duration column) — live-verification against MSFT's FY2024 10-K
+   caught it silently substituting the *wrong* endpoint's value (the "beginning of period"
+   row needs the period's start date, not the column's end date, and both rows share one
+   concept with no reliable way to tell them apart); removed rather than fixed with a
+   label heuristic — that row now drops instead, a known conservative gap, documented on
+   `_filed_nondimensional_values`.
 
 **No constitution change** — no new dependency, provider, or stack-level rule; a
 within-service correctness fix to an existing route's output, so constitution AI
@@ -356,30 +384,47 @@ behavior #10 doesn't apply here.
 
 **Acceptance criteria**:
 
-- `uv run pytest tests/sec_edgar -q` passes, including 8 updated tests (46 total).
-- Live-verified against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking): every
-  available APA 10-K (FY2021 through FY2025, filed 2022-2026) and every 2024 10-Q's
-  `get_financials` call resolves `us-gaap_Revenues` to the statement's own derived total
-  (FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M — the exact figures
-  `portfolio-financial-analysis`'s `T-117` acceptance criterion names) for periods
-  affected, and leaves FY2021 (a pre-existing, differently-shaped too-small defect,
-  `portfolio-financial-analysis`'s own `T-095`) and FY2022 (not a defect) untouched;
-  `data["corrections"]` records each correction/drop made.
-- Explicitly scoped: this fixes APA's revenue instance only. It does **not** close
-  `portfolio-financial-analysis`'s `T-117`/`T-118` — the general synthesis defect (163
-  mismatched values / 105 pairs / 1,101 synthesized rows found in the full-universe scan,
-  across concepts beyond revenue) is unaddressed and needs its own follow-up work item,
-  validating every synthesized non-dimensional value against the filer's actually-filed
-  facts rather than label-pattern detection on revenue alone.
-- `SPEC.md` FR-004 reconciled; `docs/modules/sec-edgar.md` updated.
-- `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` (full suite, 242
+- `uv run pytest tests/sec_edgar -q` passes, including `T-118`'s original 8 updated tests
+  plus `T-042`'s new tests (`_parse_period_column`, `_filed_nondimensional_values`,
+  `reconcile_with_filed_facts` unit tests, and an end-to-end test exercising both layers
+  together) — 66 tests in `tests/sec_edgar`, 262 in the full suite.
+- Live-verified against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking):
+  - Every available APA 10-K (FY2021 through FY2025, filed 2022-2026) and every 2024
+    10-Q's `get_financials` call resolves `us-gaap_Revenues` to the statement's own
+    derived total for every period step 1's label heuristic can reconstruct (FY2023
+    $8,279M, FY2024 $9,737M, FY2025 $8,920M, FY2021 $7,985M, plus every 2024 10-Q's
+    Q1/Q2/Q3/YTD columns — exact match to `portfolio-financial-analysis`'s `T-117`
+    acceptance figures); `data["corrections"]` records each correction/drop made.
+  - **Updated from `T-118`'s original acceptance note**: FY2021-filed-2022's 10-K, where
+    step 1 finds no later corroborating row to reconstruct against, is *no longer* left at
+    its original $1,082M (a separate, too-small, pre-existing defect,
+    `portfolio-financial-analysis`'s own `T-095`) — `T-042` now also catches this period
+    (APA never filed `us-gaap:Revenues` non-dimensionally in any period) and drops it to
+    `None` instead. This is `T-042` correctly extending coverage to a case step 1 was
+    explicitly out of scope for, not a regression of step 1's own reconstruction, which is
+    unaffected wherever it applies (confirmed above).
+  - MSFT's FY2024 10-K (a clean, well-filed company — sanity check for false positives):
+    only the known cash-flow "beginning/end of period" gap above flags; nothing else.
+  - SNA's FY2026 10-Qs (segment-breakdown-heavy, cited in the PR #44 review as a live
+    non-revenue example): non-dimensional rows that are genuinely filed (e.g.
+    `us-gaap:OperatingIncomeLoss` "Operating earnings") pass through untouched; ones that
+    aren't (e.g. `us-gaap:OperatingExpenses`) drop.
+- Explicitly still scoped: `T-042` is the general fix (any concept, all three statements,
+  validated against actually-filed facts rather than label-pattern detection), but it
+  still does **not** by itself close `portfolio-financial-analysis`'s `T-117`/`T-118` —
+  that repo must re-verify against a redeployed `sec_edgar` before retiring its own local
+  guard (`T-041`, cross-repo, stays open).
+- `SPEC.md` FR-004 reconciled; `docs/modules/sec-edgar.md` updated (both layers, the
+  known conservative gap, and the live-verification evidence above).
+- `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` (full suite, 262
   passed) all clean; `pre-commit run --all-files` clean.
 
 ## Sequencing
 
 Work items 3 and 4 are closed (merged and verified; tasks in `CHANGELOG.md`). Work item 5
-is open (PR #44, APA revenue instance only — see its Status line above; not yet merged,
-and does not close `portfolio-financial-analysis`'s `T-117`/`T-118`). Work items 1–2 stay
+is open (`T-118` from PR #44, `T-042` the general fix — see its Status line above; `T-042`
+not yet merged, and neither closes `portfolio-financial-analysis`'s `T-117`/`T-118`, left
+to that repo's own cross-repo re-verification, `T-041`). Work items 1–2 stay
 reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
