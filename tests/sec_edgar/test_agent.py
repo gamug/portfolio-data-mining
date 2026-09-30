@@ -729,12 +729,13 @@ def test_reconcile_with_filed_facts_does_not_mutate_its_input() -> None:
 def test_safe_reconcile_with_filed_facts_returns_result_on_success() -> None:
     rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
     with patch("sec_edgar.agent._filed_nondimensional_values", return_value=[500.0]):
-        corrected, corrections = _safe_reconcile_with_filed_facts(
+        corrected, corrections, error = _safe_reconcile_with_filed_facts(
             rows, MagicMock(), "balance_sheet"
         )
 
     assert corrected[0]["2023-12-31"] == 500.0
     assert corrections == []
+    assert error is None
 
 
 def test_safe_reconcile_with_filed_facts_isolates_a_query_failure() -> None:
@@ -743,15 +744,17 @@ def test_safe_reconcile_with_filed_facts_isolates_a_query_failure() -> None:
     already-successfully-rendered rows, not load-bearing data. Reported in PR #45's review:
     an uncaught exception here previously converted `get_financials`' entire response to
     `success: False`, discarding the other two statements' already-loaded data along with
-    it."""
+    it. PR #46's review noted a silent failure would be indistinguishable from "verified,
+    nothing to correct" -- the third return value must carry a non-None error message."""
     rows = [_row("us-gaap_Assets", "Total assets", **{"2023-12-31": 500.0})]
     with patch("sec_edgar.agent.reconcile_with_filed_facts", side_effect=RuntimeError("boom")):
-        corrected, corrections = _safe_reconcile_with_filed_facts(
+        corrected, corrections, error = _safe_reconcile_with_filed_facts(
             rows, MagicMock(), "balance_sheet"
         )
 
     assert corrected == rows  # returned rendered-but-unvalidated, not discarded
     assert corrections == []
+    assert error == "RuntimeError: boom"
 
 
 # ---------------------------------------------------------------------
@@ -786,6 +789,7 @@ def test_get_financials_success(agent: EdgarAgent) -> None:
     assert result["data"]["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
     assert result["data"]["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
     assert result["data"]["corrections"] == []
+    assert result["data"]["reconciliation_errors"] == []
 
 
 def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
@@ -980,6 +984,15 @@ def test_get_financials_survives_a_t042_reconciliation_failure_on_one_statement(
     assert cash_flow[0]["2023-12-31 (FY)"] == 100.0  # cash_flow's own reconciliation unaffected
 
     assert not any(c["statement"] == "balance_sheet" for c in result["data"]["corrections"])
+
+    # PR #46 review: the failure must be visible, not indistinguishable from "nothing to
+    # correct" -- only balance_sheet's reconciliation failed.
+    assert result["data"]["reconciliation_errors"] == [
+        {
+            "statement": "balance_sheet",
+            "error": "RuntimeError: simulated xbrl.facts.query() failure",
+        }
+    ]
 
 
 def test_get_financials_multiple_matches_without_accession_number_returns_error(
