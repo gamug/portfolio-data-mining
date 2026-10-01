@@ -34,7 +34,6 @@
         "gpu": "optional"
     },
     "runArgs": [
-        "--gpus=all",
         // Pass the repo's git-ignored .env into the container's environment (the file must
         // exist before the container is created: cp .env.example .env).
         "--env-file",
