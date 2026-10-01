@@ -133,6 +133,12 @@ Run any service from the repo root, e.g.:
 uv run apps/pricing_api.py
 ```
 
+Opening the repo in the provided **Dev Container** (`.devcontainer/`) also bind-mounts a shared
+`thesis` data directory at `/workspaces/thesis`; set **`THESIS_HOST_DIR`** in your host
+environment (shell profile or OS environment variables, read before VS Code launches) to that
+directory's path on your machine before opening the container. This variable name is shared
+across this project's `portfolio-*` sibling repos that mount the same directory.
+
 ### Code quality
 
 `ruff` and `mypy` config live under `.code_quality/` (`ruff.toml`, `mypy.ini`) rather than
