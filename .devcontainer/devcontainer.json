@@ -34,7 +34,11 @@
         "gpu": "optional"
     },
     "runArgs": [
-        "--gpus=all"
+        "--gpus=all",
+        // Pass the repo's git-ignored .env into the container's environment (the file must
+        // exist before the container is created: cp .env.example .env).
+        "--env-file",
+        "${localWorkspaceFolder}/.env"
     ],
     // Bind-mount the thesis directory from the host alongside the repo workspace. Source is
     // read from THESIS_HOST_DIR, a host-environment variable (set in your shell profile or OS

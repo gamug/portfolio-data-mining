@@ -134,10 +134,19 @@ uv run apps/pricing_api.py
 ```
 
 Opening the repo in the provided **Dev Container** (`.devcontainer/`) also bind-mounts a shared
-`thesis` data directory at `/workspaces/thesis`; set **`THESIS_HOST_DIR`** in your host
-environment (shell profile or OS environment variables, read before VS Code launches) to that
-directory's path on your machine before opening the container. This variable name is shared
-across this project's `portfolio-*` sibling repos that mount the same directory.
+`thesis` data directory at `/workspaces/thesis`. Two pieces of configuration:
+
+- `.env` (repo root, git-ignored; `cp .env.example .env`) is passed to the container with
+  `docker run --env-file` (`runArgs` in `devcontainer.json`), so its variables are set in the dev shell
+  without `export`. The file must exist before the container is created, and its values must be plain
+  `KEY=value` (no quotes, no `export`). Paths in it use the in-container layout
+  (`/workspaces/thesis/...`). After editing it, run **Dev Containers: Rebuild Container**.
+- **`THESIS_HOST_DIR`** — host path of the shared `thesis` data directory, bind-mounted at
+  `/workspaces/thesis`. The `mounts` entry is resolved on the host before the container exists
+  (`${localEnv:THESIS_HOST_DIR}`), so it must be set in your **host environment** (shell profile or OS
+  environment variables, read before VS Code launches) — `.env` cannot provide it. E.g.
+  `export THESIS_HOST_DIR=/Users/you/thesis` or, on Windows, `setx THESIS_HOST_DIR D:\thesis`. This
+  variable name is shared across the sibling `portfolio-*` repos that mount the same directory.
 
 ### Code quality
 
