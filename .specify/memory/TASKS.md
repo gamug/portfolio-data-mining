@@ -73,8 +73,9 @@ Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-ti
       filer gets one entry per class plus a non-dimensional total only if the filer
       actually filed one — never a total summed here (T-042's rule). Missing → empty list,
       never a guess; 10-K and 10-Q alike. Failure isolation (PR #46's pattern): a failed
-      read returns `cover` empty plus a `{"statement": "cover", "error"}` entry in
-      `reconciliation_errors`, and never fails the response. → `SPEC.md` FR-004.
+      read returns `cover` empty plus `cover.error` (`"<ExcType>: <message>"`, `null` on
+      success) and never fails the response; it is deliberately **not** put in
+      `reconciliation_errors` (PR #48 review — see below). → `SPEC.md` FR-004.
       **Done 2026-10-02**: `cover_shares_outstanding` / `_safe_cover_shares_outstanding`
       in `src/sec_edgar/agent.py`; 15 new hermetic tests in `tests/sec_edgar/test_agent.py`
       (69 → 84 there, 265 → 280 full suite) using facts captured live into
@@ -96,6 +97,14 @@ Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-ti
       `companyconcept` lags — XOM's and NEE's latest 10-Qs were not yet in it, and HUM has
       no `companyconcept` rows at all — those were checked against the cover pages instead
       (all exact).
+      **Follow-up, same day (PR #48 review, `eldova1702`)**: the original design reported a
+      failed cover read as a `{"statement": "cover", "error"}` entry in
+      `reconciliation_errors`, mirroring T-042. That was wrong: the list means "a statement
+      came back unvalidated", and `portfolio-financial-analysis` (PR #104) rejects the whole
+      filing when it is non-empty — a cover failure leaves every statement valid, so it would
+      have discarded an otherwise good filing. The failure now lives inside the cover block
+      (`"cover": {"shares_outstanding": [], "error": "<ExcType>: <message>"}`, `error` is
+      `null` on success) and `reconciliation_errors` stays about the three statements only.
 
 ## Status
 

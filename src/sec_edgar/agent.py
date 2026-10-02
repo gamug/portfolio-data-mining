@@ -491,8 +491,13 @@ def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str
     as T-042's, for the same reason: the cover share count is an additive field, so a live
     ``xbrl.facts.query()`` failure there must not turn an otherwise-successful response into
     ``{"success": False}``. On failure returns ``([], "<ExcType>: <message>")`` -- an empty list
-    plus an error ``get_financials`` records in ``reconciliation_errors``, so "failed to read"
-    is never indistinguishable from "filer filed none"."""
+    plus an error ``get_financials`` surfaces as ``data["cover"]["error"]`` (``None`` on success),
+    so "failed to read" is never indistinguishable from "filer filed none".
+
+    Deliberately *not* recorded in ``reconciliation_errors`` (PR #48 review): that list means "a
+    statement came back unvalidated", and downstream (`portfolio-financial-analysis` PR #104)
+    rejects the whole filing when it is non-empty. A cover-read failure leaves every statement
+    valid -- it only means there is no share count -- so it must not look like one."""
     try:
         return cover_shares_outstanding(xbrl), None
     except Exception as e:
@@ -752,7 +757,8 @@ class EdgarAgent:
                 "corrections": [<{statement, concept, column, original, corrected, rule,
                 reason?}>],
                 "reconciliation_errors": [<{statement, error}>],
-                "cover": {"shares_outstanding": [<{value, as_of_date, class_member}>]}}}
+                "cover": {"shares_outstanding": [<{value, as_of_date, class_member}>],
+                "error": str | None}}}
             "corrections" lists every value this method derived, replaced, or dropped rather
             than returning as-is from edgartools, across all three statements: rule "T-118"
             (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
@@ -777,9 +783,11 @@ class EdgarAgent:
             fact, else the share class's member (e.g. "us-gaap:CommonClassAMember"). A
             multi-class filer gets one entry per class, plus a total only if the filer filed one
             -- never one summed here. Empty list when the filer filed none (never a guessed
-            value); the same for 10-K and 10-Q. Reading it failing returns an empty list and a
-            {"statement": "cover", "error"} entry in "reconciliation_errors" instead of failing
-            the call.
+            value); the same for 10-K and 10-Q. Reading it failing returns an empty list and
+            "cover.error" = "<ExcType>: <message>" ("cover.error" is None on success) instead of
+            failing the call. That failure is deliberately NOT added to "reconciliation_errors",
+            which stays about the three statements only: it means "a statement came back
+            unvalidated", and a failed cover read leaves every statement valid.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -871,11 +879,10 @@ class EdgarAgent:
                             ("income_statement", income_error),
                             ("balance_sheet", balance_sheet_error),
                             ("cash_flow", cash_flow_error),
-                            ("cover", cover_error),
                         )
                         if error is not None
                     ],
-                    "cover": {"shares_outstanding": cover_shares},
+                    "cover": {"shares_outstanding": cover_shares, "error": cover_error},
                 },
             }
 

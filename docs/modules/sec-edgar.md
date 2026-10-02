@@ -142,7 +142,7 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > failed) alongside `data["corrections"]`, so a caller can always tell the two cases apart.
 
 > **Cover-page share count (T-043):** `/edgar/financials` also returns
-> `data["cover"] = {"shares_outstanding": [{"value", "as_of_date", "class_member"}]}` —
+> `data["cover"] = {"shares_outstanding": [{"value", "as_of_date", "class_member"}], "error"}` —
 > the filing's own cover-page share count, for a point-in-time market cap
 > (`portfolio-financial-analysis`'s `T-132(a)`). Purely additive: the three statements,
 > `corrections` and `reconciliation_errors` are unchanged. It is read from the
@@ -163,9 +163,13 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > class, so reporting it would mislabel another registrant's count.
 >
 > **Failure isolation:** a failed read goes through `_safe_cover_shares_outstanding`, the same
-> pattern as T-042's: `shares_outstanding` comes back `[]` and a `{"statement": "cover",
-> "error"}` entry lands in `reconciliation_errors` — the response still succeeds, and "failed
-> to read" stays distinguishable from "filer filed none" (empty list, no error entry).
+> pattern as T-042's: `shares_outstanding` comes back `[]` and `data["cover"]["error"]` carries
+> `"<ExcType>: <message>"` (`null` on success) — the response still succeeds, and "failed to
+> read" stays distinguishable from "filer filed none" (empty list, `error` null). The failure is
+> deliberately **not** added to `reconciliation_errors` (PR #48 review): that list means "a
+> statement came back unvalidated", and `portfolio-financial-analysis` (its PR #104) rejects the
+> whole filing when it is non-empty — a cover failure leaves every statement valid, so it would
+> discard an otherwise good filing. `reconciliation_errors` stays about the three statements only.
 >
 > **Verifying against SEC:** SEC's `companyconcept/CIK##########/dei/
 > EntityCommonStockSharesOutstanding.json` carries only non-dimensional facts, so it cannot

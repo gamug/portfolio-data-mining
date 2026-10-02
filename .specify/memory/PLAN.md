@@ -448,11 +448,13 @@ stored downstream. The filing's own cover page states it
    than mislabeled. A fact with no usable instant date or a non-finite/negative value is
    skipped, not guessed.
 3. `_safe_cover_shares_outstanding` isolates a failed read, exactly as PR #46's
-   `_safe_reconcile_with_filed_facts` does: `cover` comes back empty and a
-   `{"statement": "cover", "error"}` entry lands in `reconciliation_errors`, so "failed
-   to read" is never indistinguishable from "filer filed none"; the response still
-   succeeds. `get_financials` adds `data["cover"] = {"shares_outstanding": [...]}` — purely
-   additive.
+   `_safe_reconcile_with_filed_facts` does: `cover.shares_outstanding` comes back empty and
+   `cover.error` carries `"<ExcType>: <message>"` (`null` on success), so "failed to read"
+   is never indistinguishable from "filer filed none"; the response still succeeds. The
+   failure is **not** put in `reconciliation_errors` (PR #48 review): that list means "a
+   statement came back unvalidated", and `portfolio-financial-analysis` (PR #104) rejects
+   the whole filing when it is non-empty. `get_financials` adds `data["cover"] =
+   {"shares_outstanding": [...], "error": ...}` — purely additive.
 4. Tests (hermetic, facts captured live into `tests/sec_edgar/fixtures/`), `SPEC.md`
    FR-004, `docs/modules/sec-edgar.md`.
 

@@ -794,7 +794,7 @@ def test_get_financials_success(agent: EdgarAgent) -> None:
     assert result["data"]["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
     assert result["data"]["corrections"] == []
     assert result["data"]["reconciliation_errors"] == []
-    assert result["data"]["cover"] == {"shares_outstanding": []}
+    assert result["data"]["cover"] == {"shares_outstanding": [], "error": None}
 
 
 def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
@@ -1299,24 +1299,26 @@ def test_get_financials_cover_is_empty_when_the_filer_filed_none(agent: EdgarAge
     result = _financials_for(agent, xbrl, form="10-Q")
 
     assert result["success"] is True
-    assert result["data"]["cover"] == {"shares_outstanding": []}
+    assert result["data"]["cover"] == {"shares_outstanding": [], "error": None}
     assert result["data"]["reconciliation_errors"] == []  # filed none != failed to read
 
 
 def test_get_financials_survives_a_cover_read_failure(agent: EdgarAgent) -> None:
-    """Failure isolation (same as PR #46): the cover read raising returns ``cover`` empty plus a
-    ``{"statement": "cover", ...}`` entry in ``reconciliation_errors`` -- the statements are
-    intact and the call still succeeds."""
+    """Failure isolation (same as PR #46): the cover read raising returns ``cover`` empty plus
+    ``cover.error`` -- the statements are intact and the call still succeeds. The failure must
+    *not* land in ``reconciliation_errors`` (PR #48 review): downstream rejects a whole filing
+    when that list is non-empty, and a cover failure leaves every statement valid."""
     xbrl = _mock_xbrl_with_frames(*_STATEMENT_FRAMES)
     xbrl.facts.query.return_value.by_concept.side_effect = RuntimeError("simulated cover failure")
     result = _financials_for(agent, xbrl)
 
     assert result["success"] is True
     data = result["data"]
-    assert data["cover"] == {"shares_outstanding": []}
-    assert data["reconciliation_errors"] == [
-        {"statement": "cover", "error": "RuntimeError: simulated cover failure"}
-    ]
+    assert data["cover"] == {
+        "shares_outstanding": [],
+        "error": "RuntimeError: simulated cover failure",
+    }
+    assert data["reconciliation_errors"] == []
     assert data["income_statement"] == [{"line": "Revenue", "amount": 1000.0}]
     assert data["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
     assert data["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
