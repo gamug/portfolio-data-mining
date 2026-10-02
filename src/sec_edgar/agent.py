@@ -430,6 +430,81 @@ def _safe_reconcile_with_filed_facts(
     return rows, corrections, None
 
 
+# T-043: the one cover-page concept the share count is read from. Never CommonStockSharesIssued
+# (includes treasury shares, e.g. PG ~4.0B issued vs ~2.32B outstanding) or a weighted average.
+_COVER_SHARES_CONCEPT = "dei:EntityCommonStockSharesOutstanding"
+# The only dimension a cover-page share count may carry and still be a share-class entry --
+# edgartools exposes a fact's dimensions as ``dim_<axis>`` keys (axis colon -> underscore).
+_CLASS_OF_STOCK_DIM_KEY = "dim_us-gaap_StatementClassOfStockAxis"
+
+
+def cover_shares_outstanding(xbrl: Any) -> list[dict[str, Any]]:
+    """T-043: the filing's own cover-page share count (``dei:EntityCommonStockSharesOutstanding``),
+    read from the already-loaded filing's XBRL facts (``xbrl.facts.query()``, the same mechanism
+    :func:`reconcile_with_filed_facts` uses -- no extra network call).
+
+    One ``{"value", "as_of_date", "class_member"}`` entry per filed fact: ``as_of_date`` is the
+    fact's own instant date (the cover page's "as of" date, normally after the period end --
+    returned exactly, never replaced with the period end); ``class_member`` is ``None`` for a
+    non-dimensional fact, else the ``us-gaap:StatementClassOfStockAxis`` member (e.g.
+    ``us-gaap:CommonClassAMember``). A multi-class filer (GOOGL, BRK, STZ, FOX...) gets one entry
+    per class, plus a ``class_member=None`` total only if the filer actually filed one -- a total
+    is never summed here (T-042's rule: a derived number must not look like a filed fact).
+
+    A fact carrying any *other* dimension is skipped: it is not the filer's own share count for a
+    class (live-verified: NEE's 10-K/10-Q also carry ``1000`` shares under ``dei:LegalEntityAxis``
+    -- Florida Power & Light, a co-registrant -- which must not be read as a NEE share class). A
+    fact with no usable instant date or value is skipped too, never guessed. Nothing filed ->
+    ``[]``. Raises whatever the live query raises; :func:`_safe_cover_shares_outstanding` is the
+    isolating call site."""
+    entries: dict[tuple[str | None, str], dict[str, Any]] = {}
+    for fact in xbrl.facts.query().by_concept(_COVER_SHARES_CONCEPT, exact=True).execute():
+        dim_keys = [key for key in fact if key.startswith("dim_")]
+        if dim_keys and dim_keys != [_CLASS_OF_STOCK_DIM_KEY]:
+            continue
+        class_member = fact[_CLASS_OF_STOCK_DIM_KEY] if dim_keys else None
+        if dim_keys and not class_member:
+            continue
+        value = _numeric(fact.get("numeric_value"))
+        if value is None:
+            value = _numeric(fact.get("value"))
+        if value is None or not math.isfinite(value) or value < 0:
+            continue
+        try:
+            as_of_date = date.fromisoformat(str(fact.get("period_instant"))[:10]).isoformat()
+        except ValueError:
+            logger.warning("T-043 skipped a cover share fact with no usable instant date")
+            continue
+        entries[(class_member, as_of_date)] = {
+            "value": int(value) if value.is_integer() else value,
+            "as_of_date": as_of_date,
+            "class_member": class_member,
+        }
+    return sorted(
+        entries.values(), key=lambda e: (e["class_member"] is not None, e["class_member"] or "")
+    )
+
+
+def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str | None]:
+    """``get_financials``' call site for :func:`cover_shares_outstanding` -- same isolation (and
+    same deliberately broad ``except Exception``, see :func:`_safe_reconcile_with_filed_facts`)
+    as T-042's, for the same reason: the cover share count is an additive field, so a live
+    ``xbrl.facts.query()`` failure there must not turn an otherwise-successful response into
+    ``{"success": False}``. On failure returns ``([], "<ExcType>: <message>")`` -- an empty list
+    plus an error ``get_financials`` surfaces as ``data["cover"]["error"]`` (``None`` on success),
+    so "failed to read" is never indistinguishable from "filer filed none".
+
+    Deliberately *not* recorded in ``reconciliation_errors`` (PR #48 review): that list means "a
+    statement came back unvalidated", and downstream (`portfolio-financial-analysis` PR #104)
+    rejects the whole filing when it is non-empty. A cover-read failure leaves every statement
+    valid -- it only means there is no share count -- so it must not look like one."""
+    try:
+        return cover_shares_outstanding(xbrl), None
+    except Exception as e:
+        logger.error("T-043 cover share-count read failed", exc_info=True)
+        return [], f"{type(e).__name__}: {e}"
+
+
 class EdgarAgent:
     """
     Tool for looking up U.S. public companies' SEC EDGAR filings and financial data.
@@ -681,7 +756,9 @@ class EdgarAgent:
                 "cash_flow": [<row dicts>],
                 "corrections": [<{statement, concept, column, original, corrected, rule,
                 reason?}>],
-                "reconciliation_errors": [<{statement, error}>]}}
+                "reconciliation_errors": [<{statement, error}>],
+                "cover": {"shares_outstanding": [<{value, as_of_date, class_member}>],
+                "error": str | None}}}
             "corrections" lists every value this method derived, replaced, or dropped rather
             than returning as-is from edgartools, across all three statements: rule "T-118"
             (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
@@ -697,6 +774,20 @@ class EdgarAgent:
             "reconciliation_errors" (empty when nothing failed) so a caller can tell "verified,
             nothing to correct" apart from "not verified because this layer itself failed" --
             those two cases must never look identical.
+            "cover.shares_outstanding" (T-043, additive -- the three statements, "corrections"
+            and "reconciliation_errors" semantics are unchanged) is the filing's own cover-page
+            share count, read from its XBRL ``dei:EntityCommonStockSharesOutstanding`` facts (see
+            cover_shares_outstanding' docstring): one entry per filed fact -- "value" in shares,
+            "as_of_date" the fact's own instant date (the cover page's "as of" date, usually after
+            the period end -- never the period end), "class_member" None for a non-dimensional
+            fact, else the share class's member (e.g. "us-gaap:CommonClassAMember"). A
+            multi-class filer gets one entry per class, plus a total only if the filer filed one
+            -- never one summed here. Empty list when the filer filed none (never a guessed
+            value); the same for 10-K and 10-Q. Reading it failing returns an empty list and
+            "cover.error" = "<ExcType>: <message>" ("cover.error" is None on success) instead of
+            failing the call. That failure is deliberately NOT added to "reconciliation_errors",
+            which stays about the three statements only: it means "a statement came back
+            unvalidated", and a failed cover read leaves every statement valid.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -766,6 +857,7 @@ class EdgarAgent:
                 xbrl,
                 "cash_flow",
             )
+            cover_shares, cover_error = _safe_cover_shares_outstanding(xbrl)
         except Exception as e:
             return {"success": False, "error": f"Failed to extract financials: {e}"}
         else:
@@ -790,6 +882,7 @@ class EdgarAgent:
                         )
                         if error is not None
                     ],
+                    "cover": {"shares_outstanding": cover_shares, "error": cover_error},
                 },
             }
 

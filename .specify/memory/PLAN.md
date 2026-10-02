@@ -284,10 +284,10 @@ rule; this is a within-service bug fix, so constitution AI behavior #10
 
 ## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
 
-**Status: `T-118` (APA's revenue instance) and `T-042` (the general synthesis-defect fix)
-are both built and live-verified. Still does not close `portfolio-financial-analysis`'s
-`T-117`/`T-118` (`T-041`, cross-repo, stays open until that repo re-verifies against a
-redeployed `sec_edgar`).**
+**Status: closed 2026-10-02 (tasks moved to `CHANGELOG.md`). `T-118` (APA's revenue
+instance) and `T-042` (the general synthesis-defect fix) were built and live-verified, and
+`portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
+`T-117`/`T-118` in its PR #104 on 2026-09-30 (`T-041`).**
 
 **Why**: `portfolio-financial-analysis`'s `T-117`/`T-118` (`docs/model_fixes.md`) —
 APA's (CIK `0001841666`) `us-gaap:Revenues` ("Total revenues") is exactly ~2x its own
@@ -409,23 +409,69 @@ behavior #10 doesn't apply here.
     non-revenue example): non-dimensional rows that are genuinely filed (e.g.
     `us-gaap:OperatingIncomeLoss` "Operating earnings") pass through untouched; ones that
     aren't (e.g. `us-gaap:OperatingExpenses`) drop.
-- Explicitly still scoped: `T-042` is the general fix (any concept, all three statements,
-  validated against actually-filed facts rather than label-pattern detection), but it
-  still does **not** by itself close `portfolio-financial-analysis`'s `T-117`/`T-118` —
-  that repo must re-verify against a redeployed `sec_edgar` before retiring its own local
-  guard (`T-041`, cross-repo, stays open).
+- Scope: `T-042` is the general fix (any concept, all three statements, validated against
+  actually-filed facts rather than label-pattern detection). It did not by itself close
+  `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo re-verified against the
+  redeployed `sec_edgar` itself and closed them in its PR #104 on 2026-09-30 (`T-041`,
+  done 2026-10-02).
 - `SPEC.md` FR-004 reconciled; `docs/modules/sec-edgar.md` updated (both layers, the
   known conservative gap, and the live-verification evidence above).
 - `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` (full suite, 262
   passed) all clean; `pre-commit run --all-files` clean.
 
+## Work item 6 — Expose the cover-page share count (code, cross-repo origin)
+
+**Status: closed 2026-10-02 (task moved to `CHANGELOG.md`). `T-043` built and live-verified, PR #48.**
+
+**Why**: `portfolio-financial-analysis`'s `T-132(a)` needs a point-in-time share count to
+compute market cap, and several names (PG, XOM, PM, NEE, HUM) have no share concept
+stored downstream. The filing's own cover page states it
+(`dei:EntityCommonStockSharesOutstanding`, e.g. PG ~2.32B outstanding — not the ~4.0B
+`CommonStockSharesIssued`, which includes treasury shares).
+
+**Approach**:
+
+1. `cover_shares_outstanding(xbrl)` in `src/sec_edgar/agent.py` reads
+   `xbrl.facts.query().by_concept("dei:EntityCommonStockSharesOutstanding", exact=True)
+   .execute()` from the already-loaded filing — T-042's mechanism, no extra network call.
+   Each filed fact becomes `{"value", "as_of_date", "class_member"}`: `as_of_date` is the
+   fact's own `period_instant` (the cover page's "as of" date, usually after the period
+   end; returned exactly), `class_member` is `null` for a non-dimensional fact, else the
+   `us-gaap:StatementClassOfStockAxis` member. Multi-class filers get one entry per class
+   plus a non-dimensional total only if actually filed — never one summed here. Nothing
+   filed → `[]`, never a guess. Entries are sorted deterministically (total first, then
+   by member name).
+2. Only a fact that is non-dimensional, or dimensioned **solely** by
+   `us-gaap:StatementClassOfStockAxis`, counts. Live verification found NEE's filings
+   also carry `1,000` shares under `dei:LegalEntityAxis` (Florida Power & Light, a
+   co-registrant) — not a NEE share class, so any other dimension is excluded rather
+   than mislabeled. A fact with no usable instant date or a non-finite/negative value is
+   skipped, not guessed.
+3. `_safe_cover_shares_outstanding` isolates a failed read, exactly as PR #46's
+   `_safe_reconcile_with_filed_facts` does: `cover.shares_outstanding` comes back empty and
+   `cover.error` carries `"<ExcType>: <message>"` (`null` on success), so "failed to read"
+   is never indistinguishable from "filer filed none"; the response still succeeds. The
+   failure is **not** put in `reconciliation_errors` (PR #48 review): that list means "a
+   statement came back unvalidated", and `portfolio-financial-analysis` (PR #104) rejects
+   the whole filing when it is non-empty. `get_financials` adds `data["cover"] =
+   {"shares_outstanding": [...], "error": ...}` — purely additive.
+4. Tests (hermetic, facts captured live into `tests/sec_edgar/fixtures/`), `SPEC.md`
+   FR-004, `docs/modules/sec-edgar.md`.
+
+**Acceptance criteria** (all met 2026-10-02, see `TASKS.md` `T-043` for the figures):
+
+- Live, no mocks, latest 10-K and 10-Q: PG, XOM, PM, NEE, HUM, MCD, MSFT match SEC's
+  `companyconcept` API (or, where it lags/has no rows, the filing's own cover page);
+  multi-class GOOGL and BRK-B return one entry per class, checked against the filings'
+  cover pages (`companyconcept` omits per-class dimensional facts).
+- Hermetic tests: single class, multi-class, missing, forced read failure.
+- `SPEC.md` FR-004 reconciled; `uv run ruff check .` / `ruff format --check .` / `mypy` /
+  `pytest` (280 passed) clean.
+
 ## Sequencing
 
-Work items 3 and 4 are closed (merged and verified; tasks in `CHANGELOG.md`). Work item 5
-is open (`T-118` from PR #44, `T-042` the general fix — see its Status line above; `T-042`
-not yet merged, and neither closes `portfolio-financial-analysis`'s `T-117`/`T-118`, left
-to that repo's own cross-repo re-verification, `T-041`). Work items 1–2 stay
-reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
+Work items 3, 4, 5 and 6 are closed (merged and verified; tasks in `CHANGELOG.md`). Work
+items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
