@@ -115,9 +115,9 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > `us-gaap:OperatingIncomeLoss` "Operating earnings") while dropping ones that aren't (e.g.
 > `us-gaap:OperatingExpenses`, never filed non-dimensionally).
 >
-> This closes `T-042` (`TASKS.md`, Work item 5) but still does not by itself close
-> `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo needs to re-verify against a
-> redeployed `sec_edgar` itself before its own local guard is retired (`T-041`).
+> This closed `T-042` (Work item 5, now in `CHANGELOG.md`). It did not by itself close
+> `portfolio-financial-analysis`'s `T-117`/`T-118` — that repo re-verified against the
+> redeployed `sec_edgar` itself and closed them in its PR #104 on 2026-09-30 (`T-041`).
 >
 > **Failure isolation (PR #45 review):** `reconcile_with_filed_facts`' `xbrl.facts.query()`
 > call is live and can fail for a given statement (an unusual filing shape, a transient
@@ -140,3 +140,36 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > level with a full traceback, and `get_financials` records it in a top-level
 > `data["reconciliation_errors"]` list (`[{"statement", "error"}]`, empty when nothing
 > failed) alongside `data["corrections"]`, so a caller can always tell the two cases apart.
+
+> **Cover-page share count (T-043):** `/edgar/financials` also returns
+> `data["cover"] = {"shares_outstanding": [{"value", "as_of_date", "class_member"}]}` —
+> the filing's own cover-page share count, for a point-in-time market cap
+> (`portfolio-financial-analysis`'s `T-132(a)`). Purely additive: the three statements,
+> `corrections` and `reconciliation_errors` are unchanged. It is read from the
+> already-loaded filing's `dei:EntityCommonStockSharesOutstanding` XBRL facts
+> (`xbrl.facts.query()`, no extra network call) — never `CommonStockSharesIssued` (PG: ~4.0B
+> issued vs. ~2.32B outstanding) or a weighted average. `as_of_date` is the fact's own
+> instant date, the cover page's "as of" date, usually after the period end; it is returned
+> exactly, never replaced with the period end. `class_member` is `null` for a
+> non-dimensional fact, else the `us-gaap:StatementClassOfStockAxis` member (GOOGL: Class A
+> `us-gaap:CommonClassAMember`, B, and C `goog:CapitalClassCMember`; BRK-B: A and B). A
+> multi-class filer gets one entry per class, plus a `null`-member total only if the filer
+> actually filed one — never one summed here (T-042's rule). Entries are sorted (total first,
+> then by member name). Missing → `[]`, never a guess; applies to 10-K and 10-Q alike.
+>
+> A fact carrying any dimension other than the share-class axis is not returned. Live
+> verification found NEE's filings also carry `1,000` shares under `dei:LegalEntityAxis`
+> (Florida Power & Light, a co-registrant, listed separately on NEE's cover) — not a NEE share
+> class, so reporting it would mislabel another registrant's count.
+>
+> **Failure isolation:** a failed read goes through `_safe_cover_shares_outstanding`, the same
+> pattern as T-042's: `shares_outstanding` comes back `[]` and a `{"statement": "cover",
+> "error"}` entry lands in `reconciliation_errors` — the response still succeeds, and "failed
+> to read" stays distinguishable from "filer filed none" (empty list, no error entry).
+>
+> **Verifying against SEC:** SEC's `companyconcept/CIK##########/dei/
+> EntityCommonStockSharesOutstanding.json` carries only non-dimensional facts, so it cannot
+> confirm per-class counts — check multi-class filers against the filing's cover page instead.
+> It also lags (XOM's and NEE's newest 10-Qs were absent) and had no rows at all for HUM, whose
+> cover page matched the returned value. Live-verified figures: `SPEC.md` FR-004,
+> `TASKS.md`/`CHANGELOG.md` `T-043`.

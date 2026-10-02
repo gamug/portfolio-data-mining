@@ -57,134 +57,54 @@ renumber; mark a cancelled/superseded task in place instead.
       (workflow exists *and* is enforced), distinct from T-007's "exists"
       milestone. → `PLAN.md` Work item 2, second acceptance criterion.
 
-## Work item 5 — Fix `sec_edgar`'s revenue-total contradiction (code, cross-repo origin)
+## Work item 6 — Expose the cover-page share count (code, cross-repo origin)
 
-**Open — PR #44, APA revenue instance only. Does not close
-`portfolio-financial-analysis`'s `T-117`/`T-118`, which stay open there.**
+Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-time share count).
 
-- [x] **T-036** Trace `portfolio-financial-analysis`'s `T-117`/`T-118` root cause live
-      against this repo: reproduce APA's (CIK `0001841666`) FY2023-2025 `us-gaap_Revenues`
-      defect through `EdgarAgent.get_financials`, and confirm against `data.sec.gov`'s
-      `companyconcept`/`companyfacts` APIs that APA has never filed a real
-      `us-gaap:Revenues` fact at all. → `PLAN.md` Work item 5, "Why". **Done 2026-09-28**,
-      mechanism confirmed and re-verified in PR #44 review: `edgartools==5.44.1`
-      synthesizes a non-dimensional "total" row for a concept by summing that concept's
-      dimensional axis members, and double-counts when one member is a parent whose value
-      already includes its own children — APA FY2023: `8279 (parent) + 7385 (its
-      children) + 894 (unrelated member) = 16558` synthesized vs. the correct `8279`;
-      FY2024: `9737 + 8196 + 1541 = 19474` vs. `9737`. A full-universe scan of every
-      stored filing found this is general, not APA/revenue-specific: 163 mismatched
-      values across 105 concept/period pairs, 1,101 synthesized non-dimensional rows
-      total.
-- [x] **T-037** Add `correct_revenue_totals(income_statement)` to `src/sec_edgar/agent.py`,
-      ported from `portfolio-financial-analysis`'s `Statements._label_total_correction`
-      (`T-117`): a first aggregate revenue concept contradicted by a later, non-dimensional,
-      label-matched, materially smaller "total revenue" row is corrected by subtracting the
-      rows between the two, or dropped when those rows are too large to trust. Wire it into
-      `get_financials`'s `income_statement`. Scoped to revenue only — **fixes APA's revenue
-      instance, not the general synthesis defect**. → `PLAN.md` Work item 5, step 1-2.
-      **Done 2026-09-28**.
-- [x] **T-038** Tests in `tests/sec_edgar/test_agent.py`: `correct_revenue_totals` unit
-      tests (APA's real FY2023 shape recovers $8,279M; FY2022's genuinely larger "and
-      other" total left alone; "Total cost of revenues" excluded; an unsafe-to-derive
-      contradiction drops the value; a dimensional row never picked as either candidate;
-      a no-op with no aggregate concept present; no mutation of the input; the returned
-      `corrections` list content for each case) plus one `get_financials` end-to-end test
-      asserting `data["corrections"]`. → step 3. **Done 2026-09-28**: 8 tests updated
-      (38 → 46 total); `uv run pytest tests/sec_edgar -q` and the full suite (242) both
-      green.
-- [x] **T-039** Update `SPEC.md` FR-004 with the correction's contract, the confirmed
-      parent-vs-summed-children mechanism, and a live-verified APA figure citation; add
-      the note to `docs/modules/sec-edgar.md`, explicitly scoped as "APA revenue instance
-      only". → step 4, acceptance criteria. **Done 2026-09-28**.
-- [x] **T-040** Verify live against real SEC EDGAR data (`NAME`/`EMAIL` set, no mocking,
-      no network calls skipped): every available APA 10-K (FY2021-FY2025, filed
-      2022-2026) and every 2024 10-Q. → acceptance criteria. **Done 2026-09-28**: FY2023
-      10-K → $8,279M/$11,075M/$7,985M (2023/2022/2021 columns); FY2024 10-K (filed 2025)
-      → $9,737M/$8,279M/$11,075M; FY2025 10-K (filed 2026) → $8,920M/$9,737M/$8,279M —
-      exact match to `portfolio-financial-analysis`'s `T-117` acceptance figures. FY2021's
-      own 10-K (filed 2022) is correctly left untouched at $1,082M (a pre-existing,
-      differently-shaped too-small defect, that repo's own `T-095`, out of this fix's
-      scope). All three 2024 10-Qs (accessions `...-000003`, `...-000013`, `...-000008`)
-      resolved correctly, including both YTD columns. `data["corrections"]` recorded each
-      correction/drop made, live-verified against the same filings.
-      **Superseded in part by `T-042`, 2026-09-30**: FY2021-filed-2022's $1,082M is no
-      longer left untouched — `T-042`'s general check also catches it (APA never filed
-      `us-gaap:Revenues` non-dimensionally in any period, T-095's defect included) and
-      drops it to `None`. This extends correctness to a case this task's own reconstruction
-      couldn't reach, not a regression of the figures above, which are unaffected.
-- [ ] **T-041** *(cross-repo)* Hand off findings to `portfolio-financial-analysis`'s
-      `T-118` — this fix corrects APA's revenue instance only and does **not** close
-      `T-117`/`T-118` there; leave both open until the general synthesis defect (T-042) is
-      addressed and that repo's own re-verification against a redeployed `sec_edgar`
-      confirms nothing is left to correct on APA. → `PLAN.md` Work item 5 acceptance
-      criteria; that repo's own `T-118`. **Not done** — do not check this until that
-      repo's own `T-117` guard is confirmed to find nothing left, post-redeploy.
-- [x] **T-042** *(follow-up, still under this work item's `T-118` origin)* General fix:
-      validate every synthesized non-dimensional value (not just revenue, not just
-      label-pattern detection) against the filer's actually-filed facts
-      (`data.sec.gov` `companyconcept`/`companyfacts`, or an equivalent structural check
-      within `edgartools`' own output) across all 163 mismatched values/105 pairs found
-      in the full-universe scan, and mark or drop whatever doesn't reconcile. → `PLAN.md`
-      Work item 5, step 5. **Done 2026-09-30**: `reconcile_with_filed_facts` added to
-      `src/sec_edgar/agent.py` — validates every non-dimensional row on all three
-      statements against the already-loaded filing's own XBRL facts
-      (`xbrl.facts.query()`, no extra `data.sec.gov` call needed), replacing label-pattern
-      detection with the filing's own ground truth. Runs after `correct_revenue_totals`,
-      skipping whatever it already corrected. 21 new tests (`tests/sec_edgar/test_agent.py`
-      — 66 total in that file, 262 full suite), plus 3 live-verification passes that each
-      caught and fixed a real bug before landing: (1) a raw-filed-fact sign convention
-      (contra accounts like `TreasuryStockCommonValue`, cash-flow decreases) was initially
-      flagged as a false "mismatch" and had its sign flipped — fixed by comparing
-      magnitude only, matching the original full-universe scan's own methodology
-      ("excluding sign-convention flips"); (2) an instant-lookup fallback added to catch a
-      cash-flow statement's "beginning/end of period" balance (genuinely an instant fact
-      under a duration column) silently substituted the *wrong* endpoint's value for the
-      "beginning of period" row — removed rather than fixed with a label heuristic; that
-      row now drops instead of guessing wrong, a documented known gap. Live-verified: APA
-      FY2021-FY2025 10-Ks + all three 2024 10-Qs (T-118's reconstruction unaffected
-      wherever it applies; FY2021-filed-2022 now also drops to `None`, see the note on
-      `T-040` above); MSFT's FY2024 10-K (clean filer, only the known cash-roll-forward
-      gap flags); SNA's FY2026 10-Qs (the PR #44 review's cited non-revenue example —
-      genuinely-filed non-dimensional rows like `OperatingIncomeLoss` pass through,
-      never-filed ones like `OperatingExpenses` drop). `SPEC.md` FR-004,
-      `docs/modules/sec-edgar.md`, `PLAN.md` Work item 5 all updated. Merged as PR #45.
-      **Follow-up, same day**: PR #45's own review (`sourcery-ai`, 2026-09-30) found a
-      correctness gap in the wiring, not the algorithm — `reconcile_with_filed_facts`'
-      live `xbrl.facts.query()` call could raise for a statement, and `get_financials`'
-      one outer `try/except` would convert the *entire* response to `success: False`,
-      discarding the other two statements' already-successfully-rendered data along with
-      it. Fixed in a follow-up PR (`fix/t042-reconciliation-failure-isolation`, #46): a new
-      `_safe_reconcile_with_filed_facts` wrapper at each of the three call sites in
-      `get_financials` catches a `reconcile_with_filed_facts` failure per statement and
-      returns that statement's rows rendered-but-unvalidated (empty corrections for it)
-      instead of failing the whole call — `reconcile_with_filed_facts` itself stays
-      exception-raising and unit-testable as before. 4 new tests (69 total in
-      `tests/sec_edgar`, 265 full suite).
-      **Follow-up to the follow-up, same day**: PR #46's own review (`sourcery-ai`,
-      2026-09-30) flagged that the broad `except Exception` also swallows a genuine bug in
-      this module's own logic, and that returning empty corrections on failure looks
-      identical to "verified, nothing to correct." Addressed without narrowing the catch
-      (no fixed, enumerable set of "expected" failure types exists for a live third-party
-      library, and narrowing risks reopening the exact PR #45 failure this wrapper
-      prevents): failures now log at `error` level with a full traceback, and
-      `_safe_reconcile_with_filed_facts` returns a third value (an error message, `None` on
-      success) that `get_financials` surfaces in a new top-level `data["reconciliation_
-      errors"]` list (`{"statement", "error"}`, empty when nothing failed), so a caller can
-      always distinguish the two cases. Same PR #46, additional commit.
+- [x] **T-043** In `sec_edgar`, `get_financials` returns the filing's cover-page share count
+      as a new, additive top-level field — the three statements, `corrections` and
+      `reconciliation_errors` are unchanged:
+      `"cover": {"shares_outstanding": [{"value": <shares>, "as_of_date": "<the dei fact's
+      instant date>", "class_member": <null | "us-gaap:CommonClassAMember", ...>}]}`.
+      Source: the filing's own `dei:EntityCommonStockSharesOutstanding` XBRL facts via
+      `xbrl.facts.query()` (T-042's mechanism; no extra network call; never
+      `CommonStockSharesIssued` or a weighted average). `as_of_date` is the fact's own
+      instant date, returned exactly, never replaced by the period end. A multi-class
+      filer gets one entry per class plus a non-dimensional total only if the filer
+      actually filed one — never a total summed here (T-042's rule). Missing → empty list,
+      never a guess; 10-K and 10-Q alike. Failure isolation (PR #46's pattern): a failed
+      read returns `cover` empty plus a `{"statement": "cover", "error"}` entry in
+      `reconciliation_errors`, and never fails the response. → `SPEC.md` FR-004.
+      **Done 2026-10-02**: `cover_shares_outstanding` / `_safe_cover_shares_outstanding`
+      in `src/sec_edgar/agent.py`; 15 new hermetic tests in `tests/sec_edgar/test_agent.py`
+      (69 → 84 there, 265 → 280 full suite) using facts captured live into
+      `tests/sec_edgar/fixtures/cover_shares_facts.json` — single class (PG 10-K/10-Q),
+      multi-class (GOOGL 10-K, BRK-B 10-Q), missing, a forced read failure (unit and
+      end-to-end), plus edge cases; the dimension filter was mutation-checked (removing
+      it fails the NEE/untrusted-fact tests). **Live-verified, no mocks**, latest 10-K
+      and 10-Q of each, against SEC's `companyconcept` API where it carries the accession
+      and against the filing's own cover-page text otherwise — PG 2,324,433,060 as of
+      2026-07-31 (not the ~4.0B issued), XOM 4,166,763,453, PM 1,556,679,579, NEE
+      2,083,521,964, HUM 120,595,967, MCD 710,398,642, MSFT 7,425,545,491 (10-K), all
+      exact; GOOGL 10-K three entries 5,822M/837M/5,438M (A/B/C) as of 2026-01-28 and
+      BRK-B 10-K 511,820 (A) / 1,389,605,139 (B) as of 2026-01-31, matching the cover
+      pages (and GOOGL 10-Q 5,868M/835M/5,527M, BRK-B 10-Q 488,450 / 1,408,035,161).
+      Findings from live verification: (1) NEE's filings also carry `1,000` shares under
+      `dei:LegalEntityAxis` (Florida Power & Light, a co-registrant, listed separately on
+      NEE's cover) — **not** a share class, so only a fact that is non-dimensional or
+      dimensioned solely by `us-gaap:StatementClassOfStockAxis` is returned; (2)
+      `companyconcept` lags — XOM's and NEE's latest 10-Qs were not yet in it, and HUM has
+      no `companyconcept` rows at all — those were checked against the cover pages instead
+      (all exact).
 
 ## Status
 
-Closed Work items 3 and 4 are in `CHANGELOG.md` (Work item 3's last task,
-`T-026`, closed once `portfolio-financial-analysis`'s `T-052` verified the
-redeployed gateway live on 2026-09-21).
+Closed Work items 3, 4 and 5 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02, once
+`portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
+`T-117`/`T-118` in its PR #104).
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
 CI is wanted again.
 
-Work item 5 is open: T-036–T-040 (PR #44) and T-042 are done — the general
-synthesis-defect fix now exists alongside `T-118`'s APA-revenue-specific
-reconstruction. T-041 (cross-repo closure of `portfolio-financial-analysis`'s
-`T-117`/`T-118`) stays unchecked until that repo re-verifies against a
-redeployed `sec_edgar` itself.
+Work item 6 (cover-page share count) — `T-043` is done in this PR.

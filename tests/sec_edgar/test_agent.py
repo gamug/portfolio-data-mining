@@ -8,7 +8,9 @@ and never raise, so most tests assert on that shape directly.
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -19,8 +21,10 @@ from sec_edgar.agent import (
     EdgarAgent,
     _filed_nondimensional_values,
     _parse_period_column,
+    _safe_cover_shares_outstanding,
     _safe_reconcile_with_filed_facts,
     correct_revenue_totals,
+    cover_shares_outstanding,
     reconcile_with_filed_facts,
 )
 
@@ -790,6 +794,7 @@ def test_get_financials_success(agent: EdgarAgent) -> None:
     assert result["data"]["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
     assert result["data"]["corrections"] == []
     assert result["data"]["reconciliation_errors"] == []
+    assert result["data"]["cover"] == {"shares_outstanding": []}
 
 
 def test_get_financials_corrects_a_contradicted_revenue_total_end_to_end(
@@ -1086,6 +1091,235 @@ def test_get_financials_failure_returns_error_dict(agent: EdgarAgent) -> None:
         result = agent.get_financials("AAPL", form="10-K", year=2023)
 
     assert result["success"] is False
+
+
+# ---------------------------------------------------------------------
+# cover_shares_outstanding (T-043)
+# ---------------------------------------------------------------------
+
+_COVER_FIXTURES = Path(__file__).parent / "fixtures" / "cover_shares_facts.json"
+_STATEMENT_FRAMES = (
+    pd.DataFrame({"line": ["Revenue"], "amount": [1000.0]}),
+    pd.DataFrame({"line": ["Assets"], "amount": [5000.0]}),
+    pd.DataFrame({"line": ["Operating"], "amount": [200.0]}),
+)
+
+
+def _captured_cover_facts(key: str) -> list[dict]:
+    """Real ``xbrl.facts.query().by_concept("dei:EntityCommonStockSharesOutstanding").execute()``
+    rows, captured live from the named filing (``<TICKER>_<FORM>``, latest as of 2026-10-02) --
+    see ``fixtures/cover_shares_facts.json``'s ``accession_number``/``filing_date`` per key."""
+    return json.loads(_COVER_FIXTURES.read_text())[key]["facts"]
+
+
+def _cover_xbrl(facts: list[dict]) -> MagicMock:
+    """A minimal `xbrl` whose cover-share query resolves to *facts*."""
+    xbrl = MagicMock()
+    xbrl.facts.query.return_value.by_concept.return_value.execute.return_value = facts
+    return xbrl
+
+
+def _fact(
+    value: float | str | None,
+    instant: str | None = "2026-01-28",
+    member: str | None = None,
+    **extra: object,
+) -> dict:
+    """A synthetic fact row in edgartools' ``execute()`` shape (only what the code reads)."""
+    fact: dict = {"numeric_value": value, "value": value, "period_instant": instant}
+    if member is not None:
+        fact["dim_us-gaap_StatementClassOfStockAxis"] = member
+    fact.update(extra)
+    return fact
+
+
+def test_cover_shares_outstanding_single_class_real_filing() -> None:
+    """PG's 10-K (captured live): ~2.32B outstanding as of the cover-page date, which is
+    *after* the 2026-06-30 fiscal year end -- returned exactly, not replaced with it."""
+    result = cover_shares_outstanding(_cover_xbrl(_captured_cover_facts("PG_10-K")))
+    assert result == [{"value": 2324433060, "as_of_date": "2026-07-31", "class_member": None}]
+
+
+def test_cover_shares_outstanding_applies_to_a_10_q_alike() -> None:
+    result = cover_shares_outstanding(_cover_xbrl(_captured_cover_facts("PG_10-Q")))
+    assert result == [{"value": 2328598978, "as_of_date": "2026-03-31", "class_member": None}]
+
+
+def test_cover_shares_outstanding_multi_class_returns_one_entry_per_class_and_no_total() -> None:
+    """GOOGL's 10-K (captured live): three classes, all dimensional -- no total was filed,
+    so none is returned (and certainly none summed)."""
+    result = cover_shares_outstanding(_cover_xbrl(_captured_cover_facts("GOOGL_10-K")))
+    # sorted by member name, deterministically (not the filing's own fact order)
+    assert result == [
+        {
+            "value": 5438000000,
+            "as_of_date": "2026-01-28",
+            "class_member": "goog:CapitalClassCMember",
+        },
+        {
+            "value": 5822000000,
+            "as_of_date": "2026-01-28",
+            "class_member": "us-gaap:CommonClassAMember",
+        },
+        {
+            "value": 837000000,
+            "as_of_date": "2026-01-28",
+            "class_member": "us-gaap:CommonClassBMember",
+        },
+    ]
+    assert all(e["class_member"] is not None for e in result)
+    assert 5822000000 + 837000000 + 5438000000 not in [e["value"] for e in result]
+
+
+def test_cover_shares_outstanding_two_class_10_q_real_filing() -> None:
+    result = cover_shares_outstanding(_cover_xbrl(_captured_cover_facts("BRK-B_10-Q")))
+    assert result == [
+        {"value": 488450, "as_of_date": "2026-07-29", "class_member": "us-gaap:CommonClassAMember"},
+        {
+            "value": 1408035161,
+            "as_of_date": "2026-07-29",
+            "class_member": "us-gaap:CommonClassBMember",
+        },
+    ]
+
+
+def test_cover_shares_outstanding_excludes_a_co_registrants_legal_entity_fact() -> None:
+    """NEE's 10-K (captured live) also carries 1,000 shares under ``dei:LegalEntityAxis`` for
+    Florida Power & Light, a co-registrant -- not a NEE share class, so it must not appear."""
+    facts = _captured_cover_facts("NEE_10-K")
+    assert any(f.get("dim_dei_LegalEntityAxis") for f in facts)  # fixture still has the trap
+    assert cover_shares_outstanding(_cover_xbrl(facts)) == [
+        {"value": 2083521964, "as_of_date": "2026-01-31", "class_member": None}
+    ]
+
+
+def test_cover_shares_outstanding_keeps_a_filed_total_alongside_the_classes() -> None:
+    """Synthetic: a filer that really filed a non-dimensional total *and* per-class facts gets
+    all of them, the total first -- and the total is the filed one, not a sum."""
+    facts = [
+        _fact(30, member="us-gaap:CommonClassBMember"),
+        _fact(100),
+        _fact(70, member="us-gaap:CommonClassAMember"),
+    ]
+    assert cover_shares_outstanding(_cover_xbrl(facts)) == [
+        {"value": 100, "as_of_date": "2026-01-28", "class_member": None},
+        {"value": 70, "as_of_date": "2026-01-28", "class_member": "us-gaap:CommonClassAMember"},
+        {"value": 30, "as_of_date": "2026-01-28", "class_member": "us-gaap:CommonClassBMember"},
+    ]
+
+
+def test_cover_shares_outstanding_missing_is_an_empty_list() -> None:
+    assert cover_shares_outstanding(_cover_xbrl([])) == []
+
+
+def test_cover_shares_outstanding_reads_only_the_dei_outstanding_concept() -> None:
+    """Never `CommonStockSharesIssued`/weighted averages as a substitute (PG: ~4.0B issued)."""
+    xbrl = _cover_xbrl([])
+    cover_shares_outstanding(xbrl)
+    xbrl.facts.query.return_value.by_concept.assert_called_once_with(
+        "dei:EntityCommonStockSharesOutstanding", exact=True
+    )
+
+
+def test_cover_shares_outstanding_skips_facts_it_cannot_trust() -> None:
+    facts = [
+        _fact(None),  # no value at all
+        _fact("not-a-number"),
+        _fact(float("nan")),
+        _fact(-5),
+        _fact(10, instant=None),  # no instant date -> never fall back to a guess
+        _fact(10, instant="garbage"),
+        _fact(10, member=""),  # a dimension with no member
+        _fact(10, member="us-gaap:CommonClassAMember", **{"dim_us-gaap_OtherAxis": "x:Member"}),
+        _fact(10, member="us-gaap:CommonClassAMember", **{"dim_dei_LegalEntityAxis": "x:Member"}),
+        _fact(42, instant="2026-01-28T00:00:00"),  # the one good fact (ISO datetime trimmed)
+    ]
+    assert cover_shares_outstanding(_cover_xbrl(facts)) == [
+        {"value": 42, "as_of_date": "2026-01-28", "class_member": None}
+    ]
+
+
+def test_cover_shares_outstanding_collapses_exact_duplicate_facts() -> None:
+    facts = [_fact(7, member="us-gaap:CommonClassAMember")] * 2
+    assert len(cover_shares_outstanding(_cover_xbrl(facts))) == 1
+
+
+def test_safe_cover_shares_outstanding_returns_result_on_success() -> None:
+    entries, error = _safe_cover_shares_outstanding(_cover_xbrl(_captured_cover_facts("PG_10-K")))
+    assert error is None
+    assert entries[0]["value"] == 2324433060
+
+
+def test_safe_cover_shares_outstanding_isolates_a_read_failure() -> None:
+    xbrl = MagicMock()
+    xbrl.facts.query.side_effect = RuntimeError("simulated xbrl.facts.query() failure")
+    assert _safe_cover_shares_outstanding(xbrl) == (
+        [],
+        "RuntimeError: simulated xbrl.facts.query() failure",
+    )
+
+
+def _financials_for(agent: EdgarAgent, xbrl: MagicMock, form: str = "10-K") -> dict:
+    filing = make_filing(form=form, filing_date=date(2026, 8, 4))
+    filing.xbrl.return_value = xbrl
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [filing]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        return agent.get_financials("PG", form=form, year=2026)
+
+
+def test_get_financials_exposes_cover_shares_outstanding_end_to_end(agent: EdgarAgent) -> None:
+    """Additive: the three statements, ``corrections`` and ``reconciliation_errors`` are
+    exactly what they were without the new field."""
+    xbrl = _cover_xbrl(_captured_cover_facts("GOOGL_10-K"))
+    xbrl.statements.income_statement.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[0]
+    xbrl.statements.balance_sheet.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[1]
+    xbrl.statements.cashflow_statement.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[2]
+    result = _financials_for(agent, xbrl)
+
+    assert result["success"] is True
+    data = result["data"]
+    assert [e["class_member"] for e in data["cover"]["shares_outstanding"]] == [
+        "goog:CapitalClassCMember",
+        "us-gaap:CommonClassAMember",
+        "us-gaap:CommonClassBMember",
+    ]
+    assert data["income_statement"] == [{"line": "Revenue", "amount": 1000.0}]
+    assert data["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
+    assert data["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
+    assert data["corrections"] == []
+    assert data["reconciliation_errors"] == []
+
+
+def test_get_financials_cover_is_empty_when_the_filer_filed_none(agent: EdgarAgent) -> None:
+    xbrl = _cover_xbrl([])
+    xbrl.statements.income_statement.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[0]
+    xbrl.statements.balance_sheet.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[1]
+    xbrl.statements.cashflow_statement.return_value.to_dataframe.return_value = _STATEMENT_FRAMES[2]
+    result = _financials_for(agent, xbrl, form="10-Q")
+
+    assert result["success"] is True
+    assert result["data"]["cover"] == {"shares_outstanding": []}
+    assert result["data"]["reconciliation_errors"] == []  # filed none != failed to read
+
+
+def test_get_financials_survives_a_cover_read_failure(agent: EdgarAgent) -> None:
+    """Failure isolation (same as PR #46): the cover read raising returns ``cover`` empty plus a
+    ``{"statement": "cover", ...}`` entry in ``reconciliation_errors`` -- the statements are
+    intact and the call still succeeds."""
+    xbrl = _mock_xbrl_with_frames(*_STATEMENT_FRAMES)
+    xbrl.facts.query.return_value.by_concept.side_effect = RuntimeError("simulated cover failure")
+    result = _financials_for(agent, xbrl)
+
+    assert result["success"] is True
+    data = result["data"]
+    assert data["cover"] == {"shares_outstanding": []}
+    assert data["reconciliation_errors"] == [
+        {"statement": "cover", "error": "RuntimeError: simulated cover failure"}
+    ]
+    assert data["income_statement"] == [{"line": "Revenue", "amount": 1000.0}]
+    assert data["balance_sheet"] == [{"line": "Assets", "amount": 5000.0}]
+    assert data["cash_flow"] == [{"line": "Operating", "amount": 200.0}]
 
 
 # ---------------------------------------------------------------------
