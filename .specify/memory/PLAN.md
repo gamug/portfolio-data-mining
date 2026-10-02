@@ -421,7 +421,7 @@ behavior #10 doesn't apply here.
 
 ## Work item 6 — Expose the cover-page share count (code, cross-repo origin)
 
-**Status: built and live-verified (`T-043`), in this PR.**
+**Status: closed 2026-10-02 (task moved to `CHANGELOG.md`). `T-043` built and live-verified, PR #48.**
 
 **Why**: `portfolio-financial-analysis`'s `T-132(a)` needs a point-in-time share count to
 compute market cap, and several names (PG, XOM, PM, NEE, HUM) have no share concept
@@ -470,9 +470,8 @@ stored downstream. The filing's own cover page states it
 
 ## Sequencing
 
-Work items 3, 4 and 5 are closed (merged and verified; tasks in `CHANGELOG.md`). Work
-item 6 (`T-043`) is built and live-verified, in its own PR. Work items 1–2 stay
-reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
+Work items 3, 4, 5 and 6 are closed (merged and verified; tasks in `CHANGELOG.md`). Work
+items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

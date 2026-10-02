@@ -176,4 +176,4 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > confirm per-class counts — check multi-class filers against the filing's cover page instead.
 > It also lags (XOM's and NEE's newest 10-Qs were absent) and had no rows at all for HUM, whose
 > cover page matched the returned value. Live-verified figures: `SPEC.md` FR-004,
-> `TASKS.md`/`CHANGELOG.md` `T-043`.
+> `CHANGELOG.md` `T-043` (Work item 6).
