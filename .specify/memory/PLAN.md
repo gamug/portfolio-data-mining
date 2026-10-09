@@ -494,10 +494,15 @@ as "already backfilled".
 - CPAY, ECHO, SW fall back to their roster `Date added` when unpatched.
 - 21CF FOXA and FOX intervals are correctly reconstructed backward.
 - Backfill guard distinguishes snapshot rows from backfill rows.
-- All patch rows cite official S&P Dow Jones Indices press releases.
-- Total reconstructed intervals reach 894 rows; date member counts on 2018-01-02 (504),
-  2022-01-03 (505), 2024-01-02 (503), 2026-10-01 (504) match expectations.
-- All quality gates (`ruff check`, `ruff format --check`, `mypy`, `pytest` (284 passed)) clean.
+- All patch rows cite official source releases (SEC Form 8-K, S&P DJI, or company press releases) documenting each specific fact and date.
+- All 96 historical constituents and predecessors overlapping 2022-01-01+ have verified 10-digit SEC EDGAR CIKs.
+- Reconstructed member counts:
+  - 2018-01-02: 503 exclusive (`valid_to > 2018-01-02`) / 504 inclusive (`valid_to >= 2018-01-02`, including BCR on its final day before HII replacement on 2018-01-03) against 505 expected (500 companies + 5 dual classes; TROW pre-2019 shortfall).
+  - 2022-01-03: 505 against 505 expected (500 companies + 5 dual classes: GOOG/GOOGL, FOX/FOXA, NWS/NWSA, DISCA/DISCK, UA/UAA).
+  - 2024-01-02: 503 against 503 expected (500 companies + 3 dual classes: GOOG/GOOGL, FOX/FOXA, NWS/NWSA).
+  - 2026-10-01: 504 against 504 expected (503 baseline + transitional addition ahead of 2026-10-06 drop).
+- Known residual documented: TROW's roster "Date added" is 2019-07-29, so TROW is missing prior to 2019-07-29 (outside consumer's 2022+ window).
+- All quality gates (`ruff check`, `ruff format --check`, `mypy`, `pytest`) clean.
 
 ## Sequencing
 

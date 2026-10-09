@@ -18,6 +18,7 @@ import pytest
 from data_mining import queries, universe_history
 from data_mining.universe_patches import (
     EVENT_REPLACEMENTS,
+    HISTORICAL_CIKS,
     PATCH_ROWS,
     apply_patches,
 )
@@ -448,19 +449,23 @@ def test_backfill_guard_checks_wikipedia_backfill_rows(monkeypatch: pytest.Monke
 
 
 def test_apply_patches_and_citations() -> None:
-    # 1. All patch rows cite official S&P press releases
+    # 1. All patch rows cite official releases (S&P DJI, SEC, or company press release)
+    allowed_sources = (
+        "https://press.spglobal.com",
+        "https://www.spglobal.com",
+        "https://www.sec.gov",
+        "https://www.globenewswire.com",
+        "https://www.businesswire.com",
+        "https://www.prnewswire.com",
+    )
     for patch in PATCH_ROWS:
-        assert patch.citation_url.startswith(
-            ("https://press.spglobal.com", "https://www.spglobal.com")
-        )
+        assert patch.citation_url.startswith(allowed_sources)
         assert len(patch.citation_date) == 10  # YYYY-MM-DD
         assert patch.reason
 
     # 2. All event replacements cite official releases
     for rep in EVENT_REPLACEMENTS:
-        assert rep.citation_url.startswith(
-            ("https://press.spglobal.com", "https://www.spglobal.com")
-        )
+        assert rep.citation_url.startswith(allowed_sources)
         assert len(rep.citation_date) == 10
         assert rep.reason
 
@@ -479,3 +484,81 @@ def test_apply_patches_and_citations() -> None:
     goog_event = next(e for e in patched if e.effective_date == date(2014, 4, 3))
     assert goog_event.added_ticker == "GOOG"
     assert "Class C" in goog_event.added_security
+
+
+def test_renamed_pairs_share_one_cik() -> None:
+    pairs = [
+        ("FB", "META"),
+        ("FLT", "CPAY"),
+        ("WLTW", "WTW"),
+        ("CDAY", "DAY"),
+        ("RE", "EG"),
+        ("SATS", "ECHO"),
+    ]
+    for pre, post in pairs:
+        pre_cik = HISTORICAL_CIKS.get(pre)
+        post_cik = HISTORICAL_CIKS.get(post)
+        assert pre_cik is not None, f"Missing CIK for {pre}"
+        assert post_cik is not None, f"Missing CIK for {post}"
+        assert pre_cik == post_cik, f"{pre} ({pre_cik}) != {post} ({post_cik})"
+
+
+def test_reconstruct_populates_ciks_for_historical_symbols() -> None:
+    today_rows = _today_roster("META")
+    events = [
+        universe_history.ChangeEvent(
+            effective_date=date(2022, 6, 9),
+            added_ticker="META",
+            added_security="Meta Platforms",
+            removed_ticker="FB",
+            removed_security="Facebook",
+            reason="Rename",
+        ),
+        universe_history.ChangeEvent(
+            effective_date=date(2015, 1, 5),
+            added_ticker="FB",
+            added_security="Facebook",
+            removed_ticker="",
+            removed_security="",
+            reason="Boundary",
+        ),
+    ]
+    intervals = universe_history._reconstruct_intervals(today_rows, events)
+    fb_interval = next(r for r in intervals if r["symbol"] == "FB")
+    assert fb_interval["cik"] == "0001326801"
+
+
+def test_resolve_fallback_date_parses_month_name_and_iso() -> None:
+    earliest = date(2010, 1, 1)
+
+    # ISO format
+    assert (
+        universe_history._resolve_fallback_date(
+            {"date_added": "2018-06-20", "valid_to": None}, earliest
+        )
+        == "2018-06-20"
+    )
+
+    # Month-name format
+    assert (
+        universe_history._resolve_fallback_date(
+            {"date_added": "June 20, 2018", "valid_to": None}, earliest
+        )
+        == "2018-06-20"
+    )
+
+    # Abbreviated month format
+    assert (
+        universe_history._resolve_fallback_date(
+            {"date_added": "Jun 20, 2018", "valid_to": None}, earliest
+        )
+        == "2018-06-20"
+    )
+
+    # Unparseable format falls back to earliest
+    assert (
+        universe_history._resolve_fallback_date(
+            {"date_added": "unknown date", "valid_to": None}, earliest
+        )
+        == "2010-01-01"
+    )
