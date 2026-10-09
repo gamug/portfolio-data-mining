@@ -59,10 +59,10 @@ renumber; mark a cancelled/superseded task in place instead.
 
 ## Status
 
-Closed Work items 3, 4, 5 and 6 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
+Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
-`T-117`/`T-118` in its PR #104; Work item 6, `T-043`, the cover-page share count, closed
-2026-10-02 in PR #48).
+`T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
+Work item 7, `T-044`, closed 2026-10-09).
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

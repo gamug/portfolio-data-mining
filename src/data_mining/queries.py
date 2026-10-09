@@ -91,6 +91,13 @@ def count_membership_rows(db: Database) -> int:
     return int(count)
 
 
+def count_backfill_rows(db: Database) -> int:
+    (count,) = db.execute(
+        "SELECT COUNT(*) FROM universe_membership WHERE source = 'wikipedia_changes_backfill'"
+    ).fetchone()
+    return int(count)
+
+
 def clear_membership(db: Database) -> None:
     db.execute("DELETE FROM universe_membership")
 

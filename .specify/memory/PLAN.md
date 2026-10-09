@@ -468,9 +468,40 @@ stored downstream. The filing's own cover page states it
 - `SPEC.md` FR-004 reconciled; `uv run ruff check .` / `ruff format --check .` / `mypy` /
   `pytest` (280 passed) clean.
 
+## Work item 7 — Fix point-in-time universe history reconstruction anomalies & data patches (code + data, T-044)
+
+**Status: closed 2026-10-09 (task moved to `CHANGELOG.md`). `T-044` built and verified.**
+
+**Why**: Rebuilding the point-in-time S&P 500 universe from Wikipedia's "Historical components"
+changes table revealed ticker anomalies (renames SATS/FLT/RE/FB, combination WRK/SW,
+temporary spin-offs FTRE/PHIN, GOOG/GOOGL share-class swap), skipped rows for corporate restructurings
+sharing the same ticker (21CF FOXA/FOX), and open intervals lacking valid_from fallback dates.
+Additionally, the backfill guard falsely treated the pilot's 20-row `live_snapshot` universe.db
+as "already backfilled".
+
+**Approach**:
+1. Add `Date added` fallback in `_reconstruct_intervals` clamped to table's earliest date.
+2. In `_reconstruct_intervals`, process addition before removal so tickers reused across corporate
+   entities (e.g. Fox Corporation replacing 21st Century Fox FOXA/FOX on 2019-03-19) resolve their
+   live intervals before opening predecessor intervals.
+3. Introduce versioned data patches in `src/data_mining/universe_patches.py` citing S&P DJI press
+   releases with publication dates for missing renames, combinations, spin-offs, and replacements.
+4. Update backfill guard to check `count_backfill_rows` (`source = 'wikipedia_changes_backfill'`).
+5. Write backfilled history to `/workspaces/thesis/data/universe_history.db` without modifying
+   `/workspaces/thesis/data/universe.db`.
+
+**Acceptance criteria**:
+- CPAY, ECHO, SW fall back to their roster `Date added` when unpatched.
+- 21CF FOXA and FOX intervals are correctly reconstructed backward.
+- Backfill guard distinguishes snapshot rows from backfill rows.
+- All patch rows cite official S&P Dow Jones Indices press releases.
+- Total reconstructed intervals reach 894 rows; date member counts on 2018-01-02 (504),
+  2022-01-03 (505), 2024-01-02 (503), 2026-10-01 (504) match expectations.
+- All quality gates (`ruff check`, `ruff format --check`, `mypy`, `pytest` (284 passed)) clean.
+
 ## Sequencing
 
-Work items 3, 4, 5 and 6 are closed (merged and verified; tasks in `CHANGELOG.md`). Work
+Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
 constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.

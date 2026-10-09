@@ -307,3 +307,18 @@ Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-ti
       (`"cover": {"shares_outstanding": [], "error": "<ExcType>: <message>"}`, `error` is
       `null` on success) and `reconciliation_errors` stays about the three statements only.
       Approved and merged as PR #48.
+
+## Work item 7 — Fix point-in-time universe history reconstruction anomalies & data patches (code + data, T-044)
+
+**Closed 2026-10-09 (`T-044`, the only task).**
+
+- [x] **T-044** Implement S&P 500 history rebuild corrections:
+  1. Fallback start date for open intervals from roster's "Date added" (clamped to earliest table date).
+  2. Process change row addition before removal in `_reconstruct_intervals` so corporate restructurings (e.g. 21CF FOXA/FOX) resolve before opening predecessor intervals.
+  3. Versioned data patches in `src/data_mining/universe_patches.py` citing S&P DJI press releases (URL + publication date) covering renames SATS/FLT/RE/FB, combinations WRK/SW with MWV/WRK, spin-offs FTRE/PHIN, and GOOG/GOOGL swap replacement.
+  4. Guard in `backfill_from_changes`: check `wikipedia_changes_backfill` row count, so snapshot rows don't falsely block backfill.
+  5. Hermetic tests covering all fixes and patch citations.
+  **Done 2026-10-09**: Backfilled 894 intervals into `/workspaces/thesis/data/universe_history.db`.
+  Dates verified: 2018-01-02 (504), 2022-01-03 (505), 2024-01-02 (503), 2026-10-01 (504).
+  Shared pilot file `/workspaces/thesis/data/universe.db` unchanged (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`).
+
