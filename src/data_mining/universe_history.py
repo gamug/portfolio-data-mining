@@ -39,6 +39,7 @@ from portfolio_common.db import Database
 
 from data_mining import queries
 from data_mining.portfolio import WIKIPEDIA_HEADERS, list_universe
+from data_mining.universe_patches import HISTORICAL_CIKS, apply_patches
 
 log = logging.getLogger(__name__)
 
@@ -163,6 +164,89 @@ def _parse_changes_table(page_html: str) -> list[ChangeEvent]:
 # ---------------------------------------------------------------------
 
 
+def _parse_date_added(val: object) -> date | None:
+    s = str(val).strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s[:10])
+    except ValueError:
+        pass
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    return None
+
+
+def _resolve_fallback_date(interval: dict, earliest_date: date) -> str:
+    """Compute fallback valid_from date for an interval that remained open
+    after replaying the changes table backward. Uses Date added if present,
+    clamped between earliest_date and valid_to."""
+    fallback = earliest_date
+    if interval.get("date_added"):
+        added_d = _parse_date_added(interval["date_added"])
+        if added_d is not None:
+            fallback = max(earliest_date, added_d)
+    if interval["valid_to"] is not None:
+        valid_to_date = date.fromisoformat(interval["valid_to"])
+        fallback = min(fallback, valid_to_date)
+    return fallback.isoformat()
+
+
+def _handle_addition(
+    event: ChangeEvent,
+    open_intervals: dict[str, dict],
+    completed: list[dict],
+) -> None:
+    a = event.added_ticker
+    interval = open_intervals.get(a)
+    if interval is not None and interval["valid_from"] is None:
+        interval["valid_from"] = event.effective_date.isoformat()
+        if not interval.get("cik"):
+            interval["cik"] = HISTORICAL_CIKS.get(interval["symbol"])
+        completed.append(open_intervals.pop(a))
+    else:
+        log.warning(
+            "changes-table row adds %r on %s but no matching open "
+            "interval was found (likely a rename/markup anomaly) "
+            "-- skipping",
+            a,
+            event.effective_date,
+        )
+
+
+def _handle_removal(
+    event: ChangeEvent,
+    open_intervals: dict[str, dict],
+) -> None:
+    r = event.removed_ticker
+    d = event.effective_date
+    if r in open_intervals:
+        log.warning(
+            "changes-table row removes %r on %s but it already has an "
+            "unresolved interval open (likely a rename/markup anomaly) "
+            "-- skipping",
+            r,
+            d,
+        )
+    else:
+        open_intervals[r] = {
+            "symbol": r,
+            "security": event.removed_security,
+            "gics_sector": None,
+            "gics_sub_industry": None,
+            "hq_location": None,
+            "date_added": None,
+            "cik": HISTORICAL_CIKS.get(r),
+            "founded": None,
+            "valid_from": None,
+            "valid_to": (d - timedelta(days=1)).isoformat(),
+            "source": SOURCE_BACKFILL,
+        }
+
+
 def _reconstruct_intervals(today_rows: list[dict], events: list[ChangeEvent]) -> list[dict]:
     """Replay change events (most-recent-first, the table's own order)
     backward from today's live roster to build valid_from/valid_to
@@ -195,55 +279,16 @@ def _reconstruct_intervals(today_rows: list[dict], events: list[ChangeEvent]) ->
     earliest_date = events[-1].effective_date  # table is most-recent-first
 
     for event in events:
-        d = event.effective_date
-
-        if event.removed_ticker:
-            r = event.removed_ticker
-            if r in open_intervals:
-                log.warning(
-                    "changes-table row removes %r on %s but it already has an "
-                    "unresolved interval open (likely a rename/markup anomaly) "
-                    "-- skipping",
-                    r,
-                    d,
-                )
-            else:
-                open_intervals[r] = {
-                    "symbol": r,
-                    "security": event.removed_security,
-                    "gics_sector": None,
-                    "gics_sub_industry": None,
-                    "hq_location": None,
-                    "date_added": None,
-                    "cik": None,
-                    "founded": None,
-                    "valid_from": None,
-                    "valid_to": (d - timedelta(days=1)).isoformat(),
-                    "source": SOURCE_BACKFILL,
-                }
-
         if event.added_ticker:
-            a = event.added_ticker
-            interval = open_intervals.get(a)
-            if interval is not None and interval["valid_from"] is None:
-                interval["valid_from"] = d.isoformat()
-                completed.append(open_intervals.pop(a))
-            else:
-                log.warning(
-                    "changes-table row adds %r on %s but no matching open "
-                    "interval was found (likely a rename/markup anomaly) "
-                    "-- skipping",
-                    a,
-                    d,
-                )
+            _handle_addition(event, open_intervals, completed)
+        if event.removed_ticker:
+            _handle_removal(event, open_intervals)
 
     for interval in open_intervals.values():
         if interval["valid_from"] is None:
-            fallback = earliest_date
-            if interval["valid_to"] is not None:
-                valid_to_date = date.fromisoformat(interval["valid_to"])
-                fallback = min(fallback, valid_to_date)
-            interval["valid_from"] = fallback.isoformat()
+            interval["valid_from"] = _resolve_fallback_date(interval, earliest_date)
+        if not interval.get("cik"):
+            interval["cik"] = HISTORICAL_CIKS.get(interval["symbol"])
         completed.append(interval)
 
     return completed
@@ -258,14 +303,14 @@ def backfill_from_changes(force: bool = False) -> int:
     """One-time reconstruction of point-in-time membership, replaying the
     Historical-components change log backward from today's live roster.
     Returns the number of intervals written; no-ops (returns 0) if
-    universe_membership already has rows, unless force=True (which clears
+    universe_membership already has backfill rows, unless force=True (which clears
     it first)."""
     db = queries._connect()
     try:
-        count = queries.count_membership_rows(db)
+        count = queries.count_backfill_rows(db)
         if count and not force:
             log.info(
-                "universe_membership already has %d rows; skipping backfill (force=True to redo)",
+                "universe_membership already has %d backfill rows; skipping backfill (force=True to redo)",
                 count,
             )
             return 0
@@ -274,6 +319,7 @@ def backfill_from_changes(force: bool = False) -> int:
 
         today_rows = list_universe()
         events = _parse_changes_table(_fetch_changes_html())
+        events = apply_patches(events, today_rows=today_rows)
         intervals = _reconstruct_intervals(today_rows, events)
         queries.write_intervals(db, intervals)
         return len(intervals)
