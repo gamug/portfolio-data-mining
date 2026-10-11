@@ -504,11 +504,36 @@ as "already backfilled".
 - Known residual documented: TROW's roster "Date added" is 2019-07-29, so TROW is missing prior to 2019-07-29 (outside consumer's 2022+ window).
 - All quality gates (`ruff check`, `ruff format --check`, `mypy`, `pytest`) clean.
 
+## Work item 8 — Add filer CIK and period of report to EDGAR filing-list rows (code, T-045)
+
+**Status: in progress. `T-045` active.**
+
+**Why**: Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
+"Task: add the filer CIK and the period of report to the EDGAR filing-list rows. Requested by portfolio-financial-analysis for its T-149 (filing identity)."
+Downstream analysis needs the filer CIK and period of report directly on filing-list items returned by `get_filings`, `get_filing_by_year`, `get_latest_filing`, and `search_filings` to unambiguously identify filings and companies (especially former constituents whose tickers may be delisted or reused).
+
+**Approach**:
+1. In `src/sec_edgar/agent.py` `_filing_to_dict`, add two fields:
+   - `cik`: 10-digit zero-padded string (`str(cik).zfill(10)` or `f"{int(cik):010d}"` from `edgartools`' `EntityFiling.cik`), or `null` if missing.
+   - `period_of_report`: "YYYY-MM-DD" string (from `edgartools`' `EntityFiling.period_of_report`), or `null` if absent/empty, handled safely without raising.
+   `form`, `filing_date`, and `accession_number` remain unchanged (additive change).
+2. Update docstrings of `get_filings`, `get_filing_by_year`, `get_latest_filing`, and `search_filings` to document the new response shape.
+3. Update OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting that the `{ticker}` path parameter accepts either a ticker symbol or a CIK number with or without leading zeros, and documenting the new fields.
+4. Add hermetic tests in `tests/sec_edgar/test_agent.py` covering CIK zero-padding (int and string), `period_of_report` handling (present, date, string, absent/empty/None), `filing_by_year` returning all 5 fields, and CIK path parameter resolution.
+
+**Acceptance criteria**:
+- `_filing_to_dict` outputs `cik` (10-digit zero-padded string) and `period_of_report` ("YYYY-MM-DD" or null) beside existing fields.
+- CIK zero-padding handles int and unpadded string (e.g. 1326160 / "1326160" -> "0001326160").
+- `period_of_report` handles date object and string, and returns null without raising when absent/empty/None.
+- All routes using `_filing_to_dict` expose the new fields additively.
+- `{ticker}` path parameter accepting both ticker and CIK documented across OpenAPI schemas and `SPEC.md`.
+- All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
+
 ## Sequencing
 
 Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
-items 1–2 stay reverted/on hold at the maintainer's prior request. Otherwise there is no ordering
-constraint from the rest of the backlog, since every other `SPEC.md` §13
+items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 is open and active.
+Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
 See `TASKS.md` for the discrete, checkable task breakdown.

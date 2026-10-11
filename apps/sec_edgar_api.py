@@ -58,48 +58,120 @@ def welcome() -> RedirectResponse:
     return RedirectResponse(url="/docs")
 
 
-@app.get("/edgar/company_info/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/company_info/{ticker}",
+    tags=["Edgar"],
+    summary="Get company info",
+    description=(
+        "Look up basic identifying information for a company. "
+        "The path parameter '{ticker}' accepts either a ticker symbol (e.g. 'AAPL') "
+        "or an SEC CIK number with or without leading zeros (e.g. '0000320193' or '320193')."
+    ),
+)
 def edgar_company_info(ticker: str) -> dict:
+    """Look up basic identifying information for a company by ticker or CIK."""
     return edgar_agent.get_company_info(ticker)
 
 
-@app.get("/edgar/filings/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/filings/{ticker}",
+    tags=["Edgar"],
+    summary="List company filings",
+    description=(
+        "List a company's recent filings, optionally filtered by form type. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
+        "Returns filing items with 'form', 'filing_date', 'accession_number', "
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
+    ),
+)
 def edgar_filings(ticker: str, form: FilingForm, limit: int = 5) -> dict:
+    """List recent filings for a company by ticker or CIK."""
     return edgar_agent.get_filings(ticker, form=form.value, limit=limit)
 
 
-@app.get("/edgar/years_available/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/years_available/{ticker}",
+    tags=["Edgar"],
+    summary="List available filing years",
+    description=(
+        "List calendar years with filings of a given form. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros."
+    ),
+)
 def edgar_years_available(ticker: str, form: FilingForm) -> dict:
+    """List available filing years for a form by ticker or CIK."""
     return edgar_agent.list_years_available(ticker, form=form.value)
 
 
-@app.get("/edgar/filing_by_year/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/filing_by_year/{ticker}",
+    tags=["Edgar"],
+    summary="Get filings by form and year",
+    description=(
+        "Get metadata for all filings of a given form type in a given calendar year. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
+        "Returns filing items with 'form', 'filing_date', 'accession_number', "
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
+    ),
+)
 def edgar_filing_by_year(ticker: str, form: FilingForm, year: int) -> dict:
+    """Get metadata for filings of a form in a year by ticker or CIK."""
     return edgar_agent.get_filing_by_year(ticker, form=form.value, year=year)
 
 
-@app.get("/edgar/latest_filing/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/latest_filing/{ticker}",
+    tags=["Edgar"],
+    summary="Get latest filing",
+    description=(
+        "Get metadata for the most recent filing of a given form type. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
+        "Returns filing item with 'form', 'filing_date', 'accession_number', "
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
+    ),
+)
 def edgar_latest_filing(ticker: str, form: FilingForm) -> dict:
+    """Get metadata for the latest filing of a form by ticker or CIK."""
     return edgar_agent.get_latest_filing(ticker, form=form.value)
 
 
-@app.get("/edgar/financials/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/financials/{ticker}",
+    tags=["Edgar"],
+    summary="Get financial statements",
+    description=(
+        "Fetch rendered financial statements for a filing. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros."
+    ),
+)
 def edgar_financials(
     ticker: str, form: FilingForm, year: int, accession_number: str | None = None
 ) -> JSONResponse:
+    """Fetch parsed financial statements for a filing by ticker or CIK."""
     result = edgar_agent.get_financials(
         ticker, form=form.value, year=year, accession_number=accession_number
     )
     return JSONResponse(content=jsonable_encoder(result))
 
 
-@app.get("/edgar/search_filings/{ticker}", tags=["Edgar"])
+@app.get(
+    "/edgar/search_filings/{ticker}",
+    tags=["Edgar"],
+    summary="Search filing text",
+    description=(
+        "Search filing text for keywords. "
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
+        "Returns matching filing items with 'form', 'filing_date', 'accession_number', "
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
+    ),
+)
 def edgar_search_filings(
     ticker: str,
     keyword: str,
     form: FilingForm,
     max_filings_to_search: int = 5,
 ) -> dict:
+    """Search filing text for keywords by ticker or CIK."""
     return edgar_agent.search_filings(
         ticker,
         keyword=keyword,

@@ -18,6 +18,7 @@ Design notes for whoever wires this into the agent framework:
     default, to keep tool calls fast and predictable.
 """
 
+import contextlib
 import logging
 import math
 import os
@@ -26,6 +27,7 @@ from datetime import date
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from edgar import Company, set_identity
 
 logger = logging.getLogger(__name__)
@@ -505,6 +507,42 @@ def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str
         return [], f"{type(e).__name__}: {e}"
 
 
+_CIK_LEN = 10
+_DATE_ISO_LEN = 10
+
+
+def _format_cik(val: Any) -> str | None:
+    """Format a CIK value as a 10-digit string with leading zeros, or None."""
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return f"{val:0{_CIK_LEN}d}"
+    s = str(val).strip()
+    if not s or s.lower() in ("none", "null"):
+        return None
+    if s.isdigit():
+        return s.zfill(_CIK_LEN)
+    return None
+
+
+def _format_period_of_report(val: Any) -> str | None:
+    """Format period_of_report as 'YYYY-MM-DD', or None if absent, malformed, or empty."""
+    if val is None or val is pd.NaT:
+        return None
+    if isinstance(val, date):
+        date_str = None
+        with contextlib.suppress(ValueError, TypeError, AttributeError):
+            date_str = val.strftime("%Y-%m-%d")
+        return date_str
+    if isinstance(val, (float, np.floating)) and math.isnan(val):
+        return None
+    s = str(val).strip()
+    if s and s.lower() not in ("none", "nan", "nat", "null") and len(s) >= _DATE_ISO_LEN:
+        with contextlib.suppress(ValueError, TypeError):
+            return date.fromisoformat(s[:_DATE_ISO_LEN]).strftime("%Y-%m-%d")
+    return None
+
+
 class EdgarAgent:
     """
     Tool for looking up U.S. public companies' SEC EDGAR filings and financial data.
@@ -585,6 +623,8 @@ class EdgarAgent:
             "form": getattr(f, "form", None),
             "filing_date": str(getattr(f, "filing_date", "")),
             "accession_number": getattr(f, "accession_number", None),
+            "cik": _format_cik(getattr(f, "cik", None)),
+            "period_of_report": _format_period_of_report(getattr(f, "period_of_report", None)),
         }
 
     # ------------------------------------------------------------------
@@ -636,7 +676,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": [{"form": str,
-                "filing_date": "YYYY-MM-DD", "accession_number": str}, ...]}
+                "filing_date": "YYYY-MM-DD", "accession_number": str,
+                "cik": str | None, "period_of_report": str | None}, ...]}
             On failure: {"success": False, "error": str}
             An empty list is a valid, non-error result (no filings found).
         """
@@ -669,7 +710,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": [{"form": str,
-                "filing_date": str, "accession_number": str}, ...]}
+                "filing_date": str, "accession_number": str,
+                "cik": str | None, "period_of_report": str | None}, ...]}
                 An empty list is a valid, non-error result (no filing of
                 that form in that year).
             On failure: {"success": False, "error": str}
@@ -696,7 +738,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": {"form": str,
-                "filing_date": str, "accession_number": str}}
+                "filing_date": str, "accession_number": str,
+                "cik": str | None, "period_of_report": str | None}}
             On failure: {"success": False, "error": str} -- e.g. no filings of that type.
         """
         try:
@@ -935,8 +978,9 @@ class EdgarAgent:
                 deeper search and is willing to wait.
 
         Returns:
-            On success: {"success": True, "data": [{"filing_date": str,
-                "form": str, "accession_number": str}, ...]}
+            On success: {"success": True, "data": [{"form": str,
+                "filing_date": str, "accession_number": str,
+                "cik": str | None, "period_of_report": str | None}, ...]}
                 An empty list means no matches were found -- this is not an error.
             On failure: {"success": False, "error": str}
         """

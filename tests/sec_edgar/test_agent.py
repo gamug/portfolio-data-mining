@@ -11,12 +11,15 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 
+from apps.sec_edgar_api import app
 from sec_edgar.agent import (
     EdgarAgent,
     _filed_nondimensional_values,
@@ -39,11 +42,15 @@ def make_filing(
     form: str = "10-K",
     filing_date: date = date(2023, 3, 15),
     accession_number: str = "0000320193-23-000001",
+    cik: int | str | None = None,
+    period_of_report: Any = None,
 ) -> MagicMock:
     filing = MagicMock()
     filing.form = form
     filing.filing_date = filing_date
     filing.accession_number = accession_number
+    filing.cik = cik
+    filing.period_of_report = period_of_report
     return filing
 
 
@@ -96,18 +103,181 @@ def test_resolve_company_strips_whitespace(agent: EdgarAgent) -> None:
 
 
 def test_filing_to_dict_maps_expected_fields(agent: EdgarAgent) -> None:
-    filing = make_filing(form="10-K", filing_date=date(2023, 3, 15), accession_number="acc-1")
+    filing = make_filing(
+        form="10-K",
+        filing_date=date(2023, 3, 15),
+        accession_number="acc-1",
+        cik=1326160,
+        period_of_report=date(2022, 12, 31),
+    )
     result = agent._filing_to_dict(filing)
     assert result == {
         "form": "10-K",
         "filing_date": "2023-03-15",
         "accession_number": "acc-1",
+        "cik": "0001326160",
+        "period_of_report": "2022-12-31",
     }
 
 
 def test_filing_to_dict_tolerates_missing_attrs(agent: EdgarAgent) -> None:
     result = agent._filing_to_dict(object())
-    assert result == {"form": None, "filing_date": "", "accession_number": None}
+    assert result == {
+        "form": None,
+        "filing_date": "",
+        "accession_number": None,
+        "cik": None,
+        "period_of_report": None,
+    }
+
+
+def test_filing_to_dict_cik_zero_padding(agent: EdgarAgent) -> None:
+    # Int zero-padding
+    assert agent._filing_to_dict(make_filing(cik=1326160))["cik"] == "0001326160"
+    assert agent._filing_to_dict(make_filing(cik=320193))["cik"] == "0000320193"
+
+    # String without zeros zero-padding
+    assert agent._filing_to_dict(make_filing(cik="1326160"))["cik"] == "0001326160"
+    assert agent._filing_to_dict(make_filing(cik="1418091"))["cik"] == "0001418091"
+
+    # String already carrying leading zeros
+    assert agent._filing_to_dict(make_filing(cik="0000320193"))["cik"] == "0000320193"
+
+    # Absent, empty, or None
+    assert agent._filing_to_dict(make_filing(cik=None))["cik"] is None
+    assert agent._filing_to_dict(make_filing(cik=""))["cik"] is None
+    assert agent._filing_to_dict(make_filing(cik="   "))["cik"] is None
+
+
+def test_filing_to_dict_period_of_report_present_and_absent(agent: EdgarAgent) -> None:
+    # Present as date
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report=date(2025, 12, 31)))["period_of_report"]
+        == "2025-12-31"
+    )
+
+    # Present as string (with or without timestamp)
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-12-31"))["period_of_report"]
+        == "2025-12-31"
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-12-31 00:00:00"))[
+            "period_of_report"
+        ]
+        == "2025-12-31"
+    )
+
+    # Present as Timestamp
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report=pd.Timestamp("2025-12-31")))[
+            "period_of_report"
+        ]
+        == "2025-12-31"
+    )
+
+    # Absent (None, empty, whitespace, NaT, nan) -> None, never raises
+    assert agent._filing_to_dict(make_filing(period_of_report=None))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report=pd.NaT))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report=np.nan))["period_of_report"] is None
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report=float("nan")))["period_of_report"]
+        is None
+    )
+    assert agent._filing_to_dict(make_filing(period_of_report=""))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report="   "))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report="NaT"))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report="nan"))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report=object()))["period_of_report"] is None
+
+    # Malformed dates -> None
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-AB-31"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-02-31"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-13-01"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="not-a-date"))["period_of_report"]
+        is None
+    )
+
+
+def test_get_filing_by_year_returns_cik_and_period_of_report(agent: EdgarAgent) -> None:
+    match = make_filing(
+        form="10-K",
+        filing_date=date(2023, 3, 15),
+        accession_number="0000320193-23-000001",
+        cik=320193,
+        period_of_report=date(2022, 12, 31),
+    )
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [match]
+    with patch("sec_edgar.agent.Company", return_value=mock_company):
+        result = agent.get_filing_by_year("AAPL", form="10-K", year=2023)
+
+    assert result["success"] is True
+    assert len(result["data"]) == 1
+    row = result["data"][0]
+    # The original 3 fields stay unchanged
+    assert row["form"] == "10-K"
+    assert row["filing_date"] == "2023-03-15"
+    assert row["accession_number"] == "0000320193-23-000001"
+    # The two new fields are added
+    assert row["cik"] == "0000320193"
+    assert row["period_of_report"] == "2022-12-31"
+
+
+def test_resolve_company_accepts_cik_and_ticker(agent: EdgarAgent) -> None:
+    # Agent methods pass ticker or CIK straight to Company
+    with patch("sec_edgar.agent.Company") as mock_company:
+        agent.get_filings("AAPL", form="10-K")
+    mock_company.assert_called_once_with("AAPL")
+
+    with patch("sec_edgar.agent.Company") as mock_company:
+        agent.get_filings("0000320193", form="10-K")
+    mock_company.assert_called_once_with("0000320193")
+
+    with patch("sec_edgar.agent.Company") as mock_company:
+        agent.get_filings("320193", form="10-K")
+    mock_company.assert_called_once_with("320193")
+
+
+def test_api_filings_route_accepts_ticker_and_cik() -> None:
+    match = make_filing(
+        form="10-K",
+        filing_date=date(2023, 3, 15),
+        accession_number="0000320193-23-000001",
+        cik=320193,
+        period_of_report=date(2022, 12, 31),
+    )
+    mock_company = MagicMock()
+    mock_company.get_filings.return_value = [match]
+
+    client = TestClient(app)
+    with patch("sec_edgar.agent.Company", return_value=mock_company) as mock_comp_cls:
+        resp_ticker = client.get("/edgar/filings/AAPL?form=10-K")
+        assert resp_ticker.status_code == 200
+        data_ticker = resp_ticker.json()
+        assert data_ticker["success"] is True
+        assert data_ticker["data"][0]["cik"] == "0000320193"
+        assert data_ticker["data"][0]["period_of_report"] == "2022-12-31"
+        mock_comp_cls.assert_called_with("AAPL")
+
+    with patch("sec_edgar.agent.Company", return_value=mock_company) as mock_comp_cls:
+        resp_cik = client.get("/edgar/filings/0000320193?form=10-K")
+        assert resp_cik.status_code == 200
+        data_cik = resp_cik.json()
+        assert data_cik["success"] is True
+        assert data_cik["data"][0]["cik"] == "0000320193"
+        assert data_cik["data"][0]["period_of_report"] == "2022-12-31"
+        mock_comp_cls.assert_called_with("0000320193")
 
 
 # ---------------------------------------------------------------------
