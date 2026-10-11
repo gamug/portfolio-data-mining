@@ -44,6 +44,16 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 `/edgar/latest_filing/{ticker}`, `/edgar/financials/{ticker}`,
 `/edgar/search_filings/{ticker}`.
 
+> **Path parameter note:** Every `/edgar` route accepts either a ticker symbol
+> (e.g. `AAPL`) or an SEC CIK number with or without leading zeros (e.g.
+> `0000320193` or `320193`) as the `{ticker}` path parameter.
+
+> **Filing-list rows note (T-045):** Filing items returned by `/edgar/filings`,
+> `/edgar/filing_by_year`, `/edgar/latest_filing`, and `/edgar/search_filings`
+> contain five fields: `form` (str), `filing_date` (YYYY-MM-DD str),
+> `accession_number` (str), `cik` (10-digit zero-padded string, e.g. `"0001326160"`),
+> and `period_of_report` (YYYY-MM-DD str, or null when missing/empty).
+
 > **Note:** `/edgar/filing_by_year` returns a *list* of matching filings — a
 > form/year can have more than one (e.g. a company typically files three
 > "10-Q"s per year, one per fiscal quarter), and an empty list means no

@@ -505,6 +505,38 @@ def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str
         return [], f"{type(e).__name__}: {e}"
 
 
+_CIK_LEN = 10
+_DATE_ISO_LEN = 10
+
+
+def _format_cik(val: Any) -> str | None:
+    """Format a CIK value as a 10-digit string with leading zeros, or None."""
+    if val is None:
+        return None
+    if isinstance(val, int):
+        return f"{val:0{_CIK_LEN}d}"
+    s = str(val).strip()
+    if not s or s.lower() in ("none", "null"):
+        return None
+    if s.isdigit():
+        return s.zfill(_CIK_LEN)
+    return None
+
+
+def _format_period_of_report(val: Any) -> str | None:
+    """Format period_of_report as 'YYYY-MM-DD', or None if absent or empty."""
+    if val is None:
+        return None
+    if isinstance(val, date):
+        return val.strftime("%Y-%m-%d")
+    s = str(val).strip()
+    if not s or s.lower() in ("none", "nan", "nat", "null"):
+        return None
+    if len(s) >= _DATE_ISO_LEN and s[:4].isdigit() and s[4] == "-" and s[7] == "-":
+        return s[:_DATE_ISO_LEN]
+    return None
+
+
 class EdgarAgent:
     """
     Tool for looking up U.S. public companies' SEC EDGAR filings and financial data.
@@ -585,6 +617,8 @@ class EdgarAgent:
             "form": getattr(f, "form", None),
             "filing_date": str(getattr(f, "filing_date", "")),
             "accession_number": getattr(f, "accession_number", None),
+            "cik": _format_cik(getattr(f, "cik", None)),
+            "period_of_report": _format_period_of_report(getattr(f, "period_of_report", None)),
         }
 
     # ------------------------------------------------------------------
@@ -636,7 +670,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": [{"form": str,
-                "filing_date": "YYYY-MM-DD", "accession_number": str}, ...]}
+                "filing_date": "YYYY-MM-DD", "accession_number": str,
+                "cik": str, "period_of_report": str | None}, ...]}
             On failure: {"success": False, "error": str}
             An empty list is a valid, non-error result (no filings found).
         """
@@ -669,7 +704,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": [{"form": str,
-                "filing_date": str, "accession_number": str}, ...]}
+                "filing_date": str, "accession_number": str,
+                "cik": str, "period_of_report": str | None}, ...]}
                 An empty list is a valid, non-error result (no filing of
                 that form in that year).
             On failure: {"success": False, "error": str}
@@ -696,7 +732,8 @@ class EdgarAgent:
 
         Returns:
             On success: {"success": True, "data": {"form": str,
-                "filing_date": str, "accession_number": str}}
+                "filing_date": str, "accession_number": str,
+                "cik": str, "period_of_report": str | None}}
             On failure: {"success": False, "error": str} -- e.g. no filings of that type.
         """
         try:
@@ -935,8 +972,9 @@ class EdgarAgent:
                 deeper search and is willing to wait.
 
         Returns:
-            On success: {"success": True, "data": [{"filing_date": str,
-                "form": str, "accession_number": str}, ...]}
+            On success: {"success": True, "data": [{"form": str,
+                "filing_date": str, "accession_number": str,
+                "cik": str, "period_of_report": str | None}, ...]}
                 An empty list means no matches were found -- this is not an error.
             On failure: {"success": False, "error": str}
         """
