@@ -506,7 +506,7 @@ as "already backfilled".
 
 ## Work item 8 — Add filer CIK and period of report to EDGAR filing-list rows (code, T-045)
 
-**Status: in progress. `T-045` active.**
+**Status: closed 2026-10-11 (task moved to `CHANGELOG.md`). `T-045` built and verified, PR #50.**
 
 **Why**: Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 "Task: add the filer CIK and the period of report to the EDGAR filing-list rows. Requested by portfolio-financial-analysis for its T-149 (filing identity)."
@@ -531,8 +531,8 @@ Downstream analysis needs the filer CIK and period of report directly on filing-
 
 ## Sequencing
 
-Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
-items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 is open and active.
+Work items 3, 4, 5, 6, 7 and 8 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
+items 1–2 stay reverted/on hold at the maintainer's prior request. No other work item is open.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

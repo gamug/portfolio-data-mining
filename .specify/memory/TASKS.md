@@ -57,21 +57,12 @@ renumber; mark a cancelled/superseded task in place instead.
       (workflow exists *and* is enforced), distinct from T-007's "exists"
       milestone. → `PLAN.md` Work item 2, second acceptance criterion.
 
-## Work item 8 — Add filer CIK and period of report to EDGAR filing-list rows (T-045)
-
-Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
-"Task: add the filer CIK and the period of report to the EDGAR filing-list rows. Requested by portfolio-financial-analysis for its T-149 (filing identity)."
-
-- [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
-
 ## Status
 
-Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
+Closed Work items 3, 4, 5, 6, 7 and 8 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
-Work item 7, `T-044`, closed 2026-10-09).
-
-Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
+Work item 7, `T-044`, closed 2026-10-09; Work item 8, `T-045`, closed 2026-10-11 in PR #50).
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

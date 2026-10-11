@@ -322,3 +322,15 @@ Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-ti
   Dates verified: 2018-01-02 (504), 2022-01-03 (505), 2024-01-02 (503), 2026-10-01 (504).
   Shared pilot file `/workspaces/thesis/data/universe.db` unchanged (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`).
 
+## Work item 8 — Add filer CIK and period of report to EDGAR filing-list rows (T-045)
+
+**Closed 2026-10-11 — PR #50 (`T-045`, the only task).**
+
+Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
+"Task: add the filer CIK and the period of report to the EDGAR filing-list rows. Requested by portfolio-financial-analysis for its T-149 (filing identity)."
+
+- [x] **T-045** Add filer CIK (10-digit zero-padded string or null) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
+      **Done 2026-10-11** (PR #50): `_format_cik` and `_format_period_of_report` added to `src/sec_edgar/agent.py`, exposing `cik` and `period_of_report` additively on all filing-list routes (`filings`, `filing_by_year`, `latest_filing`, `search_filings`). All 7 `/edgar` routes in `apps/sec_edgar_api.py` documented with OpenAPI descriptions that `{ticker}` accepts a ticker symbol or SEC CIK. Hermetic tests in `tests/sec_edgar/test_agent.py` covering CIK zero-padding, period of report formatting, missing/sentinel handling, additive response preservation, and ticker/CIK path parameter routing. Live-verified with SEC identity `research@example.com` against EDGAR for Duke Energy (1326160 -> `0001326160`, `2025-12-31`) and Twitter (1418091 -> `0001418091`, `2021-12-31`).
+      **Follow-up, same day (PR #50 review)**: `_format_period_of_report` explicitly guards `pd.NaT` before date formatting returning `None`, uses `date.fromisoformat` to reject malformed date strings (e.g. `2025-AB-31`), and docstrings/spec updated to document `cik` as `str | None`. Approved in PR #50.
+
+
