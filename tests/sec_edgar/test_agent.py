@@ -168,11 +168,45 @@ def test_filing_to_dict_period_of_report_present_and_absent(agent: EdgarAgent) -
         == "2025-12-31"
     )
 
-    # Absent (None, empty, whitespace) -> None, never raises
+    # Present as Timestamp
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report=pd.Timestamp("2025-12-31")))[
+            "period_of_report"
+        ]
+        == "2025-12-31"
+    )
+
+    # Absent (None, empty, whitespace, NaT, nan) -> None, never raises
     assert agent._filing_to_dict(make_filing(period_of_report=None))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report=pd.NaT))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report=np.nan))["period_of_report"] is None
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report=float("nan")))["period_of_report"]
+        is None
+    )
     assert agent._filing_to_dict(make_filing(period_of_report=""))["period_of_report"] is None
     assert agent._filing_to_dict(make_filing(period_of_report="   "))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report="NaT"))["period_of_report"] is None
+    assert agent._filing_to_dict(make_filing(period_of_report="nan"))["period_of_report"] is None
     assert agent._filing_to_dict(make_filing(period_of_report=object()))["period_of_report"] is None
+
+    # Malformed dates -> None
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-AB-31"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-02-31"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="2025-13-01"))["period_of_report"]
+        is None
+    )
+    assert (
+        agent._filing_to_dict(make_filing(period_of_report="not-a-date"))["period_of_report"]
+        is None
+    )
 
 
 def test_get_filing_by_year_returns_cik_and_period_of_report(agent: EdgarAgent) -> None:

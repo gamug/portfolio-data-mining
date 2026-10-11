@@ -51,7 +51,7 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > **Filing-list rows note (T-045):** Filing items returned by `/edgar/filings`,
 > `/edgar/filing_by_year`, `/edgar/latest_filing`, and `/edgar/search_filings`
 > contain five fields: `form` (str), `filing_date` (YYYY-MM-DD str),
-> `accession_number` (str), `cik` (10-digit zero-padded string, e.g. `"0001326160"`),
+> `accession_number` (str), `cik` (10-digit zero-padded string, or null, e.g. `"0001326160"`),
 > and `period_of_report` (YYYY-MM-DD str, or null when missing/empty).
 
 > **Note:** `/edgar/filing_by_year` returns a *list* of matching filings — a

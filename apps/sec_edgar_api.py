@@ -81,7 +81,7 @@ def edgar_company_info(ticker: str) -> dict:
         "List a company's recent filings, optionally filtered by form type. "
         "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
         "Returns filing items with 'form', 'filing_date', 'accession_number', "
-        "'cik' (10-digit zero-padded string), and 'period_of_report' ('YYYY-MM-DD' or null)."
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
     ),
 )
 def edgar_filings(ticker: str, form: FilingForm, limit: int = 5) -> dict:
@@ -111,7 +111,7 @@ def edgar_years_available(ticker: str, form: FilingForm) -> dict:
         "Get metadata for all filings of a given form type in a given calendar year. "
         "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
         "Returns filing items with 'form', 'filing_date', 'accession_number', "
-        "'cik' (10-digit zero-padded string), and 'period_of_report' ('YYYY-MM-DD' or null)."
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
     ),
 )
 def edgar_filing_by_year(ticker: str, form: FilingForm, year: int) -> dict:
@@ -127,7 +127,7 @@ def edgar_filing_by_year(ticker: str, form: FilingForm, year: int) -> dict:
         "Get metadata for the most recent filing of a given form type. "
         "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
         "Returns filing item with 'form', 'filing_date', 'accession_number', "
-        "'cik' (10-digit zero-padded string), and 'period_of_report' ('YYYY-MM-DD' or null)."
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
     ),
 )
 def edgar_latest_filing(ticker: str, form: FilingForm) -> dict:
@@ -162,7 +162,7 @@ def edgar_financials(
         "Search filing text for keywords. "
         "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
         "Returns matching filing items with 'form', 'filing_date', 'accession_number', "
-        "'cik' (10-digit zero-padded string), and 'period_of_report' ('YYYY-MM-DD' or null)."
+        "'cik' (10-digit zero-padded string, or null), and 'period_of_report' ('YYYY-MM-DD' or null)."
     ),
 )
 def edgar_search_filings(

@@ -18,6 +18,7 @@ Design notes for whoever wires this into the agent framework:
     default, to keep tool calls fast and predictable.
 """
 
+import contextlib
 import logging
 import math
 import os
@@ -26,6 +27,7 @@ from datetime import date
 from typing import Any
 
 import numpy as np
+import pandas as pd
 from edgar import Company, set_identity
 
 logger = logging.getLogger(__name__)
@@ -524,16 +526,20 @@ def _format_cik(val: Any) -> str | None:
 
 
 def _format_period_of_report(val: Any) -> str | None:
-    """Format period_of_report as 'YYYY-MM-DD', or None if absent or empty."""
-    if val is None:
+    """Format period_of_report as 'YYYY-MM-DD', or None if absent, malformed, or empty."""
+    if val is None or val is pd.NaT:
         return None
     if isinstance(val, date):
-        return val.strftime("%Y-%m-%d")
-    s = str(val).strip()
-    if not s or s.lower() in ("none", "nan", "nat", "null"):
+        date_str = None
+        with contextlib.suppress(ValueError, TypeError, AttributeError):
+            date_str = val.strftime("%Y-%m-%d")
+        return date_str
+    if isinstance(val, (float, np.floating)) and math.isnan(val):
         return None
-    if len(s) >= _DATE_ISO_LEN and s[:4].isdigit() and s[4] == "-" and s[7] == "-":
-        return s[:_DATE_ISO_LEN]
+    s = str(val).strip()
+    if s and s.lower() not in ("none", "nan", "nat", "null") and len(s) >= _DATE_ISO_LEN:
+        with contextlib.suppress(ValueError, TypeError):
+            return date.fromisoformat(s[:_DATE_ISO_LEN]).strftime("%Y-%m-%d")
     return None
 
 
@@ -671,7 +677,7 @@ class EdgarAgent:
         Returns:
             On success: {"success": True, "data": [{"form": str,
                 "filing_date": "YYYY-MM-DD", "accession_number": str,
-                "cik": str, "period_of_report": str | None}, ...]}
+                "cik": str | None, "period_of_report": str | None}, ...]}
             On failure: {"success": False, "error": str}
             An empty list is a valid, non-error result (no filings found).
         """
@@ -705,7 +711,7 @@ class EdgarAgent:
         Returns:
             On success: {"success": True, "data": [{"form": str,
                 "filing_date": str, "accession_number": str,
-                "cik": str, "period_of_report": str | None}, ...]}
+                "cik": str | None, "period_of_report": str | None}, ...]}
                 An empty list is a valid, non-error result (no filing of
                 that form in that year).
             On failure: {"success": False, "error": str}
@@ -733,7 +739,7 @@ class EdgarAgent:
         Returns:
             On success: {"success": True, "data": {"form": str,
                 "filing_date": str, "accession_number": str,
-                "cik": str, "period_of_report": str | None}}
+                "cik": str | None, "period_of_report": str | None}}
             On failure: {"success": False, "error": str} -- e.g. no filings of that type.
         """
         try:
@@ -974,7 +980,7 @@ class EdgarAgent:
         Returns:
             On success: {"success": True, "data": [{"form": str,
                 "filing_date": str, "accession_number": str,
-                "cik": str, "period_of_report": str | None}, ...]}
+                "cik": str | None, "period_of_report": str | None}, ...]}
                 An empty list means no matches were found -- this is not an error.
             On failure: {"success": False, "error": str}
         """
