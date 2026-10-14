@@ -89,13 +89,32 @@ def test_audit_counts_and_read_only(tmp_path: Path) -> None:
         )
         con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
     before = db.read_bytes()
-    result = audit_mod.audit(db, min_rows=1)
+    result = audit_mod.audit(db, min_rows=1, generic_share=0.2)
     assert result["total_rows"] == len(_ROWS)
     cnbc = next(r for r in result["by_connector"] if r["domain"] == "cnbc.com")
     assert (cnbc["ticker_only"], cnbc["both"], cnbc["name_only"], cnbc["unmatched"]) == (1, 1, 1, 1)
     word = next(r for r in result["word_tickers"] if r["ticker"] == "A")
     assert word["rows"] == 4
+    per_conn = {(c["domain"], c["source"]): c["ticker_only"] for c in word["by_connector"]}
+    assert set(per_conn) == {("cnbc.com", "sitemap")}
+    assert sum(per_conn.values()) == word["ticker_only"] == 1
+    generic = next(r for r in result["generic_first_words"] if r["first_word"] == "Agilent")
+    assert [c["company"] for c in generic["companies"]] == ["Agilent Technologies"]
     assert db.read_bytes() == before
+
+
+def test_main_reads_database_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
+    monkeypatch.setenv("DATABASE_URL", str(db))
+    assert audit_mod.main(["--min-rows", "1"]) == 0
+    assert "rows scanned: 5" in capsys.readouterr().out
 
 
 def test_main_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

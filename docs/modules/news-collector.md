@@ -65,6 +65,19 @@ already had a full argparse CLI (discover/stats/export subcommands) — it's sti
 runnable as `python -m news_collector.main ...` too; the `cli/` script just gives every
 service one consistent, discoverable place to look for its non-server entrypoint.
 
+## Auditing ticker tagging
+
+`scripts/audit_ticker_tagging.py` is a read-only audit of `urls.db` (default `$DATABASE_URL`,
+else `data/urls.db`). It classifies every `discovered_urls` row by how the current matching
+rule accepts it (ticker only / company token only / both / raw-substring shortcut only) and
+breaks the English-word tickers and generic first words out per connector and source:
+
+```bash
+PYTHONPATH=src .venv/bin/python scripts/audit_ticker_tagging.py [--json] [--min-rows N] [--generic-share F]
+```
+
+Background and results: `PLAN.md` Work item 10 (`T-053`).
+
 ## Testing
 
 ```bash

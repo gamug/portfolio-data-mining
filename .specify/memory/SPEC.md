@@ -497,7 +497,9 @@ treating a related FR/NR as done:
     for 182,468 rows. `T-053` re-derived these per connector
     (`scripts/audit_ticker_tagging.py`; results in `PLAN.md` Work item 10):
     the figures hold, 96.2% of rows are `cnbc.com` sitemap rows, and the raw
-    substring shortcut accepts only 823 stored rows (all `ddg`). The
+    substring shortcut accepts only 823 *stored* rows (all `ddg`, because the
+    sitemap strategy has only run for `cnbc`; its reach on a sitemap run of the
+    other connectors is unmeasured). The
     name-token and substring modes' error rates remain unmeasured (`T-054`).
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**

@@ -86,7 +86,10 @@ after the fact; IDs are never reused, so they stay reserved.
       figure quoted in `PLAN.md`/`SPEC.md` §13 item 10 per connector, and
       count separately the rows only the substring shortcut
       (`ticker.lower() in url.lower()`, failure mode 3) would accept. → step 1.
-      Done: `scripts/audit_ticker_tagging.py`; results in `PLAN.md` Work item 10.
+      Done: `scripts/audit_ticker_tagging.py` (every breakdown is derived from
+      `(ticker, company, domain, source)` cells, so the word-ticker and
+      generic-word tables are split per connector/source); results in
+      `PLAN.md` Work item 10.
 - [ ] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker

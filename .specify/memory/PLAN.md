@@ -628,7 +628,7 @@ significant company name token is sufficient"). Three failure modes follow:
 2. **Company name reduced to a generic first word.** `Trade Desk` → `Trade`
    (TTD, 11,627 rows, 100% matched through that word alone), `Bank of America`
    → `Bank` (BAC, 10,201), `First Solar` → `First` (FSLR, 10,193),
-   `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each), `Best Buy` →
+   `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each; audited: DG 8,554 and DLTR 8,564 name-only), `Best Buy` →
    `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
    matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
    mode's error rate is **unmeasured** — measuring it is T-054.
