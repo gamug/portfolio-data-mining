@@ -76,15 +76,15 @@ uv run cli/pricing_cli.py universe-gics \
 DB are never written. The output is built on a temporary sibling and swapped
 in only on success, so a failed run leaves no half-built file, and a missing
 `--source` is a clean error. The command is idempotent: when `--out` already
-exists it is the starting point (not `--source`), a stint that already has a
-citation is skipped, so re-running leaves a filled file unchanged (and, once
-every target is filled, makes no network call at all — the delivered file
-has three unfilled targets, which a re-run re-attempts). The MediaWiki
-requests send a `User-Agent` built from the `NAME`/`EMAIL` env vars (see
-`.env.example`); the command fails fast with a clear message if either is
-unset or still a placeholder, rather than send a fake contact. If `--out`
-already exists it is resumed and `--source` is ignored (a warning is logged and
-the report's `base` is `"out"`); delete `--out` to rebuild from a fresh source. It also runs a
+exists it is the starting point and `--source` is ignored (the report's `base`
+is `"out"`, and a warning is logged if stints were still pending; delete `--out`
+to rebuild from a fresh source). A stint that already has a citation is skipped,
+so re-running leaves a filled file unchanged (and, once every target is filled,
+makes no network call at all — the delivered file has three unfilled targets,
+which a re-run re-attempts). The MediaWiki requests send a `User-Agent` built
+from the `NAME`/`EMAIL` env vars (see `.env.example`); the command fails fast
+with a clear message if either is unset or still a placeholder, rather than
+send a fake contact. It also runs a
 report-only stability check (each chosen label vs. the same CIK+symbol in
 the newest revision ≥30 days older) and lists any differences rather than
 silently trusting them.

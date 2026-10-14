@@ -10,7 +10,9 @@ data/universe.db (UNIVERSE_DB_PATH is monkeypatched to a tmp_path file).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.util
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -816,6 +818,87 @@ def test_build_gics_db_reports_which_file_was_the_base(
     _patch_fetches(monkeypatch)
     assert universe_gics.build_gics_db(source, out)["base"] == "source"
     _patch_fetches(monkeypatch)
-    with caplog.at_level("WARNING"):
+    with caplog.at_level("INFO"):
         assert universe_gics.build_gics_db(source, out)["base"] == "out"
-    assert "ignoring --source" in caplog.text
+    assert "ignored --source" in caplog.text
+
+
+# ---------------------------------------------------------------------
+# CLI layer (cli/pricing_cli.py universe-gics)
+# ---------------------------------------------------------------------
+
+
+def _load_pricing_cli():
+    path = Path(__file__).resolve().parents[2] / "cli" / "pricing_cli.py"
+    spec = importlib.util.spec_from_file_location("pricing_cli_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _cli_args(source: Path, out: Path):
+    return argparse.Namespace(source=str(source), out=str(out))
+
+
+def test_cli_universe_gics_exits_1_on_a_placeholder_contact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "out_gics.db"
+    monkeypatch.setenv("EMAIL", "your.email@example.com")
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(_source_db(tmp_path), out))
+    assert exc.value.code == 1
+    assert "real contact" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_universe_gics_exits_1_on_a_missing_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "out_gics.db"
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(tmp_path / "nope.db", out))
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_universe_gics_exits_1_on_a_protected_out_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "universe_history.db"
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(_source_db(tmp_path), out))
+    assert exc.value.code == 1
+    assert "universe_history.db" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_resume_logs_info_when_filled_and_warning_when_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    universe_gics.build_gics_db(source, out)
+
+    with caplog.at_level("INFO"):
+        universe_gics.build_gics_db(source, out)
+    resumed = [r for r in caplog.records if "ignored --source" in r.getMessage()]
+    assert [r.levelname for r in resumed] == ["INFO"]
+
+    # Make one stint pending again on the existing --out: now it must warn.
+    db = queries.connect(out)
+    db.execute("UPDATE universe_membership SET gics_revision_id = NULL WHERE symbol = 'GPS'")
+    db.commit()
+    db.close()
+    caplog.clear()
+    _patch_fetches(monkeypatch)
+    with caplog.at_level("INFO"):
+        universe_gics.build_gics_db(source, out)
+    resumed = [r for r in caplog.records if "ignored --source" in r.getMessage()]
+    assert [r.levelname for r in resumed] == ["WARNING"]

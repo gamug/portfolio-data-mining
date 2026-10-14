@@ -364,5 +364,5 @@ Full request: `portfolio-financial-analysis`'s
       builder's output copy via `migrate_gics_columns`; `_row_to_public_dict` returns
       `None` for an old-schema file), and the parser-drop count is enforced. 317 tests. Post-merge review follow-ups (code/tests/docs only,
       no data change): resumable, atomic `build_gics_db`; real `NAME`/`EMAIL`
-      User-Agent; public `queries.connect`. 329 tests.
+      User-Agent; public `queries.connect`. 333 tests.
 

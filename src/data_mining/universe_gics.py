@@ -790,13 +790,6 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     resuming = out_path.exists()
     base = out_path if resuming else source_path
-    if resuming:
-        log.warning(
-            "%s already exists: resuming from it and ignoring --source %s "
-            "(delete it to rebuild from the source)",
-            out_path,
-            source_path,
-        )
     work_path = out_path.with_name(out_path.name + ".tmp")
     shutil.copy2(base, work_path)
     try:
@@ -807,6 +800,19 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
             queries.migrate_gics_columns(db)
             report = fill_gics(db)
             report["base"] = "out" if resuming else "source"
+            if resuming:
+                # A fully filled --out is the normal idempotent re-run; only
+                # warn when stints are still pending, i.e. a stale --out
+                # could be hiding a newer source.
+                pending = report["targets"] - report["already_filled"]
+                log.log(
+                    logging.WARNING if pending else logging.INFO,
+                    "%s already exists: resumed from it and ignored --source %s "
+                    "(%d stint(s) were pending; delete it to rebuild from the source)",
+                    out_path,
+                    source_path,
+                    pending,
+                )
         finally:
             db.close()
         work_path.replace(out_path)
