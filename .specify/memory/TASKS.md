@@ -78,7 +78,7 @@ cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
 after the fact; IDs are never reused, so they stay reserved.
 
-- [ ] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
+- [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
       connector, strategy/source)`: ticker-only vs name-token-only vs both
       matches, the eight English-word tickers, the generic-first-word
@@ -86,6 +86,7 @@ after the fact; IDs are never reused, so they stay reserved.
       figure quoted in `PLAN.md`/`SPEC.md` §13 item 10 per connector, and
       count separately the rows only the substring shortcut
       (`ticker.lower() in url.lower()`, failure mode 3) would accept. → step 1.
+      Done: `scripts/audit_ticker_tagging.py`; results in `PLAN.md` Work item 10.
 - [ ] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker

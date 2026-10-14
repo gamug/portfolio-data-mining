@@ -494,8 +494,11 @@ treating a related FR/NR as done:
     (2026-10-14), recomputed with the word-boundary regex only, 49.8% of the
     462,826 sitemap-discovered rows match through the ticker alone and 48.7%
     through the company first word alone; the eight word-like tickers account
-    for 182,468 rows. The name-token and substring modes' error rates are
-    unmeasured, and the figures are re-derived per connector in `T-053`.
+    for 182,468 rows. `T-053` re-derived these per connector
+    (`scripts/audit_ticker_tagging.py`; results in `PLAN.md` Work item 10):
+    the figures hold, 96.2% of rows are `cnbc.com` sitemap rows, and the raw
+    substring shortcut accepts only 823 stored rows (all `ddg`). The
+    name-token and substring modes' error rates remain unmeasured (`T-054`).
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**
     (unlike the accepted items above, and unlike §14's permanent boundaries):
