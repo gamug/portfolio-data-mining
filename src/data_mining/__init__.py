@@ -9,6 +9,9 @@ S&P 500 universe loader (live scrape + point-in-time history), owned by
 - `universe_history` / `queries` -- point-in-time (`as_of`) membership,
   backed by `data/universe.db`; `queries` holds the DB-touching functions,
   `universe_history` the parsing/reconstruction and public operations.
+- `universe_gics` -- fills GICS sector/sub-industry + the revision citation
+  for the leaver stints, from the "List of S&P 500 companies" revision
+  history.
 - `errors` -- `UpstreamDataError`, the shared upstream-failure exception type.
 
 See this folder's README.md for what changes on the way into
@@ -27,6 +30,7 @@ from data_mining.schema import (
     apply_schema,
     run_migrations,
 )
+from data_mining.universe_gics import build_gics_db, fill_gics
 from data_mining.universe_history import (
     backfill_from_changes,
     query_as_of,
@@ -42,7 +46,9 @@ __all__ = [
     "UpstreamDataError",
     "apply_schema",
     "backfill_from_changes",
+    "build_gics_db",
     "connect",
+    "fill_gics",
     "is_tracked",
     "list_universe",
     "load_universe",
