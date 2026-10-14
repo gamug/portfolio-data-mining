@@ -562,8 +562,9 @@ SECTOR score. Full request: `portfolio-financial-analysis`'s
    `_row_to_public_dict` reports the columns as `None` for an old-schema file.
 3. `universe-gics` CLI subcommand: copies `--source` to `--out`, fills, prints the
    report as JSON. Refuses `--out == --source` and the names `universe_history.db`/
-   `universe.db`; idempotent on a filled file (a filled stint is skipped, so a re-run
-   makes no network call and writes nothing).
+   `universe.db`; idempotent (an existing `--out` is the starting point, a filled stint
+   is skipped, so a re-run on a filled file makes no network call and writes nothing);
+   the output is built on a temporary sibling and swapped in only on success.
 4. A **report-only** stability check compares each chosen label with the same
    CIK+symbol's row in the newest revision ≥30 days older. Every difference is surfaced
    for a human to accept or reject (a vandalised revision must not slip through), never
@@ -573,7 +574,7 @@ SECTOR score. Full request: `portfolio-financial-analysis`'s
 
 **No constitution change** — no new dependency or provider (Wikipedia via `httpx`,
 already used; the page is already scraped by `data_mining.portfolio`), so AI behavior
-#10 does not apply. The builder self-identifies to Wikimedia with `research@example.com`
+#10 does not apply. The builder self-identifies to Wikimedia with the real `NAME`/`EMAIL` env vars (placeholders are rejected)
 and paces serial requests (Technological stock #6).
 
 **Acceptance criteria**:

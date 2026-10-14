@@ -29,9 +29,12 @@ name, not by fixed position -- unlike `data_mining.portfolio`'s live
 current page.
 
 `universe-gics` is an explicit, documented build step run after the
-backfill (`cli/pricing_cli.py`); it is idempotent (a filled file is left
-unchanged) and writes to an explicit copy, never to the default
-`data/universe.db` or the delivered `universe_history.db`. The two citation
+backfill (`cli/pricing_cli.py`); it is idempotent (re-running on an
+existing `--out` resumes from it, and a fully filled one is left unchanged
+with no network call) and writes to an explicit file built atomically via a
+temporary sibling, never to the default `data/universe.db` or the delivered
+`universe_history.db`. Requests self-identify with the `NAME`/`EMAIL` env
+vars (`mediawiki_headers`). The two citation
 columns are added to that copy by the builder
 (`queries.migrate_gics_columns`), never on open -- so the gateway's
 `/universe` read path never ALTERs the sha1-tracked file it opens, and
@@ -42,6 +45,7 @@ predates them.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import time
@@ -84,12 +88,25 @@ _REVISION_BATCH_SIZE = 50
 # enough). Tests set this to 0 via an autouse fixture.
 REQUEST_DELAY_SECONDS = 0.5
 
-# Wikimedia asks that automated callers self-identify with a contact. The
-# user's own email is never sent to a third party (see the task brief); this
-# project address is the sanctioned placeholder.
-MEDIAWIKI_HEADERS = {
-    "User-Agent": ("portfolio-data-mining/1.0 (dataset-building; research@example.com)")
-}
+
+def mediawiki_headers() -> dict[str, str]:
+    """Wikimedia asks that automated callers self-identify with a working
+    contact (constitution Technological #6), so the User-Agent is built from
+    the same `NAME`/`EMAIL` env vars the EDGAR client uses. Raises
+    `ValueError` when either is unset rather than send a placeholder."""
+    name = os.environ.get("NAME", "").strip()
+    email = os.environ.get("EMAIL", "").strip()
+    if not name or not email:
+        raise ValueError(
+            "NAME and EMAIL must be set (see .env.example): Wikimedia requires "
+            "automated callers to identify themselves with a real contact"
+        )
+    return {"User-Agent": f"portfolio-data-mining/1.0 ({name}; {email})"}
+
+
+def _new_client() -> httpx.Client:
+    return httpx.Client(headers=mediawiki_headers())
+
 
 _PROTECTED_OUTPUT_NAMES = {"universe_history.db", "universe.db"}
 
@@ -188,7 +205,7 @@ def fetch_revision_list(
     Paged through `rvcontinue`; `rvlimit` is 500, so ~900 revisions is two
     calls."""
     owns_client = client is None
-    client = client or httpx.Client(headers=MEDIAWIKI_HEADERS)
+    client = client or _new_client()
     try:
         params: dict[str, Any] = {
             "action": "query",
@@ -223,30 +240,10 @@ def fetch_revision_list(
 
 def fetch_revision_content(revid: int, client: httpx.Client | None = None) -> str:
     """The page's wikitext at revision `revid`."""
-    owns_client = client is None
-    client = client or httpx.Client(headers=MEDIAWIKI_HEADERS)
-    try:
-        data = _get(
-            client,
-            {
-                "action": "query",
-                "prop": "revisions",
-                "revids": str(revid),
-                "rvprop": "content",
-                "rvslots": "main",
-                "format": "json",
-                "formatversion": "2",
-            },
-        ).json()
-        for page in data.get("query", {}).get("pages", []):
-            for raw in page.get("revisions", []):
-                content: str | None = raw.get("slots", {}).get("main", {}).get("content")
-                if content is not None:
-                    return content
+    contents = fetch_revision_contents([revid], client)
+    if revid not in contents:
         raise ValueError(f"revision {revid} returned no content")
-    finally:
-        if owns_client:
-            client.close()
+    return contents[revid]
 
 
 def fetch_revision_contents(
@@ -257,7 +254,7 @@ def fetch_revision_contents(
     call. Returns `{revid: wikitext}` (a revid the API omits is simply
     absent)."""
     owns_client = client is None
-    client = client or httpx.Client(headers=MEDIAWIKI_HEADERS)
+    client = client or _new_client()
     try:
         contents: dict[int, str] = {}
         ordered = sorted(set(revids))
@@ -386,6 +383,23 @@ def find_row(rows: list[dict[str, str]], cik: str, symbol: str) -> dict[str, str
 # ---------------------------------------------------------------------
 
 
+def _window_end(valid_to: date) -> datetime:
+    """The last instant of `valid_to` (UTC)."""
+    return datetime(valid_to.year, valid_to.month, valid_to.day, 23, 59, 59, tzinfo=UTC)
+
+
+def _newest_index_at_or_before(revisions: list[Revision], window_end: datetime) -> int | None:
+    """Index of the newest revision dated at or before `window_end` in the
+    oldest-first `revisions`, or None if every revision is later."""
+    found = None
+    for index, revision in enumerate(revisions):
+        if revision.timestamp <= window_end:
+            found = index
+        else:
+            break
+    return found
+
+
 def _record_parse(stats: ParseStats, revision: Revision, parsed: ParsedTable) -> None:
     """Account one parsed revision, remembering any dropped rows."""
     stats.revisions += 1
@@ -418,14 +432,7 @@ def _pick_revision(
     appeared under instead."""
     valid_from = date.fromisoformat(stint["valid_from"])
     valid_to = date.fromisoformat(stint["valid_to"])
-    window_end = datetime(valid_to.year, valid_to.month, valid_to.day, 23, 59, 59, tzinfo=UTC)
-
-    start_index = None
-    for index, revision in enumerate(revisions):
-        if revision.timestamp <= window_end:
-            start_index = index
-        else:
-            break
+    start_index = _newest_index_at_or_before(revisions, _window_end(valid_to))
     if start_index is None:
         return {
             "revision": None,
@@ -488,15 +495,10 @@ def _first_candidate_revid(stint: dict[str, Any], revisions: list[Revision]) -> 
     (the first revision the walk-back would examine), or None if there is no
     such revision in the window. Used only to batch-prefetch the common
     depth-1 case."""
-    valid_to = date.fromisoformat(stint["valid_to"])
-    window_end = datetime(valid_to.year, valid_to.month, valid_to.day, 23, 59, 59, tzinfo=UTC)
-    revid = None
-    for revision in revisions:
-        if revision.timestamp <= window_end:
-            revid = revision.revid
-        else:
-            break
-    return revid
+    index = _newest_index_at_or_before(
+        revisions, _window_end(date.fromisoformat(stint["valid_to"]))
+    )
+    return None if index is None else revisions[index].revid
 
 
 def _stability_check(
@@ -606,7 +608,7 @@ def fill_gics(
     Returns a JSON-serialisable report (filled rows, unfilled rows with
     reasons, the stability comparison)."""
     owns_client = client is None
-    client = client or httpx.Client(headers=MEDIAWIKI_HEADERS)
+    client = client or _new_client()
     try:
         targets = queries.fetch_gics_targets(db, cutoff)
         pending = [t for t in targets if not t.get("gics_revision_id")]
@@ -756,21 +758,37 @@ def fill_gics(
 
 
 def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
-    """Copy `source` to `out`, fill the leaver GICS labels on the copy, and
-    return the fill report. The source file is never opened for writing."""
+    """Fill the leaver GICS labels into `out` and return the fill report.
+
+    `out` is built on a temporary sibling and swapped in only on success, so
+    a failed fill never leaves a half-built file. When `out` already exists
+    it is the starting point instead of `source`, so a re-run resumes from
+    (and never discards) what is already filled: on a fully filled `out` it
+    makes no network call and leaves the file unchanged. The source file is
+    never opened for writing."""
     validate_paths(source, out)
     source_path = Path(source)
     out_path = Path(out)
+    if not source_path.is_file():
+        raise ValueError(f"--source {source_path} does not exist")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_path, out_path)
-    db = queries._connect(out_path)
+    base = out_path if out_path.exists() else source_path
+    work_path = out_path.with_name(out_path.name + ".tmp")
+    shutil.copy2(base, work_path)
     try:
-        # Add the citation columns to this copy only; the read path never
-        # migrates, so the source and the default universe DB stay untouched.
-        queries.migrate_gics_columns(db)
-        return fill_gics(db)
-    finally:
-        db.close()
+        db = queries.connect(work_path)
+        try:
+            # Add the citation columns to this copy only; the read path never
+            # migrates, so the source and the default universe DB stay untouched.
+            queries.migrate_gics_columns(db)
+            report = fill_gics(db)
+        finally:
+            db.close()
+        work_path.replace(out_path)
+    except BaseException:
+        work_path.unlink(missing_ok=True)
+        raise
+    return report
 
 
 __all__ = [
@@ -785,6 +803,7 @@ __all__ = [
     "fetch_revision_list",
     "fill_gics",
     "find_row",
+    "mediawiki_headers",
     "parse_constituents_table",
     "parse_constituents_wikitext",
     "validate_paths",

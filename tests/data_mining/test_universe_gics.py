@@ -429,6 +429,8 @@ _CONTENTS = {
 @pytest.fixture(autouse=True)
 def _isolated_universe_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv("NAME", "Test Name")
+    monkeypatch.setenv("EMAIL", "test@example.org")
     # Keep the hermetic suite fast: no real pacing between mocked requests.
     monkeypatch.setattr(universe_gics, "REQUEST_DELAY_SECONDS", 0.0)
 
@@ -673,11 +675,8 @@ def test_read_path_does_not_add_gics_columns(
     assert "gics_revision_timestamp" not in columns
 
 
-def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = _fresh_db()
-    _seed(db)
-    # A revision whose table has a malformed row (cell count != header).
-    bad = """
+# A revision whose table has a malformed row (cell count != header).
+_MALFORMED_TABLE = """
 {| class="wikitable sortable" id="constituents"
 |-
 ![[Ticker symbol|Symbol]]
@@ -687,9 +686,87 @@ def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.Monkey
 |[[Gap]]|| Consumer Discretionary || Apparel Retail || [[X]] || 1986-08-31 || 0000039911
 |}
 """
-    contents = {0: bad, 1: bad, 2: bad, 3: bad, 4: bad, 5: bad}
+
+
+def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _fresh_db()
+    _seed(db)
+    contents = dict.fromkeys(range(6), _MALFORMED_TABLE)
     _patch_fetches(monkeypatch, contents)
 
     with pytest.raises(ValueError, match="parser dropped"):
         universe_gics.fill_gics(db)
     db.close()
+
+
+# ---------------------------------------------------------------------
+# build_gics_db: idempotent re-run, atomic output, source checks
+# ---------------------------------------------------------------------
+
+
+def _source_db(tmp_path: Path) -> Path:
+    path = tmp_path / "source.db"
+    db = queries.connect(path)
+    _seed(db)
+    db.close()
+    return path
+
+
+def test_build_gics_db_rerun_keeps_the_filled_file_and_skips_the_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    first = universe_gics.build_gics_db(source, out)
+    assert len(first["filled"]) == 2
+    before = out.read_bytes()
+    calls = _patch_fetches(monkeypatch)
+
+    second = universe_gics.build_gics_db(source, out)
+
+    assert second["filled"] == []
+    assert second["already_filled"] == 2
+    assert calls["n"] == 0
+    assert out.read_bytes() == before
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_failure_leaves_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch, dict.fromkeys(range(6), _MALFORMED_TABLE))
+
+    with pytest.raises(ValueError, match="parser dropped"):
+        universe_gics.build_gics_db(source, out)
+
+    assert not out.exists()
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_rejects_a_missing_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        universe_gics.build_gics_db(tmp_path / "nope.db", tmp_path / "out.db")
+
+
+# ---------------------------------------------------------------------
+# Wikimedia self-identification
+# ---------------------------------------------------------------------
+
+
+def test_mediawiki_headers_use_name_and_email_from_env() -> None:
+    agent = universe_gics.mediawiki_headers()["User-Agent"]
+    assert "Test Name" in agent
+    assert "test@example.org" in agent
+    assert "example.com" not in agent
+
+
+@pytest.mark.parametrize("missing", ["NAME", "EMAIL"])
+def test_mediawiki_headers_require_a_real_contact(
+    monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.delenv(missing)
+    with pytest.raises(ValueError, match="NAME and EMAIL"):
+        universe_gics.mediawiki_headers()
