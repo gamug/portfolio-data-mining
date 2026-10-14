@@ -710,8 +710,10 @@ tagged company; that is a small-sample estimate, not a measurement.
 - The new matcher rejects the documented examples (`A` on `in-a-month`, `ON`
   on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence, and a
   ticker as a bare substring such as `A` in any URL) **in each of the seven
-  connectors**, and keeps known-correct pairs at a recorded retention rate,
-  with no `BaseConnector` signature change.
+  connectors**, with the wrong-company rate at or below, and known-correct
+  retention at or above, the targets fixed by T-055 (numbers recorded here and
+  in FR-014 before coding) on the shared labeled sample, and with no
+  `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
@@ -725,7 +727,8 @@ tagged company; that is a small-sample estimate, not a measurement.
 Work items 3, 4, 5, 6, 7 and 9 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open;
-`portfolio-nlp`'s Work item 15 development waits on it, so it goes first among the open items.
+`portfolio-nlp`'s Work item 15 development waits on it, so it takes priority over any new work,
+alongside the already-active Work item 8.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

@@ -104,10 +104,15 @@ after the fact; IDs are never reused, so they stay reserved.
       `ticker`, `company`, `match_mode`, `label` (about the company: yes/no)
       and `labeled_by` (judge/hand), which is what `portfolio-nlp` T-117
       consumes. Report; the rule is chosen from this, not assumed. → step 1.
-- [ ] **T-055** Record the matching-rule design (explicit ticker forms only,
-      full normalized name + curated aliases, common-word stoplist for a lone
-      first word; no new dependency) with the T-054 numbers behind it, and get
-      it approved before coding. → step 2.
+- [ ] **T-055** Record the matching-rule design (starting direction:
+      explicit ticker forms only, full normalized name + curated aliases,
+      common-word stoplist for a lone first word; no new dependency) with the
+      T-054 numbers behind it, and get it approved before coding. The same
+      decision sets the **measurable targets** — a maximum wrong-company rate
+      and a minimum retention of known-correct pairs on the shared labeled
+      sample — and writes both numbers, plus the final rule, into `SPEC.md`
+      FR-014 and the `PLAN.md` acceptance criteria before any code is written.
+      → step 2.
 - [ ] **T-056** Implement the rule once, in a shared `BaseConnector` helper
       (built on `_company_pattern`) that **all seven** connectors that match
       companies delegate to — `cnbc`, `ft`, `investing`, `nasdaq`,
