@@ -73,8 +73,14 @@ rule accepts it (ticker only / company token only / both / raw-substring shortcu
 breaks the English-word tickers and generic first words out per connector and source:
 
 ```bash
-PYTHONPATH=src .venv/bin/python scripts/audit_ticker_tagging.py [--json] [--min-rows N] [--generic-share F]
+PYTHONPATH=src uv run python scripts/audit_ticker_tagging.py [--json] [--min-rows N] [--generic-share F]
 ```
+
+`PYTHONPATH=src` is required because `scripts/` is not a package and `src/` is not on
+`sys.path` by default (pytest gets it from `pytest.ini`). This section uses `uv run`, the
+constitution's convention; the Windows `.venv\Scripts\python.exe` commands above predate it.
+The script opens `urls.db` through `data_mining.db.connect` as a `mode=ro` URI, so it stays
+inside the engine seam (NR-002/NR-006).
 
 Background and results: `PLAN.md` Work item 10 (`T-053`).
 

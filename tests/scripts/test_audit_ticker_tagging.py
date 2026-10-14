@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -120,3 +122,47 @@ def test_main_reads_database_url(
 def test_main_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert audit_mod.main(["--db", str(tmp_path / "nope.db")]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def _make_db(tmp_path: Path) -> Path:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
+    return db
+
+
+def test_shortcut_domains_match_connector_sources() -> None:
+    """SHORTCUT_DOMAINS must equal the connectors that still run the raw substring shortcut."""
+    connectors = Path(audit_mod.__file__).resolve().parents[1] / "src/news_collector/connectors"
+    found = set()
+    for path in connectors.glob("*.py"):
+        text = path.read_text()
+        if "ticker.lower() in url.lower()" in text:
+            found.add(re.search(r'domain="([^"]+)"', text).group(1))  # type: ignore[union-attr]
+    assert found == set(audit_mod.SHORTCUT_DOMAINS)
+
+
+def test_render_includes_per_connector_rows_and_header(tmp_path: Path) -> None:
+    result = audit_mod.audit(_make_db(tmp_path), min_rows=1, generic_share=0.2)
+    text = audit_mod.render(result)
+    assert "word tickers: ON, A, ARE" in text
+    assert "thresholds: min_rows=1, generic_share=20%" in text
+    assert "    cnbc.com            sitemap" in text
+    assert "Agilent Technologies" in text
+
+
+def test_json_output_round_trips(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert audit_mod.main(["--db", str(_make_db(tmp_path)), "--json", "--min-rows", "1"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["total_rows"] == len(_ROWS)
+    assert data["thresholds"]["min_rows"] == 1
+
+
+def test_min_rows_filters_lists(tmp_path: Path) -> None:
+    result = audit_mod.audit(_make_db(tmp_path), min_rows=100, generic_share=0.0)
+    assert result["word_tickers"] == []
+    assert result["generic_first_words"] == []
+    assert result["total_rows"] == len(_ROWS)

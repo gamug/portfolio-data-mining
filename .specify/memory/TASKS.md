@@ -20,7 +20,7 @@ renumber; mark a cancelled/superseded task in place instead.
 - [ ] **T-002** Add the job steps: checkout → `astral-sh/setup-uv` (pin
       Python 3.12) → `uv sync --group dev` → `uv run ruff check .` →
       `uv run ruff format --check .` → `uv run mypy --config-file=
-      .code_quality/mypy.ini src apps cli` → `uv run pytest -q`. → step 2.
+      .code_quality/mypy.ini src apps cli scripts` → `uv run pytest -q`. → step 2.
 - [ ] **T-003** Verify locally first (so the first real CI run isn't a
       surprise): run the same four commands from a clean `uv sync --group
       dev` and confirm all pass. → `PLAN.md` Work item 1 acceptance,

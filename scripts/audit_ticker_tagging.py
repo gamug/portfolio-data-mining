@@ -19,16 +19,18 @@ Usage:
     PYTHONPATH=src python scripts/audit_ticker_tagging.py [--db PATH]
         [--json] [--min-rows N] [--generic-share F]
 
-``--db`` defaults to ``$DATABASE_URL``, else ``data/urls.db``.
+``--db`` defaults to ``$DATABASE_URL``, else ``data/urls.db``
+(``data_mining.db.resolve_db_path``). The connection goes through
+``data_mining.db.connect`` (the shared engine seam, NR-002/NR-006), opened as a
+``mode=ro`` URI. Run with ``PYTHONPATH=src`` because ``scripts/`` is not a
+package and ``src/`` is not installed on ``sys.path`` by default.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import sqlite3
 import sys
 from collections import Counter, defaultdict
 from collections.abc import Callable
@@ -36,16 +38,17 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
+from data_mining.db import connect, resolve_db_path
 from news_collector.connectors.base import BaseConnector
 
-DEFAULT_DB = "data/urls.db"
-
 # Connectors whose url_matches_company first runs `ticker.lower() in url.lower()`.
+# Hand-kept; tests/scripts verifies it against the connector sources.
 SHORTCUT_DOMAINS = frozenset(
     {"nasdaq.com", "seekingalpha.com", "stocktwits.com", "finance.yahoo.com"}
 )
 
 # The English-word tickers named in PLAN.md Work item 10, failure mode 1.
+# Hand-kept from that list; extend it there and here together.
 WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
 
 GENERIC_SHARE = 0.9
@@ -123,11 +126,11 @@ def audit(
     Every figure is derived from one cell per ``(ticker, company, domain,
     source)``, so any breakdown can be split per connector and strategy.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
+    uri = f"file:{db_path.resolve()}?mode=ro"  # read-only: the audit never writes
     cache: dict[tuple[str, str], tuple[re.Pattern[str], re.Pattern[str]]] = {}
     cells: dict[tuple[str, str, str, str], Counter[str]] = defaultdict(Counter)
     total = 0
-    with closing(sqlite3.connect(uri, uri=True)) as con:
+    with closing(connect(uri, uri=True)) as con:
         rows = con.execute(
             "SELECT url, title, domain, company, ticker, source FROM discovered_urls"
         )
@@ -185,6 +188,7 @@ def render(result: dict[str, Any]) -> str:
     th = result["thresholds"]
     out = [
         f"discovered_urls rows scanned: {result['total_rows']:,}",
+        f"word tickers: {', '.join(WORD_TICKERS)}",
         f"thresholds: min_rows={th['min_rows']}, generic_share={th['generic_share']:.0%}",
         "",
         "== by (domain, source) ==",
@@ -232,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--db",
-        default=os.environ.get("DATABASE_URL") or DEFAULT_DB,
+        default=resolve_db_path(),
         help="path to urls.db (default: $DATABASE_URL, else data/urls.db)",
     )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of text")

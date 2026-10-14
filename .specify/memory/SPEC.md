@@ -412,7 +412,7 @@ There is no formal CD pipeline for this repo; what exists:
    §13).
 4. **No automated merge gate exists today** (NR-007): `uv run ruff check .`
    → `uv run ruff format --check .` → `uv run mypy --config-file=
-   .code_quality/mypy.ini src apps cli` → `uv run pytest` is a manual,
+   .code_quality/mypy.ini src apps cli scripts` → `uv run pytest` is a manual,
    convention-based sequence run locally before opening a PR, not enforced
    by a `.github/workflows/` CI job — see `PLAN.md`.
 
