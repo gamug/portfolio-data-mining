@@ -15,7 +15,8 @@ connection/schema layer, and the universe loader (live + point-in-time).
 | `schema.py` | `apply_schema()`, `run_migrations()`, `SCHEMA_VERSION`, `ARTICLES_SCHEMA`/`ARTICLE_COLUMNS` — the canonical `discovered_urls`/`discovery_progress`/`articles` DDL, one source of truth instead of a copy per pipeline stage. Schema DDL goes through `Database.create_schema`; the `discovered_urls.id` autoincrement token is filled from `db.dialect.autoincrement_pk` (portfolio-common v1.2.1 engine-agnostic seam). | `news_collector`, `extractor` (both call `apply_schema`/`run_migrations` before their first query) |
 | `portfolio.py` | `load_universe()`, `list_universe()`, `resolve_symbol()`, `is_tracked()` — the tracked S&P 500 universe: a live scrape of Wikipedia's "List of S&P 500 companies," cached in-process for the life of the process. With `as_of=None` (the default), touches no database at all. | `news_collector`/`extractor` discovery, `pricing`'s `/universe` routes |
 | `universe_history.py` | `backfill_from_changes()`, `record_snapshot()`, `query_as_of()`, `resolve_as_of()` — point-in-time membership. Reconstructs `valid_from`/`valid_to` intervals per ticker by combining today's live roster with the ["Historical components of the S&P 500"](https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500) Wikipedia article's addition/removal log (back to 1976). | `pricing`'s `as_of=` path only (`list_universe`/`resolve_symbol`, `/universe` routes); never called from the `as_of=None` default path |
-| `queries.py` | The only SQL text for `data/universe.db`'s `universe_membership` (SCD-2) table — `write_intervals`, `fetch_open_symbols`, `close_intervals`, `query_membership_as_of`, etc. Pure DB-touching functions; `universe_history.py` holds the parsing/reconstruction logic and orchestrates these. | `universe_history.py` only |
+| `queries.py` | The only SQL text for `data/universe.db`'s `universe_membership` (SCD-2) table — `write_intervals`, `fetch_open_symbols`, `close_intervals`, `query_membership_as_of`, `fetch_gics_targets`, `update_gics`, etc. Pure DB-touching functions; `universe_history.py` holds the parsing/reconstruction logic and orchestrates these. | `universe_history.py`, `universe_gics.py` |
+| `universe_gics.py` | `build_gics_db()`, `fill_gics()`, `fetch_revision_list()`/`fetch_revision_content()` — fills `gics_sector`/`gics_sub_industry` plus the revision citation for the S&P 500 leaver stints, from the revision history of Wikipedia's ["List of S&P 500 companies"](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies) page. | `cli/pricing_cli.py`'s `universe-gics` subcommand only |
 | `errors.py` | `UpstreamDataError` — the shared exception type for an upstream provider (Finnhub, yfinance, SEC EDGAR) failing in an *unexpected* way. Most consumer wrappers already return `{"success": False, "error": ...}` instead of raising (constitution: AI behavior #3); this is the safety net for anything that raises instead, paired with a FastAPI exception handler so a route never leaks a raw traceback. | `pricing`, `sec_edgar` |
 
 ## Two physically separate databases, on purpose
@@ -40,6 +41,46 @@ scheduler and isn't meant to run as production software (constitution:
 Executable cmds #1); see `SPEC.md` §13 for the open question this leaves
 (a stale `universe.db` between manual snapshots).
 
+## Leaver GICS backfill (`universe-gics`, FR-013)
+
+The live snapshot classifies only today's members, so
+`universe_history.backfill_from_changes()` leaves every leaver's
+`gics_sector`/`gics_sub_industry` empty. `universe_gics.fill_gics()` fills
+them for the leaver stints (`valid_to >= 2022-01-01`, CIK with no open
+stint) from the revision history of Wikipedia's "List of S&P 500 companies"
+page: for each stint it takes the last revision dated on or before the
+stint's `valid_to` that still lists the company, matched by CIK **and**
+symbol (CIK alone is not unique — Discovery's DISCA/DISCK share one, later
+reused by WBD), and copies the label verbatim. A pre-2023-03-17 label is
+never translated into today's GICS structure. The citation (MediaWiki
+revision id and timestamp) goes in the two additive `universe_membership`
+columns `gics_revision_id`/`gics_revision_timestamp`, written by a
+stint-keyed UPDATE — never `write_intervals` — so every row the fill does
+not touch keeps them NULL. Those columns are added to the builder's output
+copy only (`queries.migrate_gics_columns`); the read path never migrates, so
+the gateway's `/universe` route never alters the sha1-tracked file it opens
+(an old-schema file reads with both fields as `None`). A row the parser
+cannot map (cell count != header) is counted, and the builder raises rather
+than let it read as "company not listed".
+
+It is an explicit build step, run **after** `universe-backfill`:
+
+```bash
+uv run cli/pricing_cli.py universe-gics \
+  --source /workspaces/thesis/data/universe_history.db \
+  --out /workspaces/thesis/data/universe_history_gics.db
+```
+
+`--out` must differ from `--source` and must not be named
+`universe_history.db`/`universe.db`, so the source and the default universe
+DB are never written. The command is idempotent: a stint that already has a
+citation is skipped, so re-running produces an unchanged file (and, once
+every target is filled, makes no network call at all — the delivered file
+has three unfilled targets, which a re-run re-attempts). It also runs a
+report-only stability check (each chosen label vs. the same CIK+symbol in
+the newest revision ≥30 days older) and lists any differences rather than
+silently trusting them.
+
 ## Engine-agnostic since `portfolio-common` v1.2.1
 
 As of `docs/portfolio-common-v1.2-engine-agnostic.md` (PR #26), no file in
@@ -57,6 +98,7 @@ plus a re-pin in `pyproject.toml`, not a change to this package
 uv run pytest tests/data_mining -q
 ```
 
-Hermetic — the Wikipedia scrape (`portfolio.py`/`universe_history.py`) is
-mocked at the HTTP boundary, and `db.py`/`schema.py`/`queries.py` run
-against a temporary SQLite file, not the real `data/urls.db`/`data/universe.db`.
+Hermetic — the Wikipedia scrape (`portfolio.py`/`universe_history.py`) and
+the MediaWiki revision API (`universe_gics.py`) are mocked at the HTTP
+boundary, and `db.py`/`schema.py`/`queries.py` run against a temporary
+SQLite file, not the real `data/urls.db`/`data/universe.db`.

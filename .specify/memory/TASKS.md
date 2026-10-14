@@ -64,24 +64,33 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
-## Work item 9 — Stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp` T-128)
+## Work item 10 — Stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp` T-128)
 
 Requested by `portfolio-nlp` (its Work item 15, decision D3 = fix at the
 source, 2026-10-14): the discovery matcher `BaseConnector._company_pattern`
 accepts a ticker or the *first word* of the company name appearing anywhere in
 a URL slug or title, so tickers that are English words (`A`, `ON`, `IT`,
 `ARE`, …) and generic first words (`Trade`, `Bank`, `First`, `Dollar`, …) tag
-unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
+unrelated articles. → `PLAN.md` Work item 10, `SPEC.md` §13 item 10 and FR-014.
+
+Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` already
+cites `T-053`–`T-059` for this work item (its Work item 15, PR
+`gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
+after the fact; IDs are never reused, so they stay reserved.
 
 - [ ] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
-      strategy/source)`: ticker-only vs name-token-only vs both matches, the
-      eight English-word tickers, the generic-first-word companies, and the
-      `ddg` rows not yet broken out. → step 1.
+      connector, strategy/source)`: ticker-only vs name-token-only vs both
+      matches, the eight English-word tickers, the generic-first-word
+      companies, and the `ddg` rows not yet broken out. Recompute every
+      figure quoted in `PLAN.md`/`SPEC.md` §13 item 10 per connector, and
+      count separately the rows only the substring shortcut
+      (`ticker.lower() in url.lower()`, failure mode 3) would accept. → step 1.
 - [ ] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
-      stratified by match mode (ticker-only / name-token-only / both) and
-      including known-correct pairs; it is labeled with `portfolio-nlp`'s
+      stratified by connector and match mode (ticker word-boundary / ticker
+      substring shortcut / name-token-only / both) and including
+      known-correct pairs; it is labeled with `portfolio-nlp`'s
       relevance judge (its T-130; this repo has no ML/judge) and spot-checked
       by hand on a small subset to validate that judge. Commit the sample
       (pairs + labels) so it can be reused: `portfolio-nlp` T-117 reuses it,
@@ -99,11 +108,22 @@ unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
       full normalized name + curated aliases, common-word stoplist for a lone
       first word; no new dependency) with the T-054 numbers behind it, and get
       it approved before coding. → step 2.
-- [ ] **T-056** Implement the rule in `_company_pattern` /
-      `url_matches_company`, rewrite the base-class docstring postcondition,
-      and add hermetic parametrized tests (ambiguous tickers, generic first
-      words, alias cases, must-still-match regressions). No `BaseConnector`
-      signature change. → step 3.
+- [ ] **T-056** Implement the rule once, in a shared `BaseConnector` helper
+      (built on `_company_pattern`) that **all seven** connectors that match
+      companies delegate to — `cnbc`, `ft`, `investing`, `nasdaq`,
+      `seeking_alpha`, `stocktwits`, `yahoo_finance` — and remove or tighten
+      the raw `ticker.lower() in url.lower()` shortcut that the last four
+      run first. Each connector overrides the abstract `url_matches_company`,
+      so each override is edited to call the helper. Rewrite the base-class
+      docstring postcondition ("ticker OR significant company name token is
+      sufficient"). Hermetic parametrized tests **per connector** (ambiguous
+      tickers, generic first words, alias cases, must-still-match
+      regressions, the substring cases). Only `test_cnbc.py` covers
+      `url_matches_company` today (`test_url_matches_company_ticker`,
+      `_title`, `_negative`, which assert the permissive rule); update those
+      deliberately and add the missing files for the other six, so the change
+      is not read as a regression. No `BaseConnector` signature change. →
+      step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
@@ -116,21 +136,21 @@ unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
       and `sector_summary` — its T-131)
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
-- [ ] **T-059** Close-out: `SPEC.md` §13 item 10 / §14 annotated,
+- [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
       (constitution AI behavior #12). → acceptance criteria.
 
 ## Status
 
-Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
+Closed Work items 3, 4, 5, 6, 7 and 9 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
-Work item 7, `T-044`, closed 2026-10-09).
+Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 9 (`T-053`–`T-059`, wrong-company tagging, requested by `portfolio-nlp`) is open;
+Work item 10 (`T-053`–`T-059`, wrong-company tagging, requested by `portfolio-nlp`) is open;
 `portfolio-nlp` waits on it before starting its own category-stage development.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's

@@ -119,6 +119,8 @@ or time into portfolio-level signals (`financial-analysis` and
 | **FR-010** | `apps/gateway.py` mounts all four services under one process (`/collector`, `/crawler`, `/pricing`, `/edgar`) for local convenience, without merging their OpenAPI schemas. | `GET /collector/docs`, `/crawler/docs`, `/pricing/docs`, `/edgar/docs` each serve that service's own schema; there is no single merged `/docs`. Production/independent-scaling deploys run the four standalone `apps/*_api.py` instead. |
 | **FR-011** | `cli/*.py` mirrors each service's API routes 1:1 as argparse subcommands and prints JSON to stdout. | Every non-infrastructure route (excluding `/health`, `/docs`) in `pricing_api.py`/`sec_edgar_api.py` has a corresponding `cli/pricing_cli.py`/`cli/sec_edgar_cli.py` subcommand; `news_collector_cli.py`/`news_crawler_cli.py` wrap each module's pre-existing CLI rather than reimplementing it. |
 | **FR-012** | `pricing` exposes per-ticker corporate actions — dividends (cash/share) and splits (ratio) with exact ex-dates — over `GET /pricing/{ticker}/actions?start_date=&end_date=` and a matching `actions` CLI subcommand, sourced from `yfinance`, writing nothing to any database. An empty range is HTTP 200 with empty lists, never a 404; an upstream failure is empty lists plus a `warning`, never a raised exception (FR-003's contract). Moved here from `portfolio-financial-analysis`, whose `quant` package probes exactly this route. | `GET /pricing/XOM/actions` over a range containing known ex-dates returns a non-empty `dividends` list with `source: "yfinance"`; the `1900-01-01`–`1900-01-02` probe range returns 200 with empty lists; `start_date > end_date` returns 400; mocked-`yf.Ticker` tests in `tests/pricing/test_fetcher.py` cover in-range/out-of-range/empty/failure cases with no network (NR-004). |
+| **FR-013** | `data_mining.universe_gics` fills the GICS sector/sub-industry for the S&P 500 leaver stints — every `universe_membership` stint with `valid_to >= 2022-01-01` whose CIK has no open stint (90 stints / 86 CIKs on the delivered build) — from the revision history of Wikipedia's "List of S&P 500 companies" page, and records each label's citation in two additive `universe_membership` columns (`gics_revision_id`, `gics_revision_timestamp`). For each stint it uses the last revision dated on or before `valid_to` that still lists the company, matched by CIK **and** symbol (CIK alone is not unique — Discovery's DISCA/DISCK share one, later reused by WBD); the label is copied exactly as written (a pre-2023-03-17 label is never translated into today's GICS structure), and a stint that cannot be matched is left empty and reported with its reason. Run by the explicit `universe-gics` CLI subcommand after `universe-backfill`, writing to an explicit copy — never the source or `data/universe.db`; idempotent (a stint already carrying a citation is skipped, so re-running produces an unchanged file). The two citation columns are added to that copy only (`queries.migrate_gics_columns`), never on open: the read path (`queries._connect`, the gateway's `/universe` route) never ALTERs the file it opens, and `_row_to_public_dict` reports the columns as `None` for a file that predates them. A row the parser cannot map (cell count != header) is counted, and the builder fails loudly rather than treat it as "company not listed". | On the delivered `universe_history.db`, all 90 target stints carry `gics_sector`/`gics_sub_industry` plus a revision id/timestamp, or appear on the unfilled list with a reason; re-running `universe-gics` on the delivered file yields a byte-identical file (no row changes; once every target is filled it also makes no network call); the 503 `live_snapshot` rows and every non-target column are unchanged (only the four GICS columns change, only on the target rows); opening an old-schema file through the read path leaves it byte-identical (sha1 before == after) and yields `None` citation fields; a parser drop raises instead of silently emptying a stint. Hermetic tests in `tests/data_mining/test_universe_gics.py` (NR-004). |
+| **FR-014** | *(Planned — `PLAN.md` Work item 10, `T-056`; not yet built.)* Company matching during discovery is precise: for the seven connectors that implement `url_matches_company` (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`, `stocktwits`, `yahoo_finance`), a ticker counts only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an uppercase title token, never as a bare word in a lowercase slug and never as a raw URL substring; the company name counts as its full normalized name or a curated alias, and a lone first word counts only when distinctive. One shared `BaseConnector` helper holds the rule, with no signature change. | Hermetic parametrized tests **per connector** reject `A` on `in-a-month`, `ON` on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence and a ticker as a bare URL substring, and keep a must-still-match set at the retention rate recorded by `T-054`/`T-056`; the re-tag dry run reports before/after counts per ticker and source (`T-057`); `portfolio-nlp` confirms wrong-company rows no longer reach its pending queries (`T-058`). |
 
 ### 2.4 Non-functional requirements
 
@@ -127,7 +129,7 @@ or time into portfolio-level signals (`financial-analysis` and
 | **NR-001** | None of the four services has authentication or authorization — every endpoint is open to anyone who can reach the port. | Acceptable today only because every service is expected to run on a private/trusted network with a single operator, not because it's been assessed as safe for broader exposure (§14). |
 | **NR-002** | SQLite is the only implemented database engine; a second backend is a `portfolio-common` `Dialect` implementation plus a re-pin here, never a repo-local shim. | `grep -rn "import sqlite3" src apps cli` returns nothing outside test fixtures (verified after `portfolio-common` v1.2.1's engine-agnostic seam, PR #26); a prior repo-local shim attempt (`db_backend.py`, PR #12, Turso/libSQL) was closed unmerged rather than adopted, precisely because the sanctioned path is the `Dialect` seam. |
 | **NR-003** | The shared connection applies `PRAGMA foreign_keys`/`busy_timeout=30000` per-connection (WAL persists at the file level) — a connection finding `urls.db` locked by another writer retries internally rather than immediately raising. | A concurrent `extractor` read and `news_collector` write against the same `urls.db` does not surface `sqlite3.OperationalError: database is locked` under normal single-writer contention. |
-| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `hypothesis` property tests for queueing logic) — 280 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
+| **NR-004** | The test suite requires no live network access to Finnhub/SEC EDGAR/Wikipedia/any news domain and no GPU. | `uv run pytest` passes with every external boundary mocked (`respx` for HTTP, monkeypatched `finnhub.Client`/`edgar.Company`, `httpx.MockTransport` for the Wikipedia revision API, `hypothesis` property tests for queueing logic) — 317 tests across `tests/{news_collector,extractor,pricing,sec_edgar,data_mining}`. |
 | **NR-005** | One pre-existing platform-specific test flake is documented, not silently tolerated or hidden. | `tests/news_collector::test_enqueue_inserts_at_most_len_input` is a known Windows-only flake (a `hypothesis` property test racing temp-SQLite-file cleanup against an open connection) — recorded in `CLAUDE.md` and `docs/modules/news-collector.md` as not a logic bug, so it isn't mistaken for a regression. |
 | **NR-006** | A database-engine change away from SQLite must not require touching this repo's stage/query logic. | `grep -rn "import sqlite3" src apps cli` returns nothing (NR-002); every engine-specific SQL fragment goes through `conn.dialect`/`portfolio_common.db` helpers rather than a raw driver call. |
 | **NR-007** | There is no CI workflow configured for this repo — lint/format/type/test gating before merge is a manual, convention-based step (constitution: Executable cmds #1), not an automated one. | `.github/workflows/` does not exist in this repo as of this writing; see `PLAN.md` for whether adding one is the actionable next step. |
@@ -239,11 +241,17 @@ live from a Finnhub/EDGAR call and returned, never written to a table
 (§3, response-shape convention FR-003/FR-004).
 
 `data/universe.db` (`data_mining.universe_history`) holds the reconstructed
-point-in-time S&P 500 membership change log; its schema is internal to that
-module (see `src/data_mining/universe_history.py` for the exact shape) and
-is not read by any other repo directly — access is always through
+point-in-time S&P 500 membership change log — the `universe_membership`
+SCD-2 table. Its schema lives in `src/data_mining/queries.py`:
+`symbol`, `security`, `gics_sector`, `gics_sub_industry`, `hq_location`,
+`date_added`, `cik`, `founded`, `valid_from`, `valid_to`, `source`, plus the
+two additive leaver-GICS citation columns `gics_revision_id` and
+`gics_revision_timestamp` (FR-013; NULL on every row the fill did not touch,
+including all `live_snapshot` rows). Within this repo, access is through
 `list_universe(as_of=...)`/`resolve_symbol(as_of=...)` or the `/universe`
-HTTP routes, never the file itself.
+HTTP routes, never the file itself; the *delivered* `universe_history.db`
+build is additionally read directly by `portfolio-financial-analysis`, so a
+column rename/removal there is a cross-repo change, not an internal one.
 
 ## 6. Core Workflows
 
@@ -365,7 +373,8 @@ production system this project isn't. What exists instead:
   (`test_fetcher.py`/`test_market_data.py`/`test_news.py`, 38 tests) and
   `tests/sec_edgar/test_agent.py` (38 tests) cover the response-shape
   contract (FR-003/004); `tests/data_mining/` covers the shared connection/
-  schema factory and the universe loader (FR-005/006/008).
+  schema factory and the universe loader (FR-005/006/008) plus the leaver
+  GICS backfill (FR-013, `test_universe_gics.py`).
 - **New requirement → new test first** (constitution: match existing
   structure, smallest change) — a change implementing or altering an FR/NR
   above should land with a test that references the requirement ID in a
@@ -377,9 +386,9 @@ production system this project isn't. What exists instead:
   len_input` (Windows-only, `tests/news_collector`) is a known race in a
   `hypothesis` property test's temp-file cleanup, not a logic bug (NR-005) —
   don't "fix" it by weakening the property it tests.
-- **230 tests total** as of the corporate-actions endpoint (was 213 at
-  `portfolio-common` v1.2.1 adoption, PR #26), across the five
-  `tests/<package>` directories above.
+- **317 tests total** as of the leaver-GICS backfill (T-046; was 230 at
+  the corporate-actions endpoint, 213 at `portfolio-common` v1.2.1 adoption,
+  PR #26), across the five `tests/<package>` directories above.
 
 ## 11. Deployment Procedures
 
@@ -474,13 +483,21 @@ treating a related FR/NR as done:
     a word boundary, so tickers that are ordinary words (`A`, `ON`, `IT`, `ARE`,
     `TECH`, `HAS`, `NOW`, `ALL`) and companies reduced to a generic first
     word (`Trade`, `Bank`, `First`, `Dollar`, `Best`, `Global`, `News`) match
-    unrelated articles. On `urls.db` (2026-10-14), 49.8% of the 462,826
-    sitemap-discovered rows match through the ticker alone and 48.7% through
-    the company first word alone; the eight word-like tickers account for
-    182,468 rows. The name-token mode's error rate is unmeasured. Surfaced by
-    `portfolio-nlp`, whose category stage labels 42.7% of its corpus `other`
-    largely because of it. Not accepted: tracked as `PLAN.md` Work item 9,
-    `TASKS.md` T-053–T-059 (requested by `portfolio-nlp` T-128).
+    unrelated articles. Seven connectors (`cnbc`, `ft`, `investing`, `nasdaq`,
+    `seeking_alpha`, `stocktwits`, `yahoo_finance`) override
+    `url_matches_company` and use it; four of them (`nasdaq`, `seeking_alpha`,
+    `stocktwits`, `yahoo_finance`) first accept any URL containing the ticker
+    as a raw substring, which is looser still and unmeasured. On `urls.db`
+    (2026-10-14), recomputed with the word-boundary regex only, 49.8% of the
+    462,826 sitemap-discovered rows match through the ticker alone and 48.7%
+    through the company first word alone; the eight word-like tickers account
+    for 182,468 rows. The name-token and substring modes' error rates are
+    unmeasured, and the figures are re-derived per connector in `T-053`.
+    Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
+    corpus `other` largely because of it. **Not accepted — active work**
+    (unlike the accepted items above, and unlike §14's permanent boundaries):
+    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-059 (requested by
+    `portfolio-nlp` T-128), with the requirement in FR-014.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)
 
@@ -544,7 +561,6 @@ boundary of what this project is, not a gap someone forgot to close:
 | 7 — Windows-only `hypothesis` flake | Accepted as a known, non-blocking, platform-specific flake | It started failing on the actual CI/dev platform, not just Windows |
 | 8 — Turso/libSQL prototype (PR #12) closed unmerged | Accepted; deliberate choice of the `Dialect` seam over a bespoke shim | — |
 | 9 — `yfinance` is unofficial/best-effort | Accepted; free, keyless, and already a dependency — a paid vendor feed is a separate cost/access decision, not this project's scope | A consumer needed guaranteed, auditable corporate-actions data rather than best-effort exact ex-dates |
-| 10 — discovery tags articles with the wrong company | **New, active work (2026-10-14)** — not accepted; see `PLAN.md` Work item 9 | — (already in motion) |
 
 Item 5 is the one item on this list worth doing regardless of scope — it's
 CI-plumbing, not new infrastructure, and it's the same category of "cheap,

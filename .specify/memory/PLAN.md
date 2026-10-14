@@ -529,10 +529,73 @@ Downstream analysis needs the filer CIK and period of report directly on filing-
 - `{ticker}` path parameter accepting both ticker and CIK documented across OpenAPI schemas and `SPEC.md`.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
-## Work item 9 — News collector: stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp`)
+## Work item 9 — GICS sector/sub-industry for the S&P 500 leaver stints (code + data, T-046)
+
+**Status: closed 2026-10-14 (PR #51, merged `9006cf6`); task moved to `CHANGELOG.md`.**
+
+**Why**: `portfolio-financial-analysis` (its `T-153` part 3, blocking its `T-100`
+full-universe run) needs the leaver stints classified. The delivered
+`universe_history.db` (PR #49) has `gics_sector`/`gics_sub_industry` filled for the
+503 `live_snapshot` rows and empty for all 391 `wikipedia_changes_backfill` rows, so
+the 90 stints inside the backtest window (`valid_to >= 2022-01-01`, CIK with no open
+stint) get no company type, no regulated-utility exemption, no REIT rules, and no
+SECTOR score. Full request: `portfolio-financial-analysis`'s
+`docs/upstream_requests/data_mining_leaver_gics.md`.
+
+**Approach**:
+1. New `src/data_mining/universe_gics.py`: read the "List of S&P 500 companies"
+   revision list from the MediaWiki API (window from 2021-01-01, paged), fetch each
+   candidate revision's content by revid, parse the constituents table **by header
+   name** (the page's column set changed — 2022 revisions carry an extra "SEC filings"
+   column, 2023+ do not, so the live positional parser can't be reused), and for each
+   stint walk back from the newest revision at or before `valid_to` to the last one
+   listing the CIK **and** symbol, bounded by `valid_from`. Labels are copied verbatim;
+   a pre-2023-03-17 label is never translated.
+2. Two additive `universe_membership` columns (`gics_revision_id`,
+   `gics_revision_timestamp`), migrated with `portfolio_common.db.ensure_columns`
+   **only on the builder's output copy** (`queries.migrate_gics_columns`), never on
+   open — so a read path (the gateway's `/universe` route, which opens
+   `$UNIVERSE_DB_PATH`) never ALTERs a sha1-tracked file. `queries.update_gics` writes
+   them with a stint-keyed UPDATE (`symbol`+`cik`+`valid_from`+`valid_to`) —
+   deliberately **not** through `write_intervals`/`_DB_COLUMNS`, so the fill never
+   rewrites a row it does not fill and every other row keeps NULL citation columns;
+   `_row_to_public_dict` reports the columns as `None` for an old-schema file.
+3. `universe-gics` CLI subcommand: copies `--source` to `--out`, fills, prints the
+   report as JSON. Refuses `--out == --source` and the names `universe_history.db`/
+   `universe.db`; idempotent on a filled file (a filled stint is skipped, so a re-run
+   makes no network call and writes nothing).
+4. A **report-only** stability check compares each chosen label with the same
+   CIK+symbol's row in the newest revision ≥30 days older. Every difference is surfaced
+   for a human to accept or reject (a vandalised revision must not slip through), never
+   silently trusted, and the chosen label is never changed by it.
+5. Tests: `tests/data_mining/test_universe_gics.py` (hermetic — MockTransport for the
+   MediaWiki API, monkeypatched fetches for the end-to-end fill, tmp-path DB).
+
+**No constitution change** — no new dependency or provider (Wikipedia via `httpx`,
+already used; the page is already scraped by `data_mining.portfolio`), so AI behavior
+#10 does not apply. The builder self-identifies to Wikimedia with `research@example.com`
+and paces serial requests (Technological stock #6).
+
+**Acceptance criteria**:
+- All 90 stints carry `gics_sector`/`gics_sub_industry` plus a revision id/timestamp, or
+  appear on the "could not be filled" list with a reason (and, where the CIK was found
+  under another symbol notation, which).
+- Re-running `universe-gics` on the filled file changes no row.
+- The 503 `live_snapshot` rows and every non-target column are unchanged; the full-row
+  diff vs the source touches only the four GICS columns, only on the 90 target rows.
+- Opening an old-schema file through the read path leaves it byte-identical (sha1
+  before == after); a parser drop raises instead of silently emptying a stint.
+- Labels match the chosen revision verbatim.
+- The PR gives the counts, the unfilled list, and the new file's sha1; the source's
+  sha1 stays `fddbdccb71ab4243a0fb76b3027774474d352b99`.
+- `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` clean.
+
+## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp`)
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
-2026-10-14). That repo's category stage labels 42.7% of 459,112 articles
+2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
+below, `T-117`/`T-128`/`T-130`/`T-131`, are as written in that repo's plan on
+that date). That repo's category stage labels 42.7% of 459,112 articles
 `other`, and investigating why showed that a large share of the corpus is
 attached to a company it is not about. Examples from `urls.db`
 (`discovered_urls`): ticker `A` (Agilent) on
@@ -543,13 +606,13 @@ concerns the company they are filed under.
 
 *Root cause, confirmed in code (not inferred)*: `BaseConnector._company_pattern`
 (`src/news_collector/connectors/base.py`) builds
-`\b(<ticker>|<first word of company name>)\b`, case-insensitive, and
-`url_matches_company` applies it to the URL and title. It is used by all four
-connectors that implement the check (`cnbc`, `ft`, `investing`,
-`yahoo_finance`) and by both discovery strategies (`strategies/sitemap.py`,
-`strategies/ddg.py`). The base class documents this as intended
-("Matching on ticker OR significant company name token is sufficient"). Two
-failure modes follow from it:
+`\b(<ticker>|<first word of company name>)\b`, case-insensitive. The base
+`url_matches_company` is abstract; **seven** connectors override it and call
+the pattern (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`,
+`stocktwits`, `yahoo_finance`), and both discovery strategies
+(`strategies/sitemap.py`, `strategies/ddg.py`) filter on the override. The
+base class documents the rule as intended ("Matching on ticker OR
+significant company name token is sufficient"). Three failure modes follow:
 
 1. **Ticker that is an ordinary word.** A hyphen is a regex word boundary, so
    the slug `in-a-month` matches ticker `A`, `trusts-trump-on-trade` matches
@@ -566,6 +629,15 @@ failure modes follow from it:
    `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
    matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
    mode's error rate is **unmeasured** — measuring it is T-054.
+3. **Raw substring shortcut in four connectors.** `nasdaq`, `seeking_alpha`,
+   `stocktwits` and `yahoo_finance` first run
+   `if ticker.lower() in url.lower(): return True` — no word boundary at all.
+   Ticker `A` matches any URL containing the letter "a"; `ON` matches
+   "season" or "reason". This is looser than mode 1 and a change to
+   `_company_pattern` alone does not touch it. Its share of the corpus is
+   **unmeasured**; the sizing figures above were reproduced with the
+   word-boundary regex only, so T-053 recomputes every figure per connector
+   (and counts the rows only the shortcut accepts) before they are relied on.
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
@@ -598,12 +670,17 @@ tagged company; that is a small-sample estimate, not a measurement.
      (Technological stock #7) — prefer a hand-kept stoplist.
    - Recall matters too: the rule must keep what was correctly tagged. Report
      the retained share on a hand-labeled set of known-correct pairs.
-3. **Implement** in `_company_pattern` / `url_matches_company`, keeping the
-   `BaseConnector` contract (connectors still delegate to it), and rewrite the
-   docstring postcondition that currently blesses "ticker OR first word".
-   Hermetic parametrized tests: ambiguous tickers (`A`, `ON`, `IT`, `ARE`),
-   generic first words, alias cases, and regression cases for pairs that must
-   still match.
+3. **Implement** the rule once, in a shared `BaseConnector` helper built on
+   `_company_pattern`, and make all seven overriding connectors delegate to it
+   (dropping or tightening the substring shortcut in `nasdaq`,
+   `seeking_alpha`, `stocktwits`, `yahoo_finance`); no `BaseConnector`
+   signature change. Rewrite the docstring postcondition that currently
+   blesses "ticker OR first word". Hermetic parametrized tests **per
+   connector**: ambiguous tickers (`A`, `ON`, `IT`, `ARE`), generic first
+   words, alias cases, substring cases, and regression cases for pairs that
+   must still match. Only `tests/news_collector/connectors/test_cnbc.py`
+   exercises `url_matches_company` today (and asserts the permissive rule), so
+   those tests change deliberately and the other six connectors get test files.
 4. **Re-tag the existing data (`urls.db`).** Apply the new rule to
    `discovered_urls` / `articles` (481,332 rows each) as a dry run on a copy
    first, reporting how many `(url, ticker)` pairs would be removed, per
@@ -628,23 +705,24 @@ tagged company; that is a small-sample estimate, not a measurement.
 - The audit reproduces the counts above from `urls.db`, and the error rate of
   both failure modes is measured (not assumed) before the rule is chosen.
 - The new matcher rejects the documented examples (`A` on `in-a-month`, `ON`
-  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence) and
-  keeps known-correct pairs at a recorded retention rate, with no
-  `BaseConnector` signature change.
+  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence, and a
+  ticker as a bare substring such as `A` in any URL) **in each of the seven
+  connectors**, and keeps known-correct pairs at a recorded retention rate,
+  with no `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
-  item 10, `docs/modules/news-collector.md` and the architecture artifacts
+  item 10 and FR-014, `docs/modules/news-collector.md` and the architecture artifacts
   reconciled (constitution AI behavior #11, never renamed).
 
 ## Sequencing
 
-Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
-items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 is open and active.
-Work item 9 (wrong-company tagging, requested by `portfolio-nlp`) is open; `portfolio-nlp`'s
-Work item 15 development waits on it, so it goes first.
+Work items 3, 4, 5, 6, 7 and 9 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
+items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
+open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open;
+`portfolio-nlp`'s Work item 15 development waits on it, so it goes first among the open items.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
