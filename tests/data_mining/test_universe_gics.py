@@ -10,7 +10,9 @@ data/universe.db (UNIVERSE_DB_PATH is monkeypatched to a tmp_path file).
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import importlib.util
 import sqlite3
 from datetime import date, datetime
 from pathlib import Path
@@ -429,6 +431,8 @@ _CONTENTS = {
 @pytest.fixture(autouse=True)
 def _isolated_universe_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
+    monkeypatch.setenv("NAME", "Test Name")
+    monkeypatch.setenv("EMAIL", "tester@portfolio.test")
     # Keep the hermetic suite fast: no real pacing between mocked requests.
     monkeypatch.setattr(universe_gics, "REQUEST_DELAY_SECONDS", 0.0)
 
@@ -454,7 +458,7 @@ def _seed(db) -> None:
 def _fresh_db():
     """A tmp DB with the GICS citation columns added, the way the builder's
     output copy gets them (the read path never migrates)."""
-    db = queries._connect()
+    db = queries.connect()
     queries.migrate_gics_columns(db)
     return db
 
@@ -643,7 +647,7 @@ def test_read_path_leaves_old_schema_file_byte_identical(
     before = hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
 
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
-    db = queries._connect()
+    db = queries.connect()
     try:
         rows = queries.query_membership_as_of(db, "2024-01-01")
     finally:
@@ -663,7 +667,7 @@ def test_read_path_does_not_add_gics_columns(
     _make_old_schema_db(path)
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
 
-    db = queries._connect()
+    db = queries.connect()
     try:
         columns = set(db.table_columns("universe_membership"))
     finally:
@@ -673,11 +677,8 @@ def test_read_path_does_not_add_gics_columns(
     assert "gics_revision_timestamp" not in columns
 
 
-def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = _fresh_db()
-    _seed(db)
-    # A revision whose table has a malformed row (cell count != header).
-    bad = """
+# A revision whose table has a malformed row (cell count != header).
+_MALFORMED_TABLE = """
 {| class="wikitable sortable" id="constituents"
 |-
 ![[Ticker symbol|Symbol]]
@@ -687,9 +688,217 @@ def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.Monkey
 |[[Gap]]|| Consumer Discretionary || Apparel Retail || [[X]] || 1986-08-31 || 0000039911
 |}
 """
-    contents = {0: bad, 1: bad, 2: bad, 3: bad, 4: bad, 5: bad}
+
+
+def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _fresh_db()
+    _seed(db)
+    contents = dict.fromkeys(range(6), _MALFORMED_TABLE)
     _patch_fetches(monkeypatch, contents)
 
     with pytest.raises(ValueError, match="parser dropped"):
         universe_gics.fill_gics(db)
     db.close()
+
+
+# ---------------------------------------------------------------------
+# build_gics_db: idempotent re-run, atomic output, source checks
+# ---------------------------------------------------------------------
+
+
+def _source_db(tmp_path: Path) -> Path:
+    path = tmp_path / "source.db"
+    db = queries.connect(path)
+    _seed(db)
+    db.close()
+    return path
+
+
+def test_build_gics_db_rerun_keeps_the_filled_file_and_skips_the_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    first = universe_gics.build_gics_db(source, out)
+    assert len(first["filled"]) == 2
+    before = out.read_bytes()
+    calls = _patch_fetches(monkeypatch)
+
+    second = universe_gics.build_gics_db(source, out)
+
+    assert second["filled"] == []
+    assert second["already_filled"] == 2
+    assert calls["n"] == 0
+    assert out.read_bytes() == before
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_failure_leaves_no_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch, dict.fromkeys(range(6), _MALFORMED_TABLE))
+
+    with pytest.raises(ValueError, match="parser dropped"):
+        universe_gics.build_gics_db(source, out)
+
+    assert not out.exists()
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_rejects_a_missing_source(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        universe_gics.build_gics_db(tmp_path / "nope.db", tmp_path / "out.db")
+
+
+# ---------------------------------------------------------------------
+# Wikimedia self-identification
+# ---------------------------------------------------------------------
+
+
+def test_mediawiki_headers_use_name_and_email_from_env() -> None:
+    agent = universe_gics.mediawiki_headers()["User-Agent"]
+    assert "Test Name" in agent
+    assert "tester@portfolio.test" in agent
+    assert "example" not in agent
+
+
+@pytest.mark.parametrize("missing", ["NAME", "EMAIL"])
+def test_mediawiki_headers_require_a_real_contact(
+    monkeypatch: pytest.MonkeyPatch, missing: str
+) -> None:
+    monkeypatch.delenv(missing)
+    with pytest.raises(ValueError, match="NAME and EMAIL"):
+        universe_gics.mediawiki_headers()
+
+
+@pytest.mark.parametrize(
+    ("name", "email"),
+    [
+        ("Your Name", "real@portfolio.test"),
+        ("Real Name", "your.email@example.com"),
+        ("Real Name", "someone@example.org"),
+    ],
+)
+def test_mediawiki_headers_reject_env_example_placeholders(
+    monkeypatch: pytest.MonkeyPatch, name: str, email: str
+) -> None:
+    monkeypatch.setenv("NAME", name)
+    monkeypatch.setenv("EMAIL", email)
+    with pytest.raises(ValueError, match="real contact"):
+        universe_gics.mediawiki_headers()
+
+
+def test_mediawiki_headers_survive_a_non_ascii_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAME", "José Muñoz")
+    agent = universe_gics.mediawiki_headers()["User-Agent"]
+    agent.encode("ascii")
+    httpx.Client(headers={"User-Agent": agent}).close()
+
+
+def test_build_gics_db_fails_fast_without_a_contact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    monkeypatch.delenv("EMAIL")
+    with pytest.raises(ValueError, match="real contact"):
+        universe_gics.build_gics_db(source, out)
+    assert not out.exists()
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_reports_which_file_was_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    assert universe_gics.build_gics_db(source, out)["base"] == "source"
+    _patch_fetches(monkeypatch)
+    with caplog.at_level("INFO"):
+        assert universe_gics.build_gics_db(source, out)["base"] == "out"
+    assert "ignored --source" in caplog.text
+
+
+# ---------------------------------------------------------------------
+# CLI layer (cli/pricing_cli.py universe-gics)
+# ---------------------------------------------------------------------
+
+
+def _load_pricing_cli():
+    path = Path(__file__).resolve().parents[2] / "cli" / "pricing_cli.py"
+    spec = importlib.util.spec_from_file_location("pricing_cli_under_test", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _cli_args(source: Path, out: Path):
+    return argparse.Namespace(source=str(source), out=str(out))
+
+
+def test_cli_universe_gics_exits_1_on_a_placeholder_contact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "out_gics.db"
+    monkeypatch.setenv("EMAIL", "your.email@example.com")
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(_source_db(tmp_path), out))
+    assert exc.value.code == 1
+    assert "real contact" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_universe_gics_exits_1_on_a_missing_source(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "out_gics.db"
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(tmp_path / "nope.db", out))
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_cli_universe_gics_exits_1_on_a_protected_out_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cli = _load_pricing_cli()
+    out = tmp_path / "universe_history.db"
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_universe_gics(_cli_args(_source_db(tmp_path), out))
+    assert exc.value.code == 1
+    assert "universe_history.db" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_resume_logs_info_when_filled_and_warning_when_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    universe_gics.build_gics_db(source, out)
+
+    with caplog.at_level("INFO"):
+        universe_gics.build_gics_db(source, out)
+    resumed = [r for r in caplog.records if "ignored --source" in r.getMessage()]
+    assert [r.levelname for r in resumed] == ["INFO"]
+
+    # Make one stint pending again on the existing --out: now it must warn.
+    db = queries.connect(out)
+    db.execute("UPDATE universe_membership SET gics_revision_id = NULL WHERE symbol = 'GPS'")
+    db.commit()
+    db.close()
+    caplog.clear()
+    _patch_fetches(monkeypatch)
+    with caplog.at_level("INFO"):
+        universe_gics.build_gics_db(source, out)
+    resumed = [r for r in caplog.records if "ignored --source" in r.getMessage()]
+    assert [r.levelname for r in resumed] == ["WARNING"]
