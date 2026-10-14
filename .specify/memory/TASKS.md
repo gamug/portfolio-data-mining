@@ -86,8 +86,15 @@ unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
       by hand on a small subset to validate that judge. Commit the sample
       (pairs + labels) so it can be reused: `portfolio-nlp` T-117 reuses it,
       and T-056's retention measurement is computed on the same pairs rather
-      than a second set. Report; the rule is chosen from this, not assumed.
-      → step 1.
+      than a second set. **Dependency:** the judge is `portfolio-nlp` T-130
+      (not built yet; portfolio-nlp PR #102), the critical-path item for both
+      repos — order: its T-130 → this T-054. **Fallback so this work item is
+      never gated on that repo:** if T-130 has not landed when T-054 is ready
+      to start, hand-label the sample here (a smaller sample, re-labeled with
+      the judge later to validate it). The committed file carries `url`,
+      `ticker`, `company`, `match_mode`, `label` (about the company: yes/no)
+      and `labeled_by` (judge/hand), which is what `portfolio-nlp` T-117
+      consumes. Report; the rule is chosen from this, not assumed. → step 1.
 - [ ] **T-055** Record the matching-rule design (explicit ticker forms only,
       full normalized name + curated aliases, common-word stoplist for a lone
       first word; no new dependency) with the T-054 numbers behind it, and get

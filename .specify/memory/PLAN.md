@@ -578,7 +578,9 @@ tagged company; that is a small-sample estimate, not a measurement.
    splitting ticker-only / name-token-only / both matches, and also covers the
    `ddg` strategy (18,506 rows) not broken out above. Estimate the error rate
    of each mode on **one shared labeled sample** (stratified by match mode,
-   labeled with `portfolio-nlp`'s relevance judge, spot-checked by hand, reused
+   labeled with `portfolio-nlp`'s relevance judge (its T-130, built first; if it
+   slips, hand-labeled here so this item is never gated on that repo),
+   spot-checked by hand, reused
    by that repo's own measurement and by this item's retention check), so the
    fix is judged on evidence and nothing is labeled twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
