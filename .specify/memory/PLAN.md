@@ -591,7 +591,9 @@ and paces serial requests (Technological stock #6).
   sha1 stays `fddbdccb71ab4243a0fb76b3027774474d352b99`.
 - `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` clean.
 
-## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp`)
+## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-059)
+
+**Status: open. `T-053`–`T-059` pending; `T-053` first.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
