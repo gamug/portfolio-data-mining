@@ -114,7 +114,11 @@ after the fact; IDs are never reused, so they stay reserved.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
-      T-054 numbers behind it, and get it approved before coding. The same
+      T-054 numbers behind it, and get it approved before coding. Decide, with the
+      per-path rates in `PLAN.md` (`ddg` 8% wrong, `sitemap` 74%): use the
+      company-name search query as evidence for `ddg` rows (and record the query
+      per row), and attribute each `sitemap` article once instead of testing
+      every company against every URL. The same
       decision sets the **measurable targets** — a maximum wrong-company rate
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`

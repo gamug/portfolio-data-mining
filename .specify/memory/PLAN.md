@@ -709,6 +709,18 @@ against that. The sample's size (8 per small stratum) gives wide intervals;
 treat the rates as the evidence for choosing a rule, and re-measure on the same
 pairs after `T-056`.
 
+*By discovery path* (the maintainer's observation that `ddg` searches by the
+company, so the query is already evidence): `ddg` rows (4% of the corpus) are
+wrong **8%** of the time (2–14%), `sitemap` rows (96%) **74%** (62–87%). The
+`sitemap` strategy downloads every article URL of the site regardless of company
+and then tests each of the ~500 companies against each URL, so it has no query
+to lean on; the ticker-or-first-word filter is the *only* evidence there. Inside
+`ddg` the company-name queries are reliable (name-only 0 wrong of 48, ticker and
+name both 1 of 45) but queries by a bare English-word ticker are not
+(`site:cnbc.com A 2024`: 30 of 30 wrong), and the same loose filter is also
+applied on top of the search results. `urls.db` records `source` but not which
+query found a row.
+
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
 tagged company; that is a small-sample estimate, not a measurement.
@@ -726,7 +738,20 @@ tagged company; that is a small-sample estimate, not a measurement.
    retention check), so the fix is judged on evidence and nothing is labeled
    twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
-   Direction, to be confirmed against step 1's data:
+   Design options T-055 must decide between or combine, given the per-path
+   rates above:
+   - **Provenance for `ddg`**: treat a hit returned for a *company-name* query
+     as evidence for that company (it is where the search engine did the
+     matching), stop issuing bare-ticker queries when the ticker is an ordinary
+     word, and record the query that found each row (new column, additive,
+     migrated like `gics_*`) so later steps can weight rows by how they were
+     found.
+   - **Attribute once per article for `sitemap`**: the URL set is
+     company-independent, so decide for each article which company (if any) it
+     is about, from the full normalized name, explicit ticker forms, and the
+     title/body when fetched, instead of testing every company against every
+     URL. This is where ~96% of the corpus and ~all the wrong tags are.
+   Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short
      symbol, and never counts against a lowercase URL slug at all; it counts
      only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an
