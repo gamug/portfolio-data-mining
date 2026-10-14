@@ -64,6 +64,48 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
+## Work item 9 — Stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp` T-128)
+
+Requested by `portfolio-nlp` (its Work item 15, decision D3 = fix at the
+source, 2026-10-14): the discovery matcher `BaseConnector._company_pattern`
+accepts a ticker or the *first word* of the company name appearing anywhere in
+a URL slug or title, so tickers that are English words (`A`, `ON`, `IT`,
+`ARE`, …) and generic first words (`Trade`, `Bank`, `First`, `Dollar`, …) tag
+unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
+
+- [ ] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
+      reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
+      strategy/source)`: ticker-only vs name-token-only vs both matches, the
+      eight English-word tickers, the generic-first-word companies, and the
+      `ddg` rows not yet broken out. → step 1.
+- [ ] **T-054** Measure each failure mode's real error rate on a hand-labeled
+      sample (ticker-only matches; name-token-only matches, including
+      legitimate ones such as Apple/Amazon), plus a labeled set of
+      known-correct pairs to measure the new rule's retention against. Report;
+      the rule is chosen from this, not assumed. → step 1.
+- [ ] **T-055** Record the matching-rule design (explicit ticker forms only,
+      full normalized name + curated aliases, common-word stoplist for a lone
+      first word; no new dependency) with the T-054 numbers behind it, and get
+      it approved before coding. → step 2.
+- [ ] **T-056** Implement the rule in `_company_pattern` /
+      `url_matches_company`, rewrite the base-class docstring postcondition,
+      and add hermetic parametrized tests (ambiguous tickers, generic first
+      words, alias cases, must-still-match regressions). No `BaseConnector`
+      signature change. → step 3.
+- [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
+      ticker and source; count URLs also tagged to a correct ticker), then the
+      real run with a restorable backup and a reversible representation
+      (quarantine over delete) that `portfolio-nlp`'s pending queries
+      (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude —
+      agree the shape with that repo first. → step 4.
+- [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready
+      (unblocks its Work item 15 development and its re-measurement on the
+      cleaned data); close `portfolio-nlp` `T-128`. → step 5.
+- [ ] **T-059** Close-out: `SPEC.md` §13 item 10 / §14 annotated,
+      `docs/modules/news-collector.md` updated, both architecture artifacts
+      reconciled (never renamed), then move this work item to `CHANGELOG.md`
+      (constitution AI behavior #12). → acceptance criteria.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -72,6 +114,9 @@ Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 202
 Work item 7, `T-044`, closed 2026-10-09).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
+
+Work item 9 (`T-053`–`T-059`, wrong-company tagging, requested by `portfolio-nlp`) is open;
+`portfolio-nlp` waits on it before starting its own category-stage development.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

@@ -468,6 +468,19 @@ treating a related FR/NR as done:
    or empty the corporate-actions endpoint. FR-012 surfaces that as a `warning`
    with empty lists rather than a crash, but a consumer can't tell "no actions
    in range" from "Yahoo failed" without reading the `warning`.
+10. **Discovery tags articles with the wrong company.**
+    `BaseConnector._company_pattern` accepts a ticker **or the first word of
+    the company name** anywhere in a URL slug or title, and a hyphen counts as
+    a word boundary, so tickers that are ordinary words (`A`, `ON`, `IT`, `ARE`,
+    `TECH`, `HAS`, `NOW`, `ALL`) and companies reduced to a generic first
+    word (`Trade`, `Bank`, `First`, `Dollar`, `Best`, `Global`, `News`) match
+    unrelated articles. On `urls.db` (2026-10-14), 49.8% of the 462,826
+    sitemap-discovered rows match through the ticker alone and 48.7% through
+    the company first word alone; the eight word-like tickers account for
+    182,468 rows. The name-token mode's error rate is unmeasured. Surfaced by
+    `portfolio-nlp`, whose category stage labels 42.7% of its corpus `other`
+    largely because of it. Not accepted: tracked as `PLAN.md` Work item 9,
+    `TASKS.md` T-053–T-059 (requested by `portfolio-nlp` T-128).
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)
 
@@ -531,6 +544,7 @@ boundary of what this project is, not a gap someone forgot to close:
 | 7 — Windows-only `hypothesis` flake | Accepted as a known, non-blocking, platform-specific flake | It started failing on the actual CI/dev platform, not just Windows |
 | 8 — Turso/libSQL prototype (PR #12) closed unmerged | Accepted; deliberate choice of the `Dialect` seam over a bespoke shim | — |
 | 9 — `yfinance` is unofficial/best-effort | Accepted; free, keyless, and already a dependency — a paid vendor feed is a separate cost/access decision, not this project's scope | A consumer needed guaranteed, auditable corporate-actions data rather than best-effort exact ex-dates |
+| 10 — discovery tags articles with the wrong company | **New, active work (2026-10-14)** — not accepted; see `PLAN.md` Work item 9 | — (already in motion) |
 
 Item 5 is the one item on this list worth doing regardless of scope — it's
 CI-plumbing, not new infrastructure, and it's the same category of "cheap,

@@ -529,10 +529,115 @@ Downstream analysis needs the filer CIK and period of report directly on filing-
 - `{ticker}` path parameter accepting both ticker and CIK documented across OpenAPI schemas and `SPEC.md`.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+## Work item 9 — News collector: stop tagging articles with the wrong company (code + data, origin: `portfolio-nlp`)
+
+**Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
+2026-10-14). That repo's category stage labels 42.7% of 459,112 articles
+`other`, and investigating why showed that a large share of the corpus is
+attached to a company it is not about. Examples from `urls.db`
+(`discovered_urls`): ticker `A` (Agilent) on
+`cnbc.com/.../china-has-best-week-in-a-month.html`; `ON` (ON Semiconductor)
+on `.../trusts-trump-on-trade-needs-quick-us-china-deal.html`; `A` on
+`.../mortgages-are-now-a-banks-best-friend.html`. Nothing in those articles
+concerns the company they are filed under.
+
+*Root cause, confirmed in code (not inferred)*: `BaseConnector._company_pattern`
+(`src/news_collector/connectors/base.py`) builds
+`\b(<ticker>|<first word of company name>)\b`, case-insensitive, and
+`url_matches_company` applies it to the URL and title. It is used by all four
+connectors that implement the check (`cnbc`, `ft`, `investing`,
+`yahoo_finance`) and by both discovery strategies (`strategies/sitemap.py`,
+`strategies/ddg.py`). The base class documents this as intended
+("Matching on ticker OR significant company name token is sufficient"). Two
+failure modes follow from it:
+
+1. **Ticker that is an ordinary word.** A hyphen is a regex word boundary, so
+   the slug `in-a-month` matches ticker `A`, `trusts-trump-on-trade` matches
+   `ON`. Reproducing the rule on the 462,826 sitemap-discovered rows in
+   `urls.db`: 49.8% match through the ticker alone, 48.7% through the company
+   first word alone, 1.5% through both. The tickers `ON` (66,489 rows),
+   `A` (56,121), `ARE` (21,117), `IT` (11,798), `TECH` (7,812), `HAS`
+   (7,631), `NOW` (6,696) and `ALL` (4,804) are matched through the ticker
+   alone in 97–100% of their rows — 182,468 rows between them.
+2. **Company name reduced to a generic first word.** `Trade Desk` → `Trade`
+   (TTD, 11,627 rows, 100% matched through that word alone), `Bank of America`
+   → `Bank` (BAC, 10,201), `First Solar` → `First` (FSLR, 10,193),
+   `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each), `Best Buy` →
+   `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
+   matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
+   mode's error rate is **unmeasured** — measuring it is T-054.
+
+Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
+hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
+tagged company; that is a small-sample estimate, not a measurement.
+
+**Approach** (measure first; nothing is deleted before a dry run):
+
+1. **Measure.** Commit a rerunnable audit (`scripts/`, read-only) that
+   reproduces the counts above from `urls.db` per `(ticker, strategy/source)`,
+   splitting ticker-only / name-token-only / both matches, and also covers the
+   `ddg` strategy (18,506 rows) not broken out above. Estimate the error rate
+   of each mode on a hand-labeled sample so the fix is judged on evidence.
+2. **Design the stricter rule** (decision recorded in T-055 before coding).
+   Direction, to be confirmed against step 1's data:
+   - A bare ticker never counts when it is an English word or a very short
+     symbol, and never counts against a lowercase URL slug at all; it counts
+     only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an
+     uppercase token in the title.
+   - The company name counts as the **full normalized name** (corporate
+     suffixes stripped, hyphens treated as spaces), plus a small curated alias
+     list for brand names ("Meta" for Meta Platforms, "Berkshire" for
+     Berkshire Hathaway, "Alphabet"/"Google"); a first word alone counts only
+     when it is distinctive (not on a common-word stoplist). Adding a
+     word-frequency library would be a constitution-level dependency change
+     (Technological stock #7) — prefer a hand-kept stoplist.
+   - Recall matters too: the rule must keep what was correctly tagged. Report
+     the retained share on a hand-labeled set of known-correct pairs.
+3. **Implement** in `_company_pattern` / `url_matches_company`, keeping the
+   `BaseConnector` contract (connectors still delegate to it), and rewrite the
+   docstring postcondition that currently blesses "ticker OR first word".
+   Hermetic parametrized tests: ambiguous tickers (`A`, `ON`, `IT`, `ARE`),
+   generic first words, alias cases, and regression cases for pairs that must
+   still match.
+4. **Re-tag the existing data (`urls.db`).** Apply the new rule to
+   `discovered_urls` / `articles` (481,332 rows each) as a dry run on a copy
+   first, reporting how many `(url, ticker)` pairs would be removed, per
+   ticker. Pairs are unique on `(url, ticker)`, so a URL tagged to the wrong
+   company may also be tagged to the right one by another ticker's discovery;
+   count that case. Prefer a reversible quarantine over a delete. Whatever
+   the mechanism, **`portfolio-nlp` reads `articles` and only filters on
+   `fetch_status = 'ok'` plus a non-empty `body_text`**, so the chosen
+   representation must make wrong-company rows disappear from what it
+   selects, not merely carry a flag it does not read; agree the shape with
+   that repo before running the patch (the ticker linkage is the cross-repo
+   contract here).
+5. **Hand off.** Tell `portfolio-nlp` when the corrected corpus is available:
+   its Work item 15 development (the relevance gate, calibration, and the
+   full re-classification) starts after this item, and its measurements are
+   re-taken on the cleaned corpus.
+
+**Acceptance criteria**:
+
+- The audit reproduces the counts above from `urls.db`, and the error rate of
+  both failure modes is measured (not assumed) before the rule is chosen.
+- The new matcher rejects the documented examples (`A` on `in-a-month`, `ON`
+  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence) and
+  keeps known-correct pairs at a recorded retention rate, with no
+  `BaseConnector` signature change.
+- The re-tag dry run reports before/after counts per ticker and per source,
+  and the real run leaves a restorable backup.
+- `portfolio-nlp` confirms wrong-company rows no longer reach its pending
+  queries.
+- `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
+  item 10, `docs/modules/news-collector.md` and the architecture artifacts
+  reconciled (constitution AI behavior #11, never renamed).
+
 ## Sequencing
 
 Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 is open and active.
+Work item 9 (wrong-company tagging, requested by `portfolio-nlp`) is open; `portfolio-nlp`'s
+Work item 15 development waits on it, so it goes first.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
