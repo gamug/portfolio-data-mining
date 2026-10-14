@@ -531,7 +531,7 @@ Downstream analysis needs the filer CIK and period of report directly on filing-
 
 ## Work item 9 — GICS sector/sub-industry for the S&P 500 leaver stints (code + data, T-046)
 
-**Status: in progress. `T-046` active.**
+**Status: closed 2026-10-14 (PR #51, merged `9006cf6`); task moved to `CHANGELOG.md`.**
 
 **Why**: `portfolio-financial-analysis` (its `T-153` part 3, blocking its `T-100`
 full-universe run) needs the leaver stints classified. The delivered
@@ -592,9 +592,9 @@ and paces serial requests (Technological stock #6).
 
 ## Sequencing
 
-Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
-items 1–2 stay reverted/on hold at the maintainer's prior request. Work items 8 (`T-045`)
-and 9 (`T-046`) are open and active.
+Work items 3, 4, 5, 6, 7 and 9 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
+items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
+open and active; Work item 9 (`T-046`) is closed (task in `CHANGELOG.md`).
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

@@ -322,3 +322,45 @@ Origin: `portfolio-financial-analysis` `T-132(a)` (market cap from a point-in-ti
   Dates verified: 2018-01-02 (504), 2022-01-03 (505), 2024-01-02 (503), 2026-10-01 (504).
   Shared pilot file `/workspaces/thesis/data/universe.db` unchanged (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`).
 
+## Work item 9 — GICS sector/sub-industry for the S&P 500 leaver stints (T-046)
+
+**Closed 2026-10-14 (`T-046`, the only task; PR #51, merged `9006cf6`).**
+
+Requested by `portfolio-financial-analysis` (its `T-153` part 3, blocking its
+`T-100` full-universe run): the delivered `universe_history.db` has
+`gics_sector`/`gics_sub_industry` filled for the 503 `live_snapshot` rows and
+empty for every `wikipedia_changes_backfill` row, so no company that left the
+index carries a classification. Fill the 90 leaver stints (`valid_to >=
+2022-01-01`, CIK with no open stint) from the revision history of Wikipedia's
+"List of S&P 500 companies" page, and record each label's revision citation.
+Full request: `portfolio-financial-analysis`'s
+`docs/upstream_requests/data_mining_leaver_gics.md`.
+
+- [x] **T-046** Add `src/data_mining/universe_gics.py` (MediaWiki revision-list +
+      content fetch, header-aware constituents parser, walk-back picker bounded by
+      `valid_from`, report-only stability check) and the `queries` citation columns
+      (`gics_revision_id`/`gics_revision_timestamp`) with `fetch_gics_targets`/
+      `update_gics` (a stint-keyed UPDATE, never `write_intervals`); wire the
+      `universe-gics` CLI subcommand (refuses `--out == --source` and the two
+      canonical DB names). Hermetic tests in `tests/data_mining/test_universe_gics.py`;
+      update `docs/modules/data-mining.md` and `SPEC.md` FR-013/NR-004/§5/§10. Build
+      the new `/workspaces/thesis/data/universe_history_gics.db` and report its sha1,
+      the 90-row fill table, the unfilled list, and the full-row diff vs the source.
+      → `PLAN.md` Work item 9. **Done 2026-10-14** (PR #51): **87 of 90** stints
+      filled, each with its revision id + timestamp; **3 unfilled** and reported —
+      MBC (MasterBrand, `cik_not_found`: the page never carried a constituents row
+      for CIK `0001941365`), FTRE/PHIN (`no revision dated within valid_from..valid_to`:
+      2-day spin-off stints with no page revision in their window). Stability check:
+      **87 comparable, 0 differences** (all 87 had a same-CIK+symbol row ≥30 days
+      older). Parser: **225 revisions parsed, 0 rows dropped**; the builder raises on
+      a non-zero drop count and records each skipped walk-back candidate's reason.
+      New file `/workspaces/thesis/data/universe_history_gics.db` sha1
+      `db5b16290b03a191b55215e8b98fc893a93f0e5b`; source `universe_history.db`
+      (`fddbdccb71ab4243a0fb76b3027774474d352b99`) and `universe.db`
+      (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`) unchanged. Full-row diff of all
+      894 rows: only the four GICS columns changed, only on the 87 filled target rows;
+      0 `live_snapshot` rows touched. Review follow-up (PR #51 second commit
+      `512505a`): the read path no longer migrates (columns added only to the
+      builder's output copy via `migrate_gics_columns`; `_row_to_public_dict` returns
+      `None` for an old-schema file), and the parser-drop count is enforced. 317 tests.
+
