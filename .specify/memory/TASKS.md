@@ -20,7 +20,7 @@ renumber; mark a cancelled/superseded task in place instead.
 - [ ] **T-002** Add the job steps: checkout → `astral-sh/setup-uv` (pin
       Python 3.12) → `uv sync --group dev` → `uv run ruff check .` →
       `uv run ruff format --check .` → `uv run mypy --config-file=
-      .code_quality/mypy.ini src apps cli` → `uv run pytest -q`. → step 2.
+      .code_quality/mypy.ini src apps cli scripts` → `uv run pytest -q`. → step 2.
 - [ ] **T-003** Verify locally first (so the first real CI run isn't a
       surprise): run the same four commands from a clean `uv sync --group
       dev` and confirm all pass. → `PLAN.md` Work item 1 acceptance,
@@ -78,7 +78,7 @@ cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
 after the fact; IDs are never reused, so they stay reserved.
 
-- [ ] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
+- [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
       connector, strategy/source)`: ticker-only vs name-token-only vs both
       matches, the eight English-word tickers, the generic-first-word
@@ -86,6 +86,10 @@ after the fact; IDs are never reused, so they stay reserved.
       figure quoted in `PLAN.md`/`SPEC.md` §13 item 10 per connector, and
       count separately the rows only the substring shortcut
       (`ticker.lower() in url.lower()`, failure mode 3) would accept. → step 1.
+      Done: `scripts/audit_ticker_tagging.py` (every breakdown is derived from
+      `(ticker, company, domain, source)` cells, so the word-ticker and
+      generic-word tables are split per connector/source); results in
+      `PLAN.md` Work item 10.
 - [ ] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker

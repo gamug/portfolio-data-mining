@@ -98,7 +98,9 @@ stack actually pinned in `pyproject.toml`.
    pre-existing argparse CLI rather than reimplementing it.
 4. **Tests mirror `src/` under `tests/<package>/`** (`tests/news_collector`,
    `tests/extractor`, `tests/pricing`, `tests/sec_edgar`,
-   `tests/data_mining`). `pytest.ini`'s `pythonpath = src .` is what makes
+   `tests/data_mining`; `tests/scripts` for the one-off analysis scripts under
+   `scripts/`, which are importable only via `importlib`, not as a package).
+   `pytest.ini`'s `pythonpath = src .` is what makes
    both `import news_collector` and `import apps.pricing_api` work in
    tests — don't add `sys.path` hacks inside test files to route around it.
    Model-free acquisition code is hermetic via mocking the outbound
@@ -298,7 +300,7 @@ uv run pytest tests/<package> -q            # one module's tests
 
 uv run ruff check .                         # lint (config: .code_quality/ruff.toml via root pointer)
 uv run ruff format --check .                # format check
-uv run mypy --config-file=.code_quality/mypy.ini src apps cli   # types
+uv run mypy --config-file=.code_quality/mypy.ini src apps cli scripts   # types
 
 uv run pre-commit run --all-files           # all of the above hooks, plus hygiene checks
 ```

@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-059)
 
-**Status: open. `T-053`–`T-059` pending; `T-053` first.**
+**Status: open. `T-053` done; `T-054`–`T-059` pending; `T-054` first.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -628,8 +628,8 @@ significant company name token is sufficient"). Three failure modes follow:
 2. **Company name reduced to a generic first word.** `Trade Desk` → `Trade`
    (TTD, 11,627 rows, 100% matched through that word alone), `Bank of America`
    → `Bank` (BAC, 10,201), `First Solar` → `First` (FSLR, 10,193),
-   `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each), `Best Buy` →
-   `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
+   `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each; audited: DG
+   8,554 and DLTR 8,564 name-only), `Best Buy` → `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
    matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
    mode's error rate is **unmeasured** — measuring it is T-054.
 3. **Raw substring shortcut in four connectors.** `nasdaq`, `seeking_alpha`,
@@ -641,6 +641,35 @@ significant company name token is sufficient"). Three failure modes follow:
    **unmeasured**; the sizing figures above were reproduced with the
    word-boundary regex only, so T-053 recomputes every figure per connector
    (and counts the rows only the shortcut accepts) before they are relied on.
+
+**T-053 audit results** (`scripts/audit_ticker_tagging.py`, read-only, reproduces
+every figure below from `urls.db`; 481,332 `discovered_urls` rows, 0 rejected by
+the current rule). Word-boundary matches per `(domain, source)`:
+
+| domain / source | rows | both | ticker only | name only | substring shortcut only |
+|---|---:|---:|---:|---:|---:|
+| cnbc.com / sitemap | 462,826 | 6,888 | 230,448 (49.8%) | 225,490 (48.7%) | n/a |
+| cnbc.com / ddg | 2,218 | 599 | 856 | 763 | n/a |
+| seekingalpha.com / ddg | 10,530 | 4,881 | 806 | 4,094 | 749 (7.1%) |
+| finance.yahoo.com / ddg | 4,100 | 2,169 | 1,523 | 338 | 70 (1.7%) |
+| ft.com / ddg | 776 | 108 | 195 | 473 | n/a |
+| investing.com / ddg | 723 | 60 | 79 | 584 | n/a |
+| nasdaq.com / ddg | 158 | 79 | 55 | 21 | 3 |
+| stocktwits.com / ddg | 1 | 0 | 0 | 0 | 1 |
+
+The earlier figures reproduce exactly (`ON` 66,489 ticker-only rows, `A`
+56,121, `ARE` 21,117, `IT` 11,798, `TECH` 7,812, `HAS` 7,631, `NOW` 6,696,
+`ALL` 4,804). Findings that change the picture: (a) the problem is almost
+entirely `cnbc.com` sitemap rows (96.2% of the corpus); (b) the substring
+shortcut (failure mode 3) accounts for 823 stored rows (0.17%), all `ddg`,
+because only the shortcut connectors' `ddg` rows exist, but its *potential*
+reach is larger for any future sitemap run on those connectors, so T-056 still
+removes it; (c) the audit counts only rows that were stored, so it cannot see
+candidates the rule rejected. Generic-first-word companies matched by the name
+token alone in over 90% of rows are listed by the script (`Dollar`, `American`,
+`Trade`, `Bank`, `First`, `News`, `Best`, `Global`, …); legitimate brand tokens
+(`Apple`, `Amazon`, `Microsoft`, `Netflix`) also appear there, so that list is
+a candidate set for T-054, not a verdict.
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
