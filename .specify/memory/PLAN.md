@@ -577,7 +577,10 @@ tagged company; that is a small-sample estimate, not a measurement.
    reproduces the counts above from `urls.db` per `(ticker, strategy/source)`,
    splitting ticker-only / name-token-only / both matches, and also covers the
    `ddg` strategy (18,506 rows) not broken out above. Estimate the error rate
-   of each mode on a hand-labeled sample so the fix is judged on evidence.
+   of each mode on **one shared labeled sample** (stratified by match mode,
+   labeled with `portfolio-nlp`'s relevance judge, spot-checked by hand, reused
+   by that repo's own measurement and by this item's retention check), so the
+   fix is judged on evidence and nothing is labeled twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
    Direction, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short
@@ -611,7 +614,9 @@ tagged company; that is a small-sample estimate, not a measurement.
    selects, not merely carry a flag it does not read; agree the shape with
    that repo before running the patch (the ticker linkage is the cross-repo
    contract here).
-5. **Hand off.** Tell `portfolio-nlp` when the corrected corpus is available:
+5. **Hand off.** Tell `portfolio-nlp` when the corrected corpus is available,
+   together with the list of article ids the re-tag removed (that repo has to
+   clean its existing results for them, `sector_summary` included):
    its Work item 15 development (the relevance gate, calibration, and the
    full re-classification) starts after this item, and its measurements are
    re-taken on the cleaned corpus.

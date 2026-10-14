@@ -78,11 +78,16 @@ unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
       strategy/source)`: ticker-only vs name-token-only vs both matches, the
       eight English-word tickers, the generic-first-word companies, and the
       `ddg` rows not yet broken out. → step 1.
-- [ ] **T-054** Measure each failure mode's real error rate on a hand-labeled
-      sample (ticker-only matches; name-token-only matches, including
-      legitimate ones such as Apple/Amazon), plus a labeled set of
-      known-correct pairs to measure the new rule's retention against. Report;
-      the rule is chosen from this, not assumed. → step 1.
+- [ ] **T-054** Measure each failure mode's real error rate. Build **one**
+      shared labeled sample of `(url, ticker)` pairs from `urls.db`,
+      stratified by match mode (ticker-only / name-token-only / both) and
+      including known-correct pairs; it is labeled with `portfolio-nlp`'s
+      relevance judge (its T-130; this repo has no ML/judge) and spot-checked
+      by hand on a small subset to validate that judge. Commit the sample
+      (pairs + labels) so it can be reused: `portfolio-nlp` T-117 reuses it,
+      and T-056's retention measurement is computed on the same pairs rather
+      than a second set. Report; the rule is chosen from this, not assumed.
+      → step 1.
 - [ ] **T-055** Record the matching-rule design (explicit ticker forms only,
       full normalized name + curated aliases, common-word stoplist for a lone
       first word; no new dependency) with the T-054 numbers behind it, and get
@@ -97,8 +102,11 @@ unrelated articles. → `PLAN.md` Work item 9, `SPEC.md` §13 item 10.
       real run with a restorable backup and a reversible representation
       (quarantine over delete) that `portfolio-nlp`'s pending queries
       (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude —
-      agree the shape with that repo first. → step 4.
-- [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready
+      agree the shape with that repo first. The run also writes the list of
+      removed `(url, ticker)` / article ids, which T-058 hands over. → step 4.
+- [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
+      list of removed article ids (it needs them to clean its existing results
+      and `sector_summary` — its T-131)
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 / §14 annotated,
