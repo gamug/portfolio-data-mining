@@ -120,6 +120,7 @@ or time into portfolio-level signals (`financial-analysis` and
 | **FR-011** | `cli/*.py` mirrors each service's API routes 1:1 as argparse subcommands and prints JSON to stdout. | Every non-infrastructure route (excluding `/health`, `/docs`) in `pricing_api.py`/`sec_edgar_api.py` has a corresponding `cli/pricing_cli.py`/`cli/sec_edgar_cli.py` subcommand; `news_collector_cli.py`/`news_crawler_cli.py` wrap each module's pre-existing CLI rather than reimplementing it. |
 | **FR-012** | `pricing` exposes per-ticker corporate actions — dividends (cash/share) and splits (ratio) with exact ex-dates — over `GET /pricing/{ticker}/actions?start_date=&end_date=` and a matching `actions` CLI subcommand, sourced from `yfinance`, writing nothing to any database. An empty range is HTTP 200 with empty lists, never a 404; an upstream failure is empty lists plus a `warning`, never a raised exception (FR-003's contract). Moved here from `portfolio-financial-analysis`, whose `quant` package probes exactly this route. | `GET /pricing/XOM/actions` over a range containing known ex-dates returns a non-empty `dividends` list with `source: "yfinance"`; the `1900-01-01`–`1900-01-02` probe range returns 200 with empty lists; `start_date > end_date` returns 400; mocked-`yf.Ticker` tests in `tests/pricing/test_fetcher.py` cover in-range/out-of-range/empty/failure cases with no network (NR-004). |
 | **FR-013** | `data_mining.universe_gics` fills the GICS sector/sub-industry for the S&P 500 leaver stints — every `universe_membership` stint with `valid_to >= 2022-01-01` whose CIK has no open stint (90 stints / 86 CIKs on the delivered build) — from the revision history of Wikipedia's "List of S&P 500 companies" page, and records each label's citation in two additive `universe_membership` columns (`gics_revision_id`, `gics_revision_timestamp`). For each stint it uses the last revision dated on or before `valid_to` that still lists the company, matched by CIK **and** symbol (CIK alone is not unique — Discovery's DISCA/DISCK share one, later reused by WBD); the label is copied exactly as written (a pre-2023-03-17 label is never translated into today's GICS structure), and a stint that cannot be matched is left empty and reported with its reason. Run by the explicit `universe-gics` CLI subcommand after `universe-backfill`, writing to an explicit copy — never the source or `data/universe.db`; idempotent (an existing `--out` is the starting point and a stint already carrying a citation is skipped, so re-running a filled file leaves it unchanged), built atomically via a temporary sibling so a failed run leaves no partial file, and self-identifying to Wikimedia with the real `NAME`/`EMAIL` env vars (it refuses to run before copying anything when either is unset, still the `.env.example` placeholder, or an `example.com`/`.org`/`.net` address). The report carries `base` (`"out"` when an existing `--out` was resumed, else `"source"`), and resuming over a `--source` with stints still pending logs a warning. The two citation columns are added to that copy only (`queries.migrate_gics_columns`), never on open: the read path (`queries.connect`, the gateway's `/universe` route) never ALTERs the file it opens, and `_row_to_public_dict` reports the columns as `None` for a file that predates them. A row the parser cannot map (cell count != header) is counted, and the builder fails loudly rather than treat it as "company not listed". | On the delivered `universe_history.db`, all 90 target stints carry `gics_sector`/`gics_sub_industry` plus a revision id/timestamp, or appear on the unfilled list with a reason; re-running `universe-gics` on the delivered file yields a byte-identical file (no row changes; once every target is filled it also makes no network call); the 503 `live_snapshot` rows and every non-target column are unchanged (only the four GICS columns change, only on the target rows); opening an old-schema file through the read path leaves it byte-identical (sha1 before == after) and yields `None` citation fields; a parser drop raises instead of silently emptying a stint. Hermetic tests in `tests/data_mining/test_universe_gics.py` (NR-004). |
+| **FR-014** | *(Planned — `PLAN.md` Work item 10, `T-056`; not yet built. The exact matching rule and the numeric targets below are fixed by `T-055` after the `T-053`/`T-054` measurements, and this row is updated then.)* Company matching during discovery is precise: for each of the seven connectors that implement `url_matches_company` (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`, `stocktwits`, `yahoo_finance`) one shared `BaseConnector` helper decides, with no signature change, and a URL/title is tagged to a company only on evidence about that company: an ordinary-word ticker or a generic first word alone is not enough, and a ticker never matches as a raw URL substring. | Hermetic parametrized tests **per connector** reject `A` on `in-a-month`, `ON` on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence and a ticker as a bare URL substring; on the shared labeled sample (`T-054`) the wrong-company rate is at most **TBD (set in `T-055`)** and retention of known-correct pairs at least **TBD (set in `T-055`)**; the re-tag dry run reports before/after counts per ticker and source (`T-057`); `portfolio-nlp` confirms wrong-company rows no longer reach its pending queries (`T-058`). |
 
 ### 2.4 Non-functional requirements
 
@@ -291,6 +292,9 @@ convenience; each keeps its own `/docs` (FR-010).
   strategies (`src/news_collector/strategies/`) — sitemap crawling or
   DuckDuckGo search — chosen per domain based on what that site actually
   exposes.
+  Whether a URL belongs to a company is decided by each connector's
+  `url_matches_company`; the current rule is known to over-match (§13 item 10)
+  and its replacement is specified in FR-014 (planned, `PLAN.md` Work item 10).
 - **Orchestrated, checkpointed fan-out**: `src/news_collector/orchestrator.py`
   fans discovery out across the ticker × domain matrix and records a
   `discovery_progress` row per completed `(ticker, domain, date-range)`
@@ -476,6 +480,27 @@ treating a related FR/NR as done:
    or empty the corporate-actions endpoint. FR-012 surfaces that as a `warning`
    with empty lists rather than a crash, but a consumer can't tell "no actions
    in range" from "Yahoo failed" without reading the `warning`.
+10. **Discovery tags articles with the wrong company.**
+    `BaseConnector._company_pattern` accepts a ticker **or the first word of
+    the company name** anywhere in a URL slug or title, and a hyphen counts as
+    a word boundary, so tickers that are ordinary words (`A`, `ON`, `IT`, `ARE`,
+    `TECH`, `HAS`, `NOW`, `ALL`) and companies reduced to a generic first
+    word (`Trade`, `Bank`, `First`, `Dollar`, `Best`, `Global`, `News`) match
+    unrelated articles. Seven connectors (`cnbc`, `ft`, `investing`, `nasdaq`,
+    `seeking_alpha`, `stocktwits`, `yahoo_finance`) override
+    `url_matches_company` and use it; four of them (`nasdaq`, `seeking_alpha`,
+    `stocktwits`, `yahoo_finance`) first accept any URL containing the ticker
+    as a raw substring, which is looser still and unmeasured. On `urls.db`
+    (2026-10-14), recomputed with the word-boundary regex only, 49.8% of the
+    462,826 sitemap-discovered rows match through the ticker alone and 48.7%
+    through the company first word alone; the eight word-like tickers account
+    for 182,468 rows. The name-token and substring modes' error rates are
+    unmeasured, and the figures are re-derived per connector in `T-053`.
+    Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
+    corpus `other` largely because of it. **Not accepted — active work**
+    (unlike the accepted items above, and unlike §14's permanent boundaries):
+    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-059 (requested by
+    `portfolio-nlp` T-128), with the requirement in FR-014.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)
 
