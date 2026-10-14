@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-059)
 
-**Status: open. `T-053` done; `T-054` labeled, human spot-check pending; `T-055`–`T-059` pending.**
+**Status: open. `T-053` done; `T-054` built, hand labels pending; `T-055`–`T-059` pending.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -677,12 +677,13 @@ a candidate set for T-054, not a verdict.
 other tickers, plus 20 known-correct candidates (company's full normalized name
 in the URL or title). A pair is `yes` when the tagged company is a subject of
 the article (named and discussed, a roundup section counts), `no` when it is
-another company, a homonym or a passing mention. `portfolio-nlp`'s judge
-(`T-130`) is not built (PR #102 is docs-only), so the fallback applies; **labels
-were assigned by an AI assistant reading title, body excerpt and URL
-(`labeled_by = assistant`, a value added to the `judge`/`hand` contract), and
-8 pairs it could not decide are `unclear` and excluded**. The human spot-check
-the task asks for is still open (see `TASKS.md`).
+another company, a homonym or a passing mention. Labeling is done in this repo
+and does not depend on `portfolio-nlp`. **These first-pass labels were
+assigned by an AI assistant reading title, body excerpt and URL
+(`labeled_by = assistant`), and 8 pairs it could not decide are `unclear` and
+excluded.** The maintainer's own labels (`data/ticker_tagging_manual.csv`,
+merged with `manual-apply`) are still to come and replace these; see
+`TASKS.md`.
 
 | match mode | n | wrong | wrong rate (95%) |
 |---|---:|---:|---:|
@@ -720,12 +721,10 @@ tagged company; that is a small-sample estimate, not a measurement.
    shortcut / name-token-only / both matches, and also covers the `ddg`
    strategy (18,506 rows) not broken out above. Estimate the error rate of
    each mode on **one shared labeled sample** (stratified by connector and
-   those match modes,
-   labeled with `portfolio-nlp`'s relevance judge (its T-130, built first; if it
-   slips, hand-labeled here so this item is never gated on that repo),
-   spot-checked by hand, reused
-   by that repo's own measurement and by this item's retention check), so the
-   fix is judged on evidence and nothing is labeled twice.
+   those match modes, labeled here by hand, with no dependency on
+   `portfolio-nlp`; reused by that repo's own measurement and by this item's
+   retention check), so the fix is judged on evidence and nothing is labeled
+   twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
    Direction, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short

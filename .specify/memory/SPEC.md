@@ -501,7 +501,7 @@ treating a related FR/NR as done:
     sitemap strategy has only run for `cnbc`; its reach on a sitemap run of the
     other connectors is unmeasured). `T-054` then
     measured the error rates on a labeled sample (`data/ticker_tagging_sample.csv`;
-    human spot-check pending): about 72% of tagged pairs are wrong overall,
+    hand labels pending): about 72% of tagged pairs are wrong overall,
     96% for ticker-only matches and 52% for name-token-only matches.
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**

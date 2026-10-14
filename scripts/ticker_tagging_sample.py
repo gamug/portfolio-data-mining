@@ -20,8 +20,20 @@ Label values are ``yes`` (the tagged company is a subject of the article: named
 and discussed, including its own section of a roundup), ``no`` (a different
 company or a homonym, or a passing mention only) or ``unclear`` (the available
 text cannot decide; excluded from every rate and counted in the report).
-``labeled_by`` is ``judge`` (portfolio-nlp's relevance judge), ``hand`` (a
-person) or ``assistant`` (an AI assistant reading the title/body excerpt).
+``labeled_by`` is ``hand`` (the maintainer) or ``assistant`` (an AI assistant
+reading the title/body excerpt, kept in ``assistant_label`` once a human label
+replaces it). This repo labels its own data; nothing here depends on
+``portfolio-nlp`` (data flows from this repo to it, not back).
+
+``manual-export``
+    Write a CSV for a person to label: the sample pairs with title and a body
+    excerpt and an empty ``label`` column (the assistant's labels are left out
+    so they do not bias the person).
+
+``manual-apply``
+    Merge the person's ``label`` values back into the sample (``labeled_by =
+    hand``), keep the assistant's label in ``assistant_label`` and print the
+    agreement between the two.
 
 Usage:
     PYTHONPATH=src uv run python scripts/ticker_tagging_sample.py sample --out PATH
@@ -46,6 +58,7 @@ from audit_ticker_tagging import WORD_TICKERS, classify  # sibling script, same 
 from data_mining.db import connect, resolve_db_path
 
 DEFAULT_SAMPLE = "data/ticker_tagging_sample.csv"
+DEFAULT_MANUAL = "data/ticker_tagging_manual.csv"
 SEED = 54
 BIG_STRATUM_N = 15  # cnbc.com sitemap strata are 96% of the corpus
 SMALL_STRATUM_N = 8
@@ -65,7 +78,11 @@ FIELDS = [
     "stratum_size",
     "label",
     "labeled_by",
+    "assistant_label",
 ]
+MANUAL_FIELDS = ["id", "ticker", "company", "url", "title", "excerpt", "label", "notes"]
+EXCERPT_CHARS = 400
+LABELS = ("yes", "no", "unclear")
 KNOWN_CORRECT = "known_correct_candidate"
 
 _SUFFIX = re.compile(
@@ -135,6 +152,7 @@ def draw(db_path: Path, seed: int = SEED) -> list[dict[str, Any]]:
                 "stratum_size": size,
                 "label": "",
                 "labeled_by": "",
+                "assistant_label": "",
             }
         )
 
@@ -240,43 +258,149 @@ def report(sample_path: Path) -> str:
     return "\n".join(lines)
 
 
+def manual_export(db_path: Path, sample_path: Path, out_path: Path) -> int:
+    """Write the blank labeling sheet (pairs + title + excerpt) and return its row count."""
+    with sample_path.open(newline="", encoding="utf-8") as fh:
+        sample = list(csv.DictReader(fh))
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with (
+        closing(connect(uri, uri=True)) as con,
+        out_path.open("w", newline="", encoding="utf-8") as fh,
+    ):
+        writer = csv.DictWriter(fh, fieldnames=MANUAL_FIELDS)
+        writer.writeheader()
+        for r in sample:
+            row = con.execute(
+                "SELECT COALESCE(NULLIF(d.title, ''), a.title), a.body_text FROM discovered_urls d"
+                " LEFT JOIN articles a ON a.id = d.id WHERE d.id = ?",
+                (r["id"],),
+            ).fetchone()
+            title, body = (row[0], row[1]) if row else ("", "")
+            writer.writerow(
+                {
+                    "id": r["id"],
+                    "ticker": r["ticker"],
+                    "company": r["company"],
+                    "url": r["url"],
+                    "title": title or "",
+                    "excerpt": " ".join((body or "").split())[:EXCERPT_CHARS],
+                    "label": "",
+                    "notes": "",
+                }
+            )
+    return len(sample)
+
+
+def manual_apply(sample_path: Path, manual_path: Path) -> str:
+    """Merge a person's labels into the sample in place; return an agreement summary."""
+    with sample_path.open(newline="", encoding="utf-8") as fh:
+        sample = list(csv.DictReader(fh))
+    with manual_path.open(newline="", encoding="utf-8") as fh:
+        manual = {r["id"]: r["label"].strip().lower() for r in csv.DictReader(fh)}
+    bad = {i: v for i, v in manual.items() if v and v not in LABELS}
+    if bad:
+        msg = f"labels must be yes/no/unclear; got {sorted(set(bad.values()))} for ids {sorted(bad)[:5]}"
+        raise ValueError(msg)
+    applied = agree = 0
+    for r in sample:
+        if not r.get("assistant_label") and r["labeled_by"] == "assistant":
+            r["assistant_label"] = r["label"]
+        human = manual.get(r["id"], "")
+        if not human:
+            continue
+        applied += 1
+        agree += human == r["assistant_label"]
+        r["label"], r["labeled_by"] = human, "hand"
+    with sample_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(sample)
+    both = [r for r in sample if r["labeled_by"] == "hand" and r["assistant_label"]]
+    disagree = [r["id"] for r in both if r["label"] != r["assistant_label"]]
+    pct = f"{agree / applied:.0%}" if applied else "n/a"
+    return (
+        f"applied {applied} hand labels ({len(sample) - applied} rows still unlabeled by hand); "
+        f"agreement with the assistant on {len(both)} rows: {agree}/{applied} ({pct}); "
+        f"disagreeing ids: {disagree[:30]}"
+    )
+
+
+def _fail(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 1
+
+
+def _cmd_sample(args: argparse.Namespace) -> int:
+    db = Path(args.db or resolve_db_path())
+    if not db.is_file():
+        return _fail(f"{db} not found")
+    rows = draw(db, args.seed)
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"wrote {len(rows)} rows to {out}")
+    return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    path = Path(args.sample)
+    if not path.is_file():
+        return _fail(f"{path} not found")
+    try:
+        print(report(path))
+    except ValueError as exc:
+        return _fail(str(exc))
+    return 0
+
+
+def _cmd_manual_export(args: argparse.Namespace) -> int:
+    db = Path(args.db or resolve_db_path())
+    if not db.is_file() or not Path(args.sample).is_file():
+        return _fail("urls.db or the sample CSV not found")
+    print(f"wrote {manual_export(db, Path(args.sample), Path(args.out))} rows to {args.out}")
+    return 0
+
+
+def _cmd_manual_apply(args: argparse.Namespace) -> int:
+    if not Path(args.sample).is_file() or not Path(args.manual).is_file():
+        return _fail("sample or manual CSV not found")
+    try:
+        print(manual_apply(Path(args.sample), Path(args.manual)))
+    except ValueError as exc:
+        return _fail(str(exc))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
-    p_sample = sub.add_parser("sample", help="draw the stratified sample")
-    p_sample.add_argument("--db", default=None, help="path to urls.db (default: $DATABASE_URL)")
-    p_sample.add_argument("--out", default=DEFAULT_SAMPLE)
-    p_sample.add_argument("--seed", type=int, default=SEED)
-    p_report = sub.add_parser("report", help="wrong-company rates from a labeled sample")
-    p_report.add_argument("--sample", default=DEFAULT_SAMPLE)
+    db_help = "path to urls.db (default: $DATABASE_URL)"
+    p = sub.add_parser("sample", help="draw the stratified sample")
+    p.add_argument("--db", default=None, help=db_help)
+    p.add_argument("--out", default=DEFAULT_SAMPLE)
+    p.add_argument("--seed", type=int, default=SEED)
+    p.set_defaults(func=_cmd_sample)
+    p = sub.add_parser("report", help="wrong-company rates from a labeled sample")
+    p.add_argument("--sample", default=DEFAULT_SAMPLE)
+    p.set_defaults(func=_cmd_report)
+    p = sub.add_parser("manual-export", help="write a blank sheet for a person to label")
+    p.add_argument("--db", default=None, help=db_help)
+    p.add_argument("--sample", default=DEFAULT_SAMPLE)
+    p.add_argument("--out", default=DEFAULT_MANUAL)
+    p.set_defaults(func=_cmd_manual_export)
+    p = sub.add_parser("manual-apply", help="merge a person's labels into the sample")
+    p.add_argument("--sample", default=DEFAULT_SAMPLE)
+    p.add_argument("--manual", default=DEFAULT_MANUAL)
+    p.set_defaults(func=_cmd_manual_apply)
     args = parser.parse_args(argv)
-    if args.cmd == "sample":
-        db = Path(args.db or resolve_db_path())
-        if not db.is_file():
-            print(f"error: {db} not found", file=sys.stderr)
-            return 1
-        rows = draw(db, args.seed)
-        out = Path(args.out)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with out.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=FIELDS)
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"wrote {len(rows)} rows to {out}")
-        return 0
-    path = Path(args.sample)
-    if not path.is_file():
-        print(f"error: {path} not found", file=sys.stderr)
-        return 1
-    try:
-        print(report(path))
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    return int(args.func(args))
 
 
 if __name__ == "__main__":

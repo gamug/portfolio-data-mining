@@ -58,7 +58,7 @@ def _db(tmp_path: Path) -> Path:
             "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, domain TEXT,"
             " company TEXT, ticker TEXT, source TEXT)"
         )
-        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT, body_text TEXT)")
         for url, domain, company, ticker, source in rows:
             con.execute(
                 "INSERT INTO discovered_urls (url, title, domain, company, ticker, source) VALUES (?,?,?,?,?,?)",
@@ -108,7 +108,8 @@ def _write(path: Path, labels: list[tuple[str, str, int, str]]) -> None:
         for i, (stratum, mode, size, label) in enumerate(labels):
             writer.writerow(
                 {"id": i, "url": f"u{i}", "ticker": "T", "company": "C", "domain": "d.com", "source": "s",
-                 "match_mode": mode, "stratum": stratum, "stratum_size": size, "label": label, "labeled_by": "hand"}
+                 "match_mode": mode, "stratum": stratum, "stratum_size": size, "label": label, "labeled_by": "hand",
+                 "assistant_label": ""}
             )  # fmt: skip
 
 
@@ -153,3 +154,46 @@ def test_main_sample_and_missing(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert mod.main(["sample", "--db", str(tmp_path / "nope.db")]) == 1
     assert mod.main(["report", "--sample", str(tmp_path / "nope.csv")]) == 1
     assert "not found" in capsys.readouterr().err
+
+
+def test_manual_export_hides_assistant_labels_and_apply_merges(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    sample = tmp_path / "sample.csv"
+    assert mod.main(["sample", "--db", str(db), "--out", str(sample)]) == 0
+    rows = list(csv.DictReader(sample.open()))
+    for r in rows:  # pretend the assistant labeled everything "yes"
+        r["label"], r["labeled_by"] = "yes", "assistant"
+    with sample.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=mod.FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    sheet = tmp_path / "manual.csv"
+    assert (
+        mod.main(["manual-export", "--db", str(db), "--sample", str(sample), "--out", str(sheet)])
+        == 0
+    )
+    sheet_rows = list(csv.DictReader(sheet.open()))
+    assert len(sheet_rows) == len(rows)
+    assert {r["label"] for r in sheet_rows} == {""}
+    assert "assistant_label" not in sheet_rows[0]
+    sheet_rows[0]["label"], sheet_rows[1]["label"] = "no", "YES"
+    with sheet.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=mod.MANUAL_FIELDS)
+        writer.writeheader()
+        writer.writerows(sheet_rows)
+    summary = mod.manual_apply(sample, sheet)
+    assert "applied 2 hand labels" in summary
+    assert "agreement with the assistant on 2 rows: 1/2" in summary
+    merged = {r["id"]: r for r in csv.DictReader(sample.open())}
+    first = merged[sheet_rows[0]["id"]]
+    assert (first["label"], first["labeled_by"], first["assistant_label"]) == ("no", "hand", "yes")
+    assert merged[sheet_rows[1]["id"]]["label"] == "yes"
+
+
+def test_manual_apply_rejects_bad_label(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    sample = tmp_path / "s.csv"
+    _write(sample, [("d/s/both", "both", 10, "yes")])
+    sheet = tmp_path / "m.csv"
+    sheet.write_text("id,label\n0,maybe\n")
+    assert mod.main(["manual-apply", "--sample", str(sample), "--manual", str(sheet)]) == 1
+    assert "yes/no/unclear" in capsys.readouterr().err

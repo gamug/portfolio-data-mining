@@ -94,26 +94,23 @@ after the fact; IDs are never reused, so they stay reserved.
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker
       substring shortcut / name-token-only / both) and including
-      known-correct pairs; it is labeled with `portfolio-nlp`'s
-      relevance judge (its T-130; this repo has no ML/judge) and spot-checked
-      by hand on a small subset to validate that judge. Commit the sample
-      (pairs + labels) so it can be reused: `portfolio-nlp` T-117 reuses it,
-      and T-056's retention measurement is computed on the same pairs rather
-      than a second set. **Dependency:** the judge is `portfolio-nlp` T-130
-      (not built yet; portfolio-nlp PR #102), the critical-path item for both
-      repos — order: its T-130 → this T-054. **Fallback so this work item is
-      never gated on that repo:** if T-130 has not landed when T-054 is ready
-      to start, hand-label the sample here (a smaller sample, re-labeled with
-      the judge later to validate it). The committed file carries `url`,
-      `ticker`, `company`, `match_mode`, `label` (about the company: yes/no)
-      and `labeled_by` (judge/hand), which is what `portfolio-nlp` T-117
-      consumes. Report; the rule is chosen from this, not assumed. → step 1.
+      known-correct pairs, and label each pair (is the article about that
+      company: `yes`/`no`/`unclear`). **Labeling is done in this repo, by hand;
+      it does not depend on `portfolio-nlp`** (data flows from this repo to
+      that one, never back). Commit the sample (pairs + labels) so it can be
+      reused: `portfolio-nlp` T-117 reads it, and T-056's retention
+      measurement is computed on the same pairs. The committed file carries
+      `url`, `ticker`, `company`, `match_mode`, `label`, `labeled_by`
+      (`hand`/`assistant`) and the assistant's `assistant_label`. Report; the
+      rule is chosen from this, not assumed. → step 1.
       Built: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
-      (263 pairs; results in `PLAN.md` Work item 10). **Open:** `T-130` is not
-      built, so labels are `labeled_by = assistant` (an AI assistant, not the
-      judge or a person); a human must spot-check a subset (suggest 30 pairs,
-      all 8 `unclear`, and the 17 `ticker_only`/`name_only` `yes` labels) and
-      re-run `report` before `T-055` relies on the numbers.
+      (263 pairs, first-pass labels by an AI assistant; results in `PLAN.md`
+      Work item 10) and `data/ticker_tagging_manual.csv`, a blank sheet with
+      title and body excerpt for the maintainer to label. **Open:** fill the
+      `label` column of the sheet (`yes`/`no`/`unclear`; all 263, or as many as
+      you want, starting from the top), run `manual-apply`, which merges the
+      hand labels (`labeled_by = hand`) and prints the agreement with the
+      assistant, then re-run `report`. `T-055` waits for this.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
