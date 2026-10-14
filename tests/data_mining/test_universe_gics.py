@@ -430,7 +430,7 @@ _CONTENTS = {
 def _isolated_universe_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(tmp_path / "universe.db"))
     monkeypatch.setenv("NAME", "Test Name")
-    monkeypatch.setenv("EMAIL", "test@example.org")
+    monkeypatch.setenv("EMAIL", "tester@portfolio.test")
     # Keep the hermetic suite fast: no real pacing between mocked requests.
     monkeypatch.setattr(universe_gics, "REQUEST_DELAY_SECONDS", 0.0)
 
@@ -456,7 +456,7 @@ def _seed(db) -> None:
 def _fresh_db():
     """A tmp DB with the GICS citation columns added, the way the builder's
     output copy gets them (the read path never migrates)."""
-    db = queries._connect()
+    db = queries.connect()
     queries.migrate_gics_columns(db)
     return db
 
@@ -645,7 +645,7 @@ def test_read_path_leaves_old_schema_file_byte_identical(
     before = hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
 
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
-    db = queries._connect()
+    db = queries.connect()
     try:
         rows = queries.query_membership_as_of(db, "2024-01-01")
     finally:
@@ -665,7 +665,7 @@ def test_read_path_does_not_add_gics_columns(
     _make_old_schema_db(path)
     monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
 
-    db = queries._connect()
+    db = queries.connect()
     try:
         columns = set(db.table_columns("universe_membership"))
     finally:
@@ -759,8 +759,8 @@ def test_build_gics_db_rejects_a_missing_source(tmp_path: Path) -> None:
 def test_mediawiki_headers_use_name_and_email_from_env() -> None:
     agent = universe_gics.mediawiki_headers()["User-Agent"]
     assert "Test Name" in agent
-    assert "test@example.org" in agent
-    assert "example.com" not in agent
+    assert "tester@portfolio.test" in agent
+    assert "example" not in agent
 
 
 @pytest.mark.parametrize("missing", ["NAME", "EMAIL"])
@@ -770,3 +770,52 @@ def test_mediawiki_headers_require_a_real_contact(
     monkeypatch.delenv(missing)
     with pytest.raises(ValueError, match="NAME and EMAIL"):
         universe_gics.mediawiki_headers()
+
+
+@pytest.mark.parametrize(
+    ("name", "email"),
+    [
+        ("Your Name", "real@portfolio.test"),
+        ("Real Name", "your.email@example.com"),
+        ("Real Name", "someone@example.org"),
+    ],
+)
+def test_mediawiki_headers_reject_env_example_placeholders(
+    monkeypatch: pytest.MonkeyPatch, name: str, email: str
+) -> None:
+    monkeypatch.setenv("NAME", name)
+    monkeypatch.setenv("EMAIL", email)
+    with pytest.raises(ValueError, match="real contact"):
+        universe_gics.mediawiki_headers()
+
+
+def test_mediawiki_headers_survive_a_non_ascii_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NAME", "José Muñoz")
+    agent = universe_gics.mediawiki_headers()["User-Agent"]
+    agent.encode("ascii")
+    httpx.Client(headers={"User-Agent": agent}).close()
+
+
+def test_build_gics_db_fails_fast_without_a_contact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    monkeypatch.delenv("EMAIL")
+    with pytest.raises(ValueError, match="real contact"):
+        universe_gics.build_gics_db(source, out)
+    assert not out.exists()
+    assert not out.with_name(out.name + ".tmp").exists()
+
+
+def test_build_gics_db_reports_which_file_was_the_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    source = _source_db(tmp_path)
+    out = tmp_path / "out_gics.db"
+    _patch_fetches(monkeypatch)
+    assert universe_gics.build_gics_db(source, out)["base"] == "source"
+    _patch_fetches(monkeypatch)
+    with caplog.at_level("WARNING"):
+        assert universe_gics.build_gics_db(source, out)["base"] == "out"
+    assert "ignoring --source" in caplog.text

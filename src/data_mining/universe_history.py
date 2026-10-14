@@ -305,7 +305,7 @@ def backfill_from_changes(force: bool = False) -> int:
     Returns the number of intervals written; no-ops (returns 0) if
     universe_membership already has backfill rows, unless force=True (which clears
     it first)."""
-    db = queries._connect()
+    db = queries.connect()
     try:
         count = queries.count_backfill_rows(db)
         if count and not force:
@@ -333,7 +333,7 @@ def record_snapshot() -> dict:
     tracked tickers and closing ones for newly untracked tickers. Meant to
     be run occasionally by hand (see cli/pricing_cli.py's
     `universe-snapshot`) -- this repo has no scheduler."""
-    db = queries._connect()
+    db = queries.connect()
     try:
         today = date.today()
         today_rows = {row["Symbol"]: row for row in list_universe()}
@@ -384,7 +384,7 @@ def query_as_of(as_of: date, sector: str | None = None) -> list[dict]:
     """Point-in-time membership as of `as_of` (inclusive), optionally
     filtered by GICS Sector. Raises ValueError if no backfill has been run
     yet, or if `as_of` predates the earliest backfilled date."""
-    db = queries._connect()
+    db = queries.connect()
     try:
         _assert_within_coverage(db, as_of)
         as_of_s = as_of.isoformat()

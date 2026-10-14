@@ -113,9 +113,6 @@ def connect(path: str | Path | None = None) -> Database:
     return db
 
 
-_connect = connect  # historical private name, still used inside this package
-
-
 def migrate_gics_columns(db: Database) -> None:
     """Add the two GICS citation columns to `universe_membership` if absent.
 

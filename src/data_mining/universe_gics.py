@@ -89,19 +89,32 @@ _REVISION_BATCH_SIZE = 50
 REQUEST_DELAY_SECONDS = 0.5
 
 
+_PLACEHOLDER_NAMES = {"your name"}
+_PLACEHOLDER_EMAIL_DOMAINS = ("example.com", "example.org", "example.net")
+
+
 def mediawiki_headers() -> dict[str, str]:
     """Wikimedia asks that automated callers self-identify with a working
     contact (constitution Technological #6), so the User-Agent is built from
     the same `NAME`/`EMAIL` env vars the EDGAR client uses. Raises
-    `ValueError` when either is unset rather than send a placeholder."""
+    `ValueError` when either is unset or still the `.env.example` placeholder
+    (or an `example.*` address) rather than send a fake contact. Non-ASCII
+    names are folded to ASCII so the header always encodes."""
     name = os.environ.get("NAME", "").strip()
     email = os.environ.get("EMAIL", "").strip()
-    if not name or not email:
+    domain = email.rpartition("@")[2].lower()
+    if (
+        not name
+        or not email
+        or name.lower() in _PLACEHOLDER_NAMES
+        or domain in _PLACEHOLDER_EMAIL_DOMAINS
+    ):
         raise ValueError(
-            "NAME and EMAIL must be set (see .env.example): Wikimedia requires "
-            "automated callers to identify themselves with a real contact"
+            "NAME and EMAIL must be set to a real contact (see .env.example): "
+            "Wikimedia requires automated callers to identify themselves"
         )
-    return {"User-Agent": f"portfolio-data-mining/1.0 ({name}; {email})"}
+    contact = f"{name}; {email}".encode("ascii", "replace").decode("ascii")
+    return {"User-Agent": f"portfolio-data-mining/1.0 ({contact})"}
 
 
 def _new_client() -> httpx.Client:
@@ -765,14 +778,25 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
     it is the starting point instead of `source`, so a re-run resumes from
     (and never discards) what is already filled: on a fully filled `out` it
     makes no network call and leaves the file unchanged. The source file is
-    never opened for writing."""
+    never opened for writing. The report's `base` says which file was the
+    starting point (`"out"` when resuming, else `"source"`); delete `out` to
+    rebuild from a fresh source."""
     validate_paths(source, out)
+    mediawiki_headers()  # fail fast, before any file is copied
     source_path = Path(source)
     out_path = Path(out)
     if not source_path.is_file():
         raise ValueError(f"--source {source_path} does not exist")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    base = out_path if out_path.exists() else source_path
+    resuming = out_path.exists()
+    base = out_path if resuming else source_path
+    if resuming:
+        log.warning(
+            "%s already exists: resuming from it and ignoring --source %s "
+            "(delete it to rebuild from the source)",
+            out_path,
+            source_path,
+        )
     work_path = out_path.with_name(out_path.name + ".tmp")
     shutil.copy2(base, work_path)
     try:
@@ -782,6 +806,7 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
             # migrates, so the source and the default universe DB stay untouched.
             queries.migrate_gics_columns(db)
             report = fill_gics(db)
+            report["base"] = "out" if resuming else "source"
         finally:
             db.close()
         work_path.replace(out_path)

@@ -412,7 +412,7 @@ def test_backfill_guard_checks_wikipedia_backfill_rows(monkeypatch: pytest.Monke
     monkeypatch.setattr(universe_history, "list_universe", lambda: _today_roster("AAA"))
     monkeypatch.setattr(universe_history, "_fetch_changes_html", lambda: CHANGES_HTML)
 
-    db = queries._connect()
+    db = queries.connect()
     # Pre-populate with live_snapshot rows (mimicking pilot 20-ticker state)
     snapshot_intervals = [
         {
@@ -439,7 +439,7 @@ def test_backfill_guard_checks_wikipedia_backfill_rows(monkeypatch: pytest.Monke
     assert written > 0
 
     # Verify rows are now from wikipedia_changes_backfill and live_snapshot from backfill
-    db = queries._connect()
+    db = queries.connect()
     assert queries.count_backfill_rows(db) > 0
     db.close()
 
