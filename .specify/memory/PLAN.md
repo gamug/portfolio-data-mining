@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-059)
 
-**Status: open. `T-053` done; `T-054`–`T-059` pending; `T-054` first.**
+**Status: open. `T-053` done; `T-054` labeled, human spot-check pending; `T-055`–`T-059` pending.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -670,6 +670,43 @@ token alone in over 90% of rows are listed by the script (`Dollar`, `American`,
 `Trade`, `Bank`, `First`, `News`, `Best`, `Global`, …); legitimate brand tokens
 (`Apple`, `Amazon`, `Microsoft`, `Netflix`) also appear there, so that list is
 a candidate set for T-054, not a verdict.
+
+**T-054 measured error rates** (`data/ticker_tagging_sample.csv`, 263 pairs;
+`scripts/ticker_tagging_sample.py report`). Seeded stratified sample over
+`(domain, source, match mode)`, with `ticker_only` split into English-word and
+other tickers, plus 20 known-correct candidates (company's full normalized name
+in the URL or title). A pair is `yes` when the tagged company is a subject of
+the article (named and discussed, a roundup section counts), `no` when it is
+another company, a homonym or a passing mention. `portfolio-nlp`'s judge
+(`T-130`) is not built (PR #102 is docs-only), so the fallback applies; **labels
+were assigned by an AI assistant reading title, body excerpt and URL
+(`labeled_by = assistant`, a value added to the `judge`/`hand` contract), and
+8 pairs it could not decide are `unclear` and excluded**. The human spot-check
+the task asks for is still open (see `TASKS.md`).
+
+| match mode | n | wrong | wrong rate (95%) |
+|---|---:|---:|---:|
+| both | 53 | 3 | 14% (0–32%) |
+| name token only | 63 | 8 | 52% (28–76%) |
+| ticker only | 101 | 65 | 96% (88–100%) |
+| substring shortcut only | 18 | 16 | 87% (62–100%) |
+| whole corpus | 235 | 92 | **72% (60–84%)** |
+
+By connector the rate is `cnbc.com` 74% (62–87%), `ft.com` 19%, `seekingalpha.com`
+9%, `nasdaq.com` 7%, `investing.com` 3%, `finance.yahoo.com` 2% (the last four
+have intervals reaching 0%). Findings that shape `T-055`: (a) a ticker-only
+match is wrong 96% of the time and every English-word-ticker stratum was
+wrong 100% (45/45), so a bare ticker should never be sufficient; (b) a
+name-token-only match is right about half the time: `cnbc` sitemap 8 wrong of
+15, but every `ddg` name-only stratum was 0 wrong, so the generic-first-word
+problem is concentrated in the sitemap path; (c) the substring shortcut is
+wrong 87% of the time but covers only 823 stored rows; (d) the "known-correct"
+candidates retained only 17 of 20 (85%): the three misses were a lone-word
+company name (`News`), and two passing mentions (`Microsoft`, `eBay`), so
+"full name present" is itself not proof and retention targets should be read
+against that. The sample's size (8 per small stratum) gives wide intervals;
+treat the rates as the evidence for choosing a rule, and re-measure on the same
+pairs after `T-056`.
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the

@@ -1,0 +1,264 @@
+id,url,ticker,company,domain,source,match_mode,stratum,stratum_size,label,labeled_by
+166982,https://www.cnbc.com/2025/04/23/chipotle-mexican-grill-cmg-q1-2025-earnings.html,CMG,Chipotle Mexican Grill,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+318048,https://www.cnbc.com/2026/07/30/microsoft-msft-meta-stock-today-earnings.html,MSFT,Microsoft,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+416879,https://www.cnbc.com/2025/01/22/procter-gamble-pg-q2-2025-earnings.html,PG,Procter & Gamble,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+262670,https://www.cnbc.com/2024/07/15/goldman-sachs-gs-earnings-2q-2024.html,GS,Goldman Sachs,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+340802,https://www.cnbc.com/2023/06/03/activist-investor-elliott-is-back-at-nrg-energy-heres-how-the-firm-plans-to-build-value.html,NRG,NRG Energy,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+340990,https://www.cnbc.com/2025/08/27/nvidia-nvda-earnings-report-q2-2026.html,NVDA,Nvidia,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+308094,https://www.cnbc.com/2025/08/20/lowes-low-q2-2025-earnings.html,LOW,Lowe's,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+183105,https://www.cnbc.com/2024/07/25/dexcom-shares-plummet-30percent-after-company-lowers-fiscal-year-guidance.html,DXCM,Dexcom,cnbc.com,ddg,both,cnbc.com/ddg/both,599,yes,assistant
+283208,https://www.cnbc.com/2025/10/23/honeywell-stock-is-soaring-why-we-think-there-is-plenty-of-more-room-to-run.html,HON,Honeywell Technologies,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+207449,https://www.cnbc.com/2026/02/10/our-dupont-thesis-is-working-according-to-plan-were-raising-our-price-target.html,DD,DuPont,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+314663,https://www.cnbc.com/2026/03/31/unilever-mccormick-deal-stock-consumer-products-staples-trend.html,MKC,McCormick & Company,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+421265,https://www.cnbc.com/2022/07/27/investing-club-qualcomms-guidance-is-light-after-a-great-quarter-but-were-still-long-term-believers.html,QCOM,Qualcomm,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+231246,https://www.cnbc.com/2026/07/02/ford-q2-sales.html,F,Ford Motor Company,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+166257,https://www.cnbc.com/2025/07/28/bernstein-upgrades-charter-to-outperform-on-recovering-financials-predicts-more-than-20percent-upside-ahead.html,CHTR,Charter Communications,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+416882,https://www.cnbc.com/2025/06/05/procter-gamble-job-cuts-restructuring.html,PG,Procter & Gamble,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+165292,https://www.cnbc.com/2026/02/17/cnbc-changemakers-and-power-players-podcast-centene-corporation-ceo-sarah-london-.html,CNC,Centene Corporation,cnbc.com,ddg,name_only,cnbc.com/ddg/name_only,763,yes,assistant
+88884,https://www.cnbc.com/2013/01/22/afterhours-buzz-goog-wfc-more.html,GOOG,Alphabet Inc. (Class C),cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+277424,https://www.cnbc.com/2026/08/10/hpe-will-gain-ground-on-sky-high-hardware-demand-morgan-stanley-says.html,HPE,Hewlett Packard Enterprise,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+469446,https://www.cnbc.com/2024/01/30/ups-reports-drop-in-package-volume-stock-tumbles.html,UPS,United Parcel Service,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+291554,https://www.cnbc.com/2016/07/20/early-movers-ms-hal-tup-dis-pnra-msft-isrg-foxa-ge-ul-more.html,ISRG,Intuitive Surgical,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+250267,https://www.cnbc.com/2025/12/17/stocks-making-the-biggest-moves-premarket-.html,GIS,General Mills,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+303168,https://www.cnbc.com/2017/04/18/after-hours-buzz-ibm-lrcx-rare-more.html,LRCX,Lam Research,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,yes,assistant
+124962,https://www.cnbc.com/2026/07/29/yes-network-msg-networks-dazn-streaming.html,APP,AppLovin,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,no,assistant
+289809,https://www.cnbc.com/2026/03/25/pop-mart-labubu-global-expansion-ip-business-model-intellectual-property-strategy.html,IP,International Paper,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/other_ticker,834,no,assistant
+146680,https://www.cnbc.com/2023/10/03/tech-stocks-still-sliding-after-closing-out-their-worst-month-of-2023.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146686,https://www.cnbc.com/2026/02/06/google-microsoft-meta-amazon-ai-cash.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146679,https://www.cnbc.com/2023/05/26/tech-stocks-are-back-driven-by-ai-craze-slowing-rate-hikes.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146683,https://www.cnbc.com/2025/06/30/in-market-rally-back-to-record-best-tech-trade-hasnt-been-mag-7.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146678,https://www.cnbc.com/2023/10/17/amid-ai-buzz-big-us-tech-giants-add-2point5-trillion-in-market-cap.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146674,https://www.cnbc.com/2022/07/15/bernstein-says-its-time-to-get-back-into-tech-stocks-invest-in-these.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+146673,https://www.cnbc.com/2022/07/07/cramer-tech-stocks-could-have-sustained-rally-after-thursdays-bounce.html,TECH,Bio-Techne,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+344197,https://www.cnbc.com/2025/02/06/amazon-expects-to-spend-100-billion-on-capital-expenditures-in-2025.html,ON,ON Semiconductor,cnbc.com,ddg,ticker_only,cnbc.com/ddg/ticker_only/word_ticker,22,no,assistant
+285385,https://www.cnbc.com/2014/05/12/ibm-poised-for-growth-chief-says.html,IBM,IBM,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+285662,https://www.cnbc.com/2010/04/19/ibm-profit-beats-forecasts-company-boosts-guidance.html,IBM,IBM,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+412566,https://www.cnbc.com/2025/08/11/stocks-making-the-biggest-moves-premarket-psky-nvda-ai-intc-and-more.html,PSKY,Paramount Skydance Corporation,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+466264,https://www.cnbc.com/2014/06/17/disruptors-in-2014-uber.html,UBER,Uber,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+126871,https://www.cnbc.com/2011/07/14/lightning-round-ares-capital-lululemon-lumber-liquidators-and-more.html,ARES,Ares Management,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,no,assistant
+316734,https://www.cnbc.com/2021/12/17/payments-start-up-checkoutcom-poaches-crypto-exec-from-meta-fb.html,META,Meta Platforms,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,no,assistant
+88025,https://www.cnbc.com/2023/12/07/stocks-making-the-biggest-moves-midday-amd-googl-cxm-chwy-and-more.html,GOOGL,Alphabet Inc. (Class A),cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+316507,https://www.cnbc.com/2023/02/13/wall-street-analyst-stock-calls-on-monday-include-aapl-meta.html,META,Meta Platforms,cnbc.com,sitemap,both,cnbc.com/sitemap/both,10489,yes,assistant
+182030,https://www.cnbc.com/2025/07/22/delta-plans-to-use-ai-in-ticket-pricing-draws-fire-from-us-lawmakers.html,DAL,Delta Air Lines,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+170,https://www.cnbc.com/2016/10/25/3m-quarterly-profit-rises.html,MMM,3M,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+162060,https://www.cnbc.com/2017/04/04/bmo-capital-amazon-upgraded-google-downgraded.html,COF,Capital One,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+441626,https://www.cnbc.com/2018/11/01/watch-larry-kudlow-speak-live-about-the-state-of-small-business.html,STT,State Street Corporation,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+91918,https://www.cnbc.com/2021/10/22/esg-will-create-bubbles-and-the-next-amazon-or-tesla-iif.html,AMZN,Amazon,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+136961,https://www.cnbc.com/2012/11/01/discover-bank-announces-pricing-terms-of-exchange-offer.html,BAC,Bank of America,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+443115,https://www.cnbc.com/2009/10/20/pops-drops-unitedhealth-state-street.html,STT,State Street Corporation,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+124390,https://www.cnbc.com/2009/07/21/apple-on-deck-for-another-dinger.html,AAPL,Apple Inc.,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+221921,https://www.cnbc.com/2023/05/17/advice-for-new-grads-to-negotiate-their-first-jobs-and-internships.html,FSLR,First Solar,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+166855,https://www.cnbc.com/2011/06/06/chevron-may-buy-natgas-company-hedge-fund-traders.html,CVX,Chevron Corporation,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+93325,https://www.cnbc.com/2019/07/05/amazon-deliveroo-investment-scrutinized-by-uk-competition-watchdog.html,AMZN,Amazon,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+424525,https://www.cnbc.com/2022/09/30/coin-designs-for-britains-king-charles-iii-released-by-the-royal-mint.html,RCL,Royal Caribbean Group,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+155228,https://www.cnbc.com/2014/08/27/ecb-selects-blackrock-to-help-develop-abs-plan.html,BLK,BlackRock,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,yes,assistant
+257633,https://www.cnbc.com/2020/12/03/ibm-uncovers-global-email-attack-on-covid-vaccine-supply-chain-.html,GPN,Global Payments,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+222325,https://www.cnbc.com/2022/07/22/india-lawmakers-elect-first-president-from-tribal-community.html,FSLR,First Solar,cnbc.com,sitemap,name_only,cnbc.com/sitemap/name_only,225400,no,assistant
+433323,https://www.cnbc.com/2024/02/13/3-steps-to-wash-fruits-and-vegetables-so-theyre-safe-to-eat.html,SO,Southern Company,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+183309,https://www.cnbc.com/2017/06/09/fed-rate-hike-and-fang-shakeup-could-snap-stocks-out-of-spring-lull.html,FANG,Diamondback Energy,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+301799,https://www.cnbc.com/2018/03/13/donald-trump-kim-jong-un-meeting-how-china-could-play-a-role.html,KIM,Kimco Realty,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+206920,https://www.cnbc.com/2010/04/12/how-meaningful-is-dow-11000.html,DOW,Dow Inc.,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+208526,https://www.cnbc.com/2017/07/15/amazon-echo-dot-phone-calls-new-devices-network-effect.html,ECHO,EchoStar,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+470006,https://www.cnbc.com/2021/09/14/future-fund-uk-government-now-holds-stakes-in-over-150-start-ups.html,UPS,United Parcel Service,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+434663,https://www.cnbc.com/2015/09/16/restructuring-needed-because-market-is-changing-so-rapidly-hps-whitman.html,SO,Southern Company,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,no,assistant
+95765,https://www.cnbc.com/2016/07/19/early-movers-gs-unh-jnj-nflx-pm-cmg-ibm-yhoo-amzn-more.html,AMZN,Amazon,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/other_ticker,44625,yes,assistant
+404612,https://www.cnbc.com/2007/08/15/deere-thirdquarter-net-profit-rises-23-on-overseas-sales.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+362168,https://www.cnbc.com/2020/06/04/stocks-fall-on-jobs-data-strategists-talk-whats-next.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+381041,https://www.cnbc.com/2016/06/23/jon-najarian-up-13-ytd-bets-on-jc-penney.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+67095,https://www.cnbc.com/2022/05/02/medical-professionals-are-skeptical-on-a-fourth-covid-vaccine-dose.html,ARE,Alexandria Real Estate Equities,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+153809,https://www.cnbc.com/2007/02/26/tech-titan-no-2-on-cramers-rich-list.html,TECH,Bio-Techne,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+269388,https://www.cnbc.com/2022/06/08/cathie-wood-has-been-buying-the-dip-in-tesla-following-the-ev-companys-40percent-pullback.html,HAS,Hasbro,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+344929,https://www.cnbc.com/2026/03/08/top-analysts-are-bullish-on-these-3-stocks-despite-ongoing-volatility.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+346976,https://www.cnbc.com/2025/05/01/goldman-adds-jj-to-its-conviction-list-heres-who-else-is-on-it-.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+268034,https://www.cnbc.com/2026/01/09/the-broadening-trade-has-been-in-full-swing-this-week-will-it-stick.html,HAS,Hasbro,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+240549,https://www.cnbc.com/2018/07/19/trump-tried-to-protect-qualcomm-now-his-trade-war-may-be-hurting-it.html,IT,Gartner,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+379536,https://www.cnbc.com/2016/10/11/trump-clinton-couldnt-be-further-apart-on-tax-plans-new-analysis.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+9594,https://www.cnbc.com/2024/08/09/tim-sheehy-may-turn-the-senate-red-but-is-he-really-a-successful-businessman-.html,A,Agilent Technologies,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+359293,https://www.cnbc.com/2021/03/24/attorneys-general-call-on-facebook-and-twitter-to-remove-anti-vaxxers-off-their-services.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+355884,https://www.cnbc.com/2022/04/20/the-newest-perk-for-restaurant-workers-a-therapist-on-staff.html,ON,ON Semiconductor,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+82969,https://www.cnbc.com/2025/09/09/reddit-is-sniffing-out-a-breakout-to-all-time-highs-according-to-the-charts.html,ALL,Allstate,cnbc.com,sitemap,ticker_only,cnbc.com/sitemap/ticker_only/word_ticker,182312,no,assistant
+202417,https://finance.yahoo.com/news/dollar-tree-inc-nasdaq-dltr-141736510.html?fr=sycsrp_catchall,DLTR,Dollar Tree,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+292279,https://finance.yahoo.com/news/jack-henry-associates-inc-jkhy-071521674.html?fr=sycsrp_catchall,JKHY,Jack Henry & Associates,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+417352,https://finance.yahoo.com/news/progressive-pgr-meets-q2-earnings-151503241.html?fr=sycsrp_catchall,PGR,Progressive Corporation,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+248461,https://finance.yahoo.com/news/generac-holdings-inc-gnrc-q1-113200477.html?fr=sycsrp_catchall,GNRC,Generac,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+128381,https://finance.yahoo.com/news/avalonbay-communities-inc-nyse-avb-142546260.html?fr=sycsrp_catchall,AVB,AvalonBay Communities,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+124703,https://finance.yahoo.com/news/applied-materials-nasdaq-amat-q2-201910852.html,AMAT,Applied Materials,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+451791,https://finance.yahoo.com/news/tko-group-holdings-inc-tko-072920961.html,TKO,TKO Group Holdings,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+343915,https://finance.yahoo.com/news/oreilly-automotive-inc-orly-reports-215802295.html?fr=sycsrp_catchall,ORLY,O'Reilly Automotive,finance.yahoo.com,ddg,both,finance.yahoo.com/ddg/both,2169,yes,assistant
+174904,https://finance.yahoo.com/news/does-constellation-energys-narrowed-outlook-001535799.html?fr=sycsrp_catchall,CEG,Constellation Energy,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+315102,https://finance.yahoo.com/news/medtronic-advances-innovation-strategy-intent-125000764.html?fr=sycsrp_catchall,MDT,Medtronic,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+311872,https://finance.yahoo.com/news/lululemon-stock-surges-as-much-as-16-as-it-posts-stronger-outlook-pivots-from-mirror-170242001.html,LULU,Lululemon Athletica,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+164083,https://finance.yahoo.com/news/carrier-global-full-2024-earnings-110043465.html?fr=sycsrp_catchall,CARR,Carrier Global,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+314660,https://finance.yahoo.com/news/mccormick-raises-quarterly-dividend-look-130000235.html?fr=sycsrp_catchall,MKC,McCormick & Company,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+344164,https://finance.yahoo.com/news/omnicom-announces-2026-investor-day-130000116.html?fr=sycsrp_catchall,OMC,Omnicom Group,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+252044,https://finance.yahoo.com/news/general-motors-idles-another-auto-195636722.html,GM,General Motors,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+314899,https://finance.yahoo.com/news/mcdonalds-2026-menu-shift-tests-001818125.html?fr=sycsrp_catchall,MCD,McDonald's,finance.yahoo.com,ddg,name_only,finance.yahoo.com/ddg/name_only,338,yes,assistant
+231234,https://finance.yahoo.com/news/wall-streets-2026-forecasts-are-rolling-in--and-some-see-the-sp-500-hitting-8000-110002501.html?fr=sycsrp_catchall,F,Ford Motor Company,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+231235,https://finance.yahoo.com/news/an-excellent-backdrop-for-earnings-wall-street-expects-profit-growth-to-power-markets-in-2026-150050592.html?fr=sycsrp_catchall,F,Ford Motor Company,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+202821,https://finance.yahoo.com/news/live/stock-market-today-dow-sp-500-edge-higher-to-kick-off-2026-semiconductor-stocks-rally-210033381.html?fr=sycsrp_catchall,D,Dominion Energy,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+60753,https://finance.yahoo.com/news/live/stock-market-today-dow-sp-500-nasdaq-post-double-digit-gains-in-2025-as-ai-trade-powers-market-once-again-210012468.html?fr=sycsrp_catchall,A,Agilent Technologies,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+82855,https://finance.yahoo.com/news/fresh-readings-on-inflation-provide-first-signals-for-feds-2026-interest-rate-path-175351484.html?fr=sycsrp_catchall,ALL,Allstate,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+412753,https://finance.yahoo.com/news/philippines-construction-industry-report-2025-144100958.html?fr=sycsrp_catchall,PH,Parker Hannifin,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+307859,https://finance.yahoo.com/news/l3harris-raises-top-end-2024-203948638.html?fr=sycsrp_catchall,L,Loews Corporation,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+171230,https://finance.yahoo.com/news/bitcoin-hits-time-high-trump-153629894.html,COIN,Coinbase,finance.yahoo.com,ddg,shortcut_only,finance.yahoo.com/ddg/shortcut_only,70,no,assistant
+289760,https://finance.yahoo.com/news/iff-eyeing-acquisitions-again-sells-102257001.html,IFF,International Flavors & Fragrances,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+285810,https://finance.yahoo.com/news/itw-reports-fourth-quarter-full-130000068.html,ITW,Illinois Tool Works,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+160918,https://finance.yahoo.com/news/cof-declines-4-9-month-144100824.html,COF,Capital One,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+291731,https://finance.yahoo.com/news/ivz-stock-october-aum-jumps-122400117.html,IVZ,Invesco,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+277380,https://finance.yahoo.com/news/hsy-down-q3-earnings-miss-170500644.html,HSY,Hershey Company (The),finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+230983,https://finance.yahoo.com/news/fslr-bucks-solar-trend-share-230000580.html,FSLR,First Solar,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+312002,https://finance.yahoo.com/news/lyb-discuss-fourth-quarter-results-113000726.html,LYB,LyondellBasell,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+292188,https://finance.yahoo.com/news/jb-hunt-transport-services-inc-070319186.html?fr=sycsrp_catchall,JBHT,J.B. Hunt,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/other_ticker,1519,yes,assistant
+154456,https://finance.yahoo.com/news/tech-stocks-the-best-and-worst-performers-of-2022-211831640.html?fr=sycsrp_catchall,TECH,Bio-Techne,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/word_ticker,4,no,assistant
+154459,https://finance.yahoo.com/news/a-lot-rides-on-big-tech-earnings-amid-two-busy-weeks-for-markets-080013731.html,TECH,Bio-Techne,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/word_ticker,4,no,assistant
+154457,https://finance.yahoo.com/news/ces-2022-must-see-tech-213430752.html?fr=sycsrp_catchall,TECH,Bio-Techne,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/word_ticker,4,no,assistant
+154458,https://finance.yahoo.com/news/tech-stock-bubble-sonos-ceo-190453371.html,TECH,Bio-Techne,finance.yahoo.com,ddg,ticker_only,finance.yahoo.com/ddg/ticker_only/word_ticker,4,no,assistant
+416316,https://www.ft.com/content/f7492d79-3acf-46dc-bb0c-437a67b5c64f,PM,Philip Morris International,ft.com,ddg,both,ft.com/ddg/both,108,no,assistant
+484258,https://www.ft.com/content/7e4cd452-057e-11e8-9650-9c0ad2d7c5b5,WYNN,Wynn Resorts,ft.com,ddg,both,ft.com/ddg/both,108,yes,assistant
+165177,https://www.ft.com/content/3db51ec0-4c69-4bff-ae23-33e932deee86,CBRE,CBRE Group,ft.com,ddg,both,ft.com/ddg/both,108,unclear,assistant
+301336,https://www.ft.com/content/4e0017e8-fb48-4d48-8410-968e3de687bf,KEYS,Keysight Technologies,ft.com,ddg,both,ft.com/ddg/both,108,unclear,assistant
+316759,https://www.ft.com/content/189bc812-c3c6-4b5f-b2fc-a781900cedf0,META,Meta Platforms,ft.com,ddg,both,ft.com/ddg/both,108,yes,assistant
+155406,https://www.ft.com/content/b7c04084-68ee-4512-833b-0bba4f608a36,BLK,BlackRock,ft.com,ddg,both,ft.com/ddg/both,108,yes,assistant
+208412,https://www.ft.com/content/1ed4aee0-cbb4-4c98-a2aa-34971ded2583,EBAY,eBay Inc.,ft.com,ddg,both,ft.com/ddg/both,108,yes,assistant
+181943,https://www.ft.com/content/31185370-87f3-4ecb-b64d-341bbc4e5c22,DELL,Dell Technologies,ft.com,ddg,both,ft.com/ddg/both,108,unclear,assistant
+171147,https://www.ft.com/content/1ada20fd-a1ac-42b0-b577-2991095c2bbf,CTSH,Cognizant,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+322412,https://www.ft.com/content/d2abf5ca-4e54-4450-b8ed-1d9e239289f8,MDLZ,Mondelez International,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+412907,https://www.ft.com/content/6c59c3a4-2a6c-11da-a8f5-00000e2511c8,PH,Parker Hannifin,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+146642,https://www.ft.com/content/83faf8cc-39fe-11e1-a8dc-00144feabdc0,BBY,Best Buy,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+343822,https://www.ft.com/content/7f1426ab-9f70-44e0-bb06-d83df348b64b,NVDA,Nvidia,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+284713,https://www.ft.com/content/ec6a3bdf-efc4-3125-9c85-22f94bd7df63,HBAN,Huntington Bancshares,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+297828,https://www.ft.com/content/d790a405-5fbe-43ab-95ce-1fba8e261604,JPM,JPMorgan Chase,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+322409,https://www.ft.com/content/878d51e8-120c-43ae-bf93-1ec34fdb0c70,MDLZ,Mondelez International,ft.com,ddg,name_only,ft.com/ddg/name_only,473,yes,assistant
+211429,https://www.ft.com/content/866c57f3-c537-49c1-a82f-7e1004d42194,EG,Everest Group,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,no,assistant
+416630,https://www.ft.com/content/112e195e-8964-11e1-85b6-00144feab49a,PNC,PNC Financial Services,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,yes,assistant
+209193,https://www.ft.com/content/07aa5216-ff71-4323-b5a7-619c180efe3a,EQT,EQT Corporation,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,no,assistant
+155954,https://www.ft.com/content/e7ded3f3-5868-41fa-9033-964f63f5b938,BNY,BNY Mellon,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,yes,assistant
+301214,https://www.ft.com/content/8e198165-546f-46df-a6e2-a0cdfa45f006,KEY,KeyCorp,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,no,assistant
+126808,https://www.ft.com/content/d72a9869-f23a-4ff0-99d2-788f18af96d4,ADM,Archer Daniels Midland,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,yes,assistant
+173756,https://www.ft.com/content/3f4cd713-9875-4c7d-9986-81453bf33206,COP,ConocoPhillips,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,no,assistant
+314614,https://www.ft.com/content/fbd9e3d4-2df5-4a65-adbd-01e5de2c5053,MA,Mastercard,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/other_ticker,186,no,assistant
+87698,https://www.ft.com/content/c53014c8-45fc-47d8-948a-af189ec9a2c7,ALL,Allstate,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+154461,https://www.ft.com/content/f03011cb-5714-40f5-a11b-455178c995d7,TECH,Bio-Techne,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+246592,https://www.ft.com/content/74e31d3e-4b50-43b2-9aa2-e53f41b776a8,IT,Gartner,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+154464,https://www.ft.com/content/0abf976c-7ade-4baa-accc-d4f13d21e8cb,TECH,Bio-Techne,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+154465,https://www.ft.com/content/fde6657f-ff0d-4b92-b16b-3cf0472ada58,TECH,Bio-Techne,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+246591,https://www.ft.com/content/606bab2e-dadf-4e51-9141-e37450909540,IT,Gartner,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+60754,https://www.ft.com/content/50161391-17fb-4551-b1ca-6060e6936aac,A,Agilent Technologies,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+154462,https://www.ft.com/content/d1e4beab-98ea-4636-954c-3163486e9f06,TECH,Bio-Techne,ft.com,ddg,ticker_only,ft.com/ddg/ticker_only/word_ticker,9,no,assistant
+179875,https://www.investing.com/news/stock-market-news/cvs-health-sees-fall-in-covid19-vaccine-testing-revenue-in-2022-2705719,CVS,CVS Health,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+326702,https://www.investing.com/news/economy/msci-seeks-feedback-on-adani-group-over-hindenburg-report-2990375,MSCI,MSCI,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+432958,https://www.investing.com/news/stock-market-news/no-surprises-in-skyworks-solutionss-nasdaqswks-q1-sales-numbers-stock-soars-3287493,SWKS,Skyworks Solutions,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+207264,https://www.investing.com/news/stock-market-news/earnings-call-dte-energy-outlines-growth-and-investment-plans-for-2024-3298304,DTE,DTE Energy,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+202904,https://www.investing.com/news/stock-market-news/dominos-dpz-shares-skyrocket-what-you-need-to-know-3403784,DPZ,Domino's,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+466300,https://www.investing.com/news/stock-market-news/uber-stock-rises-as-waymo-autonomous-rides-launch-in-atlanta-4107627,UBER,Uber,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+179881,https://www.investing.com/news/stock-market-news/cvs-health-plunges-on-lower-medicare-performance-rating-drags-peers-2907543,CVS,CVS Health,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+179874,https://www.investing.com/news/stock-market-news/cvs-health-sees-2022-profit-meeting-street-estimates-as-covid19-costs-subside-2665704,CVS,CVS Health,investing.com,ddg,both,investing.com/ddg/both,60,yes,assistant
+326242,https://www.investing.com/news/stock-market-news/morgan-stanleys-14-years-under-james-gorman-a-timeline-3209302,MS,Morgan Stanley,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+233543,https://www.investing.com/news/stock-market-news/fortinet-climbs-as-it-goes-after-workfromhome-market-2453626,FTNT,Fortinet,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+128217,https://www.investing.com/news/stock-market-news/automatic-data-processing-vs-trinet-which-stock-is-a-better-buy-2699430,ADP,Automatic Data Processing,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+443984,https://www.investing.com/news/stock-market-news/supermicro-shares-surge-20-as-robust-margins-60b-backlog-eclipse-soft-revenue-4804136,SMCI,Supermicro,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+96719,https://www.investing.com/news/stock-market-news/jefferies-amazon-could-hit-1t-valuation-by-2022-1339372,AMZN,Amazon,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+649,https://www.investing.com/news/stock-market-news/abbvie-earnings-beat-by-007-revenue-fell-short-of-estimates-2999474,ABBV,AbbVie,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+3424,https://www.investing.com/news/stock-market-news/jefferies-downgrades-adobe-upgrades-ibm-as-ai-reshapes-2026-software-outlook-4429795,ADBE,Adobe Inc.,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+172488,https://www.investing.com/news/economy/comcast-tops-revenue-estimates-as-streaming-theme-park-growth-offset-broadband-decline-3282947,CMCSA,Comcast,investing.com,ddg,name_only,investing.com/ddg/name_only,584,yes,assistant
+216353,https://www.investing.com/news/stock-market-news/online-retailer-sheins-uk-revenue-grew-32-in-2024-4194403,FAST,Fastenal,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,no,assistant
+416637,https://www.investing.com/news/stock-market-news/pnc-financial-firstquarter-profit-rises-on-higher-interest-income-3985489,PNC,PNC Financial Services,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+417339,https://www.investing.com/news/stock-market-news/activist-firm-trian-cuts-holdings-in-pg-mondelez-filing-2763932,PG,Procter & Gamble,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+255770,https://www.investing.com/news/stock-market-news/gm-lays-off-over-1000-salaried-software-services-employees-cnbc-reports-3577285,GM,General Motors,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+344141,https://www.investing.com/news/stock-market-news/the-bull-case-for-old-dominion-freight-lines-inc-nasdaq-odfl-3140896,ODFL,Old Dominion,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+255769,https://www.investing.com/news/stock-market-news/gm-closing-plant-in-china-as-part-of-restructuring-3871607,GM,General Motors,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+126565,https://www.investing.com/news/stock-market-news/insurance-broker-stocks-tumble-as-openai-approves-first-ai-insurance-app-4494866,APP,AppLovin,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,no,assistant
+179880,https://www.investing.com/news/stock-market-news/cvs-health-raises-annual-profit-forecast-2929117,CVS,CVS Health,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/other_ticker,76,yes,assistant
+154466,https://www.investing.com/news/stock-market-news/tech-bull-run-not-over-yet-as-ai-revolution-set-for-next-stage-3366602,TECH,Bio-Techne,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/word_ticker,3,no,assistant
+154468,https://www.investing.com/news/stock-market-news/big-tech-to-invest-about-650-billion-in-ai-in-2026-bridgewater-says-4519448,TECH,Bio-Techne,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/word_ticker,3,no,assistant
+410711,https://www.investing.com/news/stock-market-news/us-senate-advances-landmark-crypto-bill-before-heading-on-august-recess-4847679,ON,ON Semiconductor,investing.com,ddg,ticker_only,investing.com/ddg/ticker_only/word_ticker,3,no,assistant
+183143,https://www.nasdaq.com/articles/3-reasons-why-delta-air-lines-dal-is-a-great-momentum-stock-2015-09-17,DAL,Delta Air Lines,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+209069,https://www.nasdaq.com/articles/3-reasons-why-growth-investors-shouldnt-overlook-emcor-group-eme-2021-08-24,EME,Emcor,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+168269,https://www.nasdaq.com/articles/cignas-ci-2022-expansion-plans-to-boost-ma-customer-base-2021-10-04,CI,Cigna,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+307484,https://www.nasdaq.com/articles/3-reasons-why-growth-investors-shouldnt-overlook-lennox-lii-2021-05-27,LII,Lennox International,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+318008,https://www.nasdaq.com/articles/3-reasons-why-growth-investors-shouldnt-overlook-mettler-toledo-mtd-2021-07-21,MTD,Mettler Toledo,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+155851,https://www.nasdaq.com/articles/3-reasons-why-growth-investors-shouldnt-overlook-biogen-biib-2019-06-25,BIIB,Biogen,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+298014,https://www.nasdaq.com/articles/january-2022-options-now-available-for-johnson-controls-international-jci-2019-09-16,JCI,Johnson Controls,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+210654,https://www.nasdaq.com/articles/equifax-efx-beats-on-q1-earnings-revenues-ups-21-view-2021-04-22,EFX,Equifax,nasdaq.com,ddg,both,nasdaq.com/ddg/both,79,yes,assistant
+247782,https://www.nasdaq.com/articles/1-number-you-missed-from-garmins-blowout-earnings-2021-04-30,GRMN,Garmin,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+291518,https://www.nasdaq.com/articles/1-question-i-have-for-intercontinental-exchange-2021-03-07,ICE,Intercontinental Exchange,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+61504,https://www.nasdaq.com/articles/air-products-to-launch-30-t-day-liquid-hydrogen-plants-in-china-in-2022-2020-11-10,APD,Air Products,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+425818,https://www.nasdaq.com/articles/3-reasons-schlumberger-stock-could-rise-2014-11-11,SLB,Schlumberger,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+234197,https://www.nasdaq.com/articles/3-big-stock-charts-tuesday-micron-technology-fortive-and-morgan-stanley-2018-12-11,FTV,Fortive,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+312696,https://www.nasdaq.com/articles/3-reasons-lyondellbasell-stock-could-rise-2016-03-01,LYB,LyondellBasell,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+2201,https://www.nasdaq.com/articles/3-risks-facing-accenture-plc-2017-07-11,ACN,Accenture,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+207164,https://www.nasdaq.com/articles/2-big-reasons-to-avoid-doordash-stock-2021-08-19,DASH,DoorDash,nasdaq.com,ddg,name_only,nasdaq.com/ddg/name_only,21,yes,assistant
+61436,https://www.nasdaq.com/articles/here-are-the-roth-ira-income-and-contribution-limits-for-2022-2021-11-07,A,Agilent Technologies,nasdaq.com,ddg,shortcut_only,nasdaq.com/ddg/shortcut_only,3,no,assistant
+247904,https://www.nasdaq.com/articles/wait-for-a-dip-before-buying-stagnant-general-electric-shares-2021-08-27,GE,GE Aerospace,nasdaq.com,ddg,shortcut_only,nasdaq.com/ddg/shortcut_only,3,yes,assistant
+250264,https://www.nasdaq.com/articles/10-fair-price-general-electric-stock-2019-05-03,GEN,Gen Digital,nasdaq.com,ddg,shortcut_only,nasdaq.com/ddg/shortcut_only,3,no,assistant
+103320,https://www.nasdaq.com/articles/bullish-two-hundred-day-moving-average-cross-amcr-2021-10-14,AMCR,Amcor,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+126846,https://www.nasdaq.com/articles/first-week-of-aptv-february-2022-options-trading-2021-07-30,APTV,Aptiv,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+160829,https://www.nasdaq.com/articles/3-reasons-why-bg-foods-stock-has-rallied-more-than-30-ytd-2020-06-24,BG,Bunge Global,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,no,assistant
+284711,https://www.nasdaq.com/articles/hp-hpq-issues-outlook-for-fiscal-2022-hikes-dividend-2021-10-21,HPQ,HP Inc.,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+413909,https://www.nasdaq.com/articles/interesting-pep-put-and-call-options-for-june-2022-2021-04-09,PEP,PepsiCo,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+166965,https://www.nasdaq.com/articles/interesting-schw-put-and-call-options-for-june-2022-2021-10-14,SCHW,Charles Schwab Corporation,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+209114,https://www.nasdaq.com/articles/interesting-emr-put-and-call-options-for-june-2022-2021-10-14,EMR,Emerson Electric,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+209113,https://www.nasdaq.com/articles/emr-march-2022-options-begin-trading-2021-07-15,EMR,Emerson Electric,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/other_ticker,53,yes,assistant
+155412,https://www.nasdaq.com/articles/10-tech-stocks-to-buy-now-for-2025-2019-07-24,TECH,Bio-Techne,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/word_ticker,2,no,assistant
+432685,https://www.nasdaq.com/articles/10-tech-stocks-to-buy-now-for-2025-2019-07-24,NOW,ServiceNow,nasdaq.com,ddg,ticker_only,nasdaq.com/ddg/ticker_only/word_ticker,2,unclear,assistant
+170652,https://seekingalpha.com/article/1253401-cme-groups-management-presents-at-citigroup-us-financial-services-conference-transcript,CME,CME Group,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+216364,https://seekingalpha.com/article/4801176-fastenal-company-fast-q2-2025-earnings-call-transcript,FAST,Fastenal,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+159233,https://seekingalpha.com/article/4860133-boston-scientific-corporation-bsx-penumbra-inc-m-and-a-call-slideshow,BSX,Boston Scientific,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+340841,https://seekingalpha.com/article/4600053-nrg-energy-inc-2023-q1-results-earnings-call-presentation,NRG,NRG Energy,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+213781,https://seekingalpha.com/article/4694033-extra-space-storage-results-are-improving-rates-a-risk-exr-stock,EXR,Extra Space Storage,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+422921,https://seekingalpha.com/article/4564966-regeneron-pharmaceuticals-regn-presents-at-64th-ash-annual-meeting-and-exposition,REGN,Regeneron Pharmaceuticals,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+96831,https://seekingalpha.com/article/4906421-ameren-corporation-aee-presents-at-2026-american-gas-association-financial-forum-slideshow,AEE,Ameren,seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+277398,https://seekingalpha.com/article/4835543-the-hershey-company-hsy-q3-2025-earnings-call-transcript,HSY,Hershey Company (The),seekingalpha.com,ddg,both,seekingalpha.com/ddg/both,4881,yes,assistant
+167792,https://seekingalpha.com/article/4863779-allstate-vs-chubb-paying-for-stability-or-buying-the-turnaround,CB,Chubb Limited,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+318027,https://seekingalpha.com/article/1914381-a-risk-for-micron-may-actually-be-an-incremental-positive,MU,Micron Technology,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+113664,https://seekingalpha.com/article/4643886-ameriprise-financial-inc-2023-q3-results-earnings-call-presentation,AMP,Ameriprise Financial,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+344193,https://seekingalpha.com/article/4919100-omnicom-buy-this-15-percent-earnings-yield-with-a-dividend-kicker,OMC,Omnicom Group,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+297926,https://seekingalpha.com/article/4668647-kenvue-inc-2023-q4-results-earnings-call-presentation,KVUE,Kenvue,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+321324,https://seekingalpha.com/article/4897782-microsoft-corporation-2026-q3-results-earnings-call-presentation,MSFT,Microsoft,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+344130,https://seekingalpha.com/article/4896666-old-dominion-freight-solid-fundamentals-but-valuation-shows-bumpy-roads-ahead,ODFL,Old Dominion,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+165267,https://seekingalpha.com/article/4890045-all-eyes-on-cencora-a-healthcare-supplier-that-could-see-lots-more-upside,COR,Cencora,seekingalpha.com,ddg,name_only,seekingalpha.com/ddg/name_only,4094,yes,assistant
+293252,https://seekingalpha.com/article/4933756-dividend-announcements-july-18minus-24-2026,J,Jacobs Solutions,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,unclear,assistant
+60765,https://seekingalpha.com/article/2058743-pearson-management-discusses-2013-results-earnings-call-transcript?isDirectRoadblock=false&uprof=53,A,Agilent Technologies,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+412927,https://seekingalpha.com/article/4684305-united-airlines-holdings-inc-ual-q1-2024-earnings-call-transcript?trk=article-ssr-frontend-pulse_little-text-block,PH,Parker Hannifin,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+171985,https://seekingalpha.com/article/2097873-why-the-fuel-cell-bubble-has-popped?source=google_news,CL,Colgate-Palmolive,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+211378,https://seekingalpha.com/article/4673052-eldorado-gold-corporation-2023-q4-results-earnings-call-presentation,EL,Estée Lauder Companies (The),seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+308063,https://seekingalpha.com/article/4882222-amazon-just-like-google-in-2023,L,Loews Corporation,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+88861,https://seekingalpha.com/article/2140203-is-googles-prize-acquisition-cause-for-alarm?hasComeFromMpArticle=false,GOOGL,Alphabet Inc. (Class A),seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,yes,assistant
+422126,https://seekingalpha.com/article/4708272-electronic-arts-inc-ea-q1-2025-earnings-call-transcript,Q,Qnity Electronics,seekingalpha.com,ddg,shortcut_only,seekingalpha.com/ddg/shortcut_only,749,no,assistant
+483931,https://seekingalpha.com/article/4001941-workdays-wday-ceo-aneel-bhusri-on-q2-2017-results-earnings-call-transcript,WDAY,"Workday, Inc.",seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,yes,assistant
+255796,https://seekingalpha.com/article/4862455-gms-durability-discount-the-margin-proof-the-market-needs-rating-upgrade,GM,General Motors,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,yes,assistant
+475253,https://seekingalpha.com/article/4662308-jp-morgan-healthcare-conference,VTRS,Viatris,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,yes,assistant
+326760,https://seekingalpha.com/article/4666386-nasdaq-inc-ndaq-q4-2023-earnings-call-transcript,NDAQ,"Nasdaq, Inc.",seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,yes,assistant
+303294,https://seekingalpha.com/article/4926125-lvs-advisory-q1-2026-letter,LVS,Las Vegas Sands,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,no,assistant
+173579,https://seekingalpha.com/article/4885387-perma-fix-environmental-services-inc-pesi-q4-2025-earnings-call-transcript,FIX,Comfort Systems USA,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,no,assistant
+233465,https://seekingalpha.com/article/4932806-vf-corporation-the-vans-drag-needs-to-be-fixed,F,Ford Motor Company,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,no,assistant
+292197,https://seekingalpha.com/article/4870886-j-b-hunt-transport-services-inc-jbht-presents-at-barclays-43rd-annual-industrial-select,JBHT,J.B. Hunt,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/other_ticker,756,yes,assistant
+154477,https://seekingalpha.com/article/4569772-top-10-tech-stocks-for-2023,TECH,Bio-Techne,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+60792,https://seekingalpha.com/article/4933503-hypera-s-a-2026-q2-results-earnings-call-presentation,A,Agilent Technologies,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+275628,https://seekingalpha.com/article/4910606-upstart-stock-has-28-plus-percent-short-interest-are-the-bears-still-living-in-2022,HAS,Hasbro,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+410689,https://seekingalpha.com/article/4696476-top-10-stocks-for-h2-2024-sa-quant,ON,ON Semiconductor,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,unclear,assistant
+246596,https://seekingalpha.com/article/4933678-hertz-too-early-to-invest-yet?source=feed_all_articles,IT,Gartner,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+154484,https://seekingalpha.com/article/4667541-top-10-tech-stocks-2024-sa-quant,TECH,Bio-Techne,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+410688,https://seekingalpha.com/article/4659711-top-10-stocks-for-2024,ON,ON Semiconductor,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,unclear,assistant
+60798,https://seekingalpha.com/article/4857244-2026-stock-market-outlook-a-positive-backdrop-but-brace-for-another-2025-sized-plunge,A,Agilent Technologies,seekingalpha.com,ddg,ticker_only,seekingalpha.com/ddg/ticker_only/word_ticker,50,no,assistant
+329451,https://stocktwits.com/AnneMarieTrades/message/485833483,NEM,Newmont,stocktwits.com,ddg,shortcut_only,stocktwits.com/ddg/shortcut_only,1,unclear,assistant
+117019,https://www.cnbc.com/2020/11/16/apple-hit-with-two-eu-privacy-complaints-over-idfa-mobile-ad-tracking.html,AAPL,Apple Inc.,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+293868,https://www.cnbc.com/2018/01/31/cramers-lightning-round-take-a-long-term-view-on-johnson-johnson.html,JNJ,Johnson & Johnson,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+90644,https://www.cnbc.com/2025/04/10/amazon-ceo-andy-jassys-2025-shareholder-letter.html,AMZN,Amazon,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+327351,https://www.cnbc.com/2022/07/20/wednesday-top-analyst-calls-netflix-chevron-apple-alibaba-amazon.html,NFLX,Netflix,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+317362,https://finance.yahoo.com/news/mgm-resorts-mgm-down-31-135601300.html,MGM,MGM Resorts,finance.yahoo.com,ddg,both,known_correct_candidate,100585,yes,assistant
+208313,https://www.cnbc.com/2007/06/14/a-good-old-boston-brawl-featuring-google-and-ebay.html,EBAY,eBay Inc.,cnbc.com,sitemap,both,known_correct_candidate,100585,yes,assistant
+122559,https://www.cnbc.com/2013/09/20/were-100-percent-out-of-apple-pro.html,AAPL,Apple Inc.,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+139640,https://www.cnbc.com/2022/04/07/warren-buffett-berkshire-hathaway-reveals-stake-in-hp-inc-tech-stock.html,BRK.B,Berkshire Hathaway,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+263363,https://www.cnbc.com/2023/09/20/apple-goldman-sachs-were-planning-a-stock-trading-feature-for-iphones.html,GS,Goldman Sachs,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+331811,https://www.cnbc.com/2017/03/14/chinese-premier-li-keqiang-annual-news-conference.html,NWSA,News Corp (Class A),cnbc.com,sitemap,name_only,known_correct_candidate,100585,no,assistant
+291721,https://www.cnbc.com/2012/10/25/invesco-unveils-mobile-access-to-investment-insights-product-information-and-businessbuilding-ideas-with-new-app-for-ipad.html,IVZ,Invesco,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+92314,https://www.cnbc.com/2021/01/13/amazon-walmart-and-target-traders-discuss-e-commerce-sales-surge.html,AMZN,Amazon,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+318805,https://www.cnbc.com/2023/02/27/xiaomi-debuts-augmented-reality-ar-glasses-joining-microsoft-google-.html,MSFT,Microsoft,cnbc.com,sitemap,name_only,known_correct_candidate,100585,no,assistant
+465829,https://www.cnbc.com/2017/04/13/uber-may-face-1-million-dollar-fine-over-california-drunken-driving-complaints.html,UBER,Uber,cnbc.com,sitemap,both,known_correct_candidate,100585,yes,assistant
+180987,https://www.cnbc.com/2007/09/07/exclusive-interview-john-deere-chairman-and-ceo-robert-lane-speaks-with-erin-burnett-on-street-signs-today-at-2-pm-et-transcript-included.html,DE,Deere & Company,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+265584,https://www.cnbc.com/2017/05/10/goldman-sachs-sees-a-new-threat-to-the-bull-market.html,GS,Goldman Sachs,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+117426,https://www.cnbc.com/2020/04/10/apple-google-team-up-to-track-coronavirus-spread-using-iphone-android.html,AAPL,Apple Inc.,cnbc.com,sitemap,name_only,known_correct_candidate,100585,yes,assistant
+207952,https://www.cnbc.com/2020/07/30/dr-anthony-fauci-sold-out-topps-baseball-cards-listed-on-ebay.html,EBAY,eBay Inc.,cnbc.com,sitemap,both,known_correct_candidate,100585,no,assistant
+277797,https://www.cnbc.com/2024/02/20/home-depot-hd-q4-2023-earnings.html,HD,Home Depot (The),cnbc.com,ddg,both,known_correct_candidate,100585,yes,assistant
+343818,https://www.ft.com/content/3d3be98a-a0cc-46a6-8cf5-1c643e44a430,NVDA,Nvidia,ft.com,ddg,name_only,known_correct_candidate,100585,yes,assistant

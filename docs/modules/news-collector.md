@@ -84,6 +84,11 @@ inside the engine seam (NR-002/NR-006).
 
 Background and results: `PLAN.md` Work item 10 (`T-053`).
 
+`scripts/ticker_tagging_sample.py` (`T-054`) draws the shared labeled sample of `(url, ticker)`
+pairs (`sample`) and reports wrong-company rates from the labeled CSV (`report`); the committed
+sample is `data/ticker_tagging_sample.csv`, consumed by `portfolio-nlp` `T-117`. Labels are `yes`/`no`/`unclear`
+with `labeled_by` = `judge`, `hand` or `assistant`.
+
 ## Testing
 
 ```bash

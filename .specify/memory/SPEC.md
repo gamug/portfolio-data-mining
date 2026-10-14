@@ -499,8 +499,10 @@ treating a related FR/NR as done:
     the figures hold, 96.2% of rows are `cnbc.com` sitemap rows, and the raw
     substring shortcut accepts only 823 *stored* rows (all `ddg`, because the
     sitemap strategy has only run for `cnbc`; its reach on a sitemap run of the
-    other connectors is unmeasured). The
-    name-token and substring modes' error rates remain unmeasured (`T-054`).
+    other connectors is unmeasured). `T-054` then
+    measured the error rates on a labeled sample (`data/ticker_tagging_sample.csv`;
+    human spot-check pending): about 72% of tagged pairs are wrong overall,
+    96% for ticker-only matches and 52% for name-token-only matches.
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**
     (unlike the accepted items above, and unlike §14's permanent boundaries):

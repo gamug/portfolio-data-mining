@@ -108,6 +108,12 @@ after the fact; IDs are never reused, so they stay reserved.
       `ticker`, `company`, `match_mode`, `label` (about the company: yes/no)
       and `labeled_by` (judge/hand), which is what `portfolio-nlp` T-117
       consumes. Report; the rule is chosen from this, not assumed. → step 1.
+      Built: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
+      (263 pairs; results in `PLAN.md` Work item 10). **Open:** `T-130` is not
+      built, so labels are `labeled_by = assistant` (an AI assistant, not the
+      judge or a person); a human must spot-check a subset (suggest 30 pairs,
+      all 8 `unclear`, and the 17 `ticker_only`/`name_only` `yes` labels) and
+      re-run `report` before `T-055` relies on the numbers.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
