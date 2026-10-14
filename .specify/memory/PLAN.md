@@ -552,11 +552,14 @@ SECTOR score. Full request: `portfolio-financial-analysis`'s
    listing the CIK **and** symbol, bounded by `valid_from`. Labels are copied verbatim;
    a pre-2023-03-17 label is never translated.
 2. Two additive `universe_membership` columns (`gics_revision_id`,
-   `gics_revision_timestamp`), migrated with `portfolio_common.db.ensure_columns`.
-   `queries.update_gics` writes them with a stint-keyed UPDATE
-   (`symbol`+`cik`+`valid_from`+`valid_to`) — deliberately **not** through
-   `write_intervals`/`_DB_COLUMNS`, so the fill never rewrites a row it does not fill
-   and every other row keeps NULL citation columns.
+   `gics_revision_timestamp`), migrated with `portfolio_common.db.ensure_columns`
+   **only on the builder's output copy** (`queries.migrate_gics_columns`), never on
+   open — so a read path (the gateway's `/universe` route, which opens
+   `$UNIVERSE_DB_PATH`) never ALTERs a sha1-tracked file. `queries.update_gics` writes
+   them with a stint-keyed UPDATE (`symbol`+`cik`+`valid_from`+`valid_to`) —
+   deliberately **not** through `write_intervals`/`_DB_COLUMNS`, so the fill never
+   rewrites a row it does not fill and every other row keeps NULL citation columns;
+   `_row_to_public_dict` reports the columns as `None` for an old-schema file.
 3. `universe-gics` CLI subcommand: copies `--source` to `--out`, fills, prints the
    report as JSON. Refuses `--out == --source` and the names `universe_history.db`/
    `universe.db`; idempotent on a filled file (a filled stint is skipped, so a re-run
@@ -580,6 +583,8 @@ and paces serial requests (Technological stock #6).
 - Re-running `universe-gics` on the filled file changes no row.
 - The 503 `live_snapshot` rows and every non-target column are unchanged; the full-row
   diff vs the source touches only the four GICS columns, only on the 90 target rows.
+- Opening an old-schema file through the read path leaves it byte-identical (sha1
+  before == after); a parser drop raises instead of silently emptying a stint.
 - Labels match the chosen revision verbatim.
 - The PR gives the counts, the unfilled list, and the new file's sha1; the source's
   sha1 stays `fddbdccb71ab4243a0fb76b3027774474d352b99`.

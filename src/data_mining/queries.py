@@ -19,6 +19,7 @@ Query functions:
   as_of=None path.
 - `fetch_gics_targets(db, cutoff)` -- leaver stints needing a GICS label.
 - `update_gics(db, updates)` -- write a stint's GICS label + revision citation.
+- `migrate_gics_columns(db)` -- add the two GICS citation columns (builder only).
 """
 
 from __future__ import annotations
@@ -98,14 +99,27 @@ def _connect(path: str | Path | None = None) -> Database:
 
     `path` overrides `$UNIVERSE_DB_PATH` (used by the leaver-GICS builder,
     which operates on an explicit copy so it never touches the default
-    file). The GICS citation columns are added idempotently on every open,
-    so a database created before they existed is upgraded in place.
+    file). Deliberately does NOT migrate the schema: `create_schema`'s
+    `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, and adding
+    the GICS citation columns here would make a read path (the gateway's
+    `/universe` route) rewrite whatever file `$UNIVERSE_DB_PATH` names --
+    those files are sha1-tracked and must never change. The builder migrates
+    its own output copy instead (`migrate_gics_columns`).
     """
     target = Path(path) if path is not None else Path(_db_path())
     db = Database.connect(target)
     db.create_schema(_DDL)
-    db.ensure_columns("universe_membership", _GICS_CITATION_COLUMNS)
     return db
+
+
+def migrate_gics_columns(db: Database) -> None:
+    """Add the two GICS citation columns to `universe_membership` if absent.
+
+    Called only by the leaver-GICS builder, on its own output copy -- never
+    from `_connect`, so no read path ever ALTERs the file it opens (the
+    gateway's `/universe` route opens `$UNIVERSE_DB_PATH`, which is
+    sha1-tracked and must not change). Idempotent."""
+    db.ensure_columns("universe_membership", _GICS_CITATION_COLUMNS)
 
 
 def count_membership_rows(db: Database) -> int:
@@ -168,8 +182,14 @@ def _row_to_public_dict(row: Row) -> dict:
     result = {_INVERSE_COLUMN_MAP[db_col]: row[db_col] for db_col in _COLUMN_MAP.values()}
     result["valid_from"] = row["valid_from"]
     result["valid_to"] = row["valid_to"]
-    result["gics_revision_id"] = row["gics_revision_id"]
-    result["gics_revision_timestamp"] = row["gics_revision_timestamp"]
+    # Tolerate a database created before the GICS citation columns existed
+    # (the read path never migrates): report them as None rather than
+    # raising on the missing columns.
+    keys = row.keys()
+    result["gics_revision_id"] = row["gics_revision_id"] if "gics_revision_id" in keys else None
+    result["gics_revision_timestamp"] = (
+        row["gics_revision_timestamp"] if "gics_revision_timestamp" in keys else None
+    )
     return result
 
 

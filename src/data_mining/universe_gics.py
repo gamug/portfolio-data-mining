@@ -31,7 +31,12 @@ current page.
 `universe-gics` is an explicit, documented build step run after the
 backfill (`cli/pricing_cli.py`); it is idempotent (a filled file is left
 unchanged) and writes to an explicit copy, never to the default
-`data/universe.db` or the delivered `universe_history.db`.
+`data/universe.db` or the delivered `universe_history.db`. The two citation
+columns are added to that copy by the builder
+(`queries.migrate_gics_columns`), never on open -- so the gateway's
+`/universe` read path never ALTERs the sha1-tracked file it opens, and
+`queries._row_to_public_dict` reports the columns as None when a file
+predates them.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ import logging
 import re
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -101,6 +106,25 @@ class Revision:
 
     revid: int
     timestamp: datetime
+
+
+@dataclass
+class ParsedTable:
+    """A revision's parsed constituents table: mapped rows plus a count of
+    rows the parser could not map (cell count != header count)."""
+
+    rows: list[dict[str, str]]
+    dropped: int
+
+
+@dataclass
+class ParseStats:
+    """Aggregate parser accounting across every revision examined, so the
+    builder can fail loudly if any row was dropped (expected: zero)."""
+
+    revisions: int = 0
+    rows_dropped: int = 0
+    dropped_revids: list[int] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------
@@ -291,28 +315,42 @@ def _split_cell_line(line: str) -> list[str]:
     return [_clean_cell(cell) for cell in body.split("||")]
 
 
-def parse_constituents_wikitext(text: str) -> list[dict[str, str]]:
-    """The constituents table in a revision's wikitext as a list of row
-    dicts keyed by the table's own header names. Returns `[]` when the table
-    is absent (e.g. a vandalised or template-only revision), so the caller's
-    walk-back can simply step to an older revision."""
+def parse_constituents_table(text: str) -> ParsedTable:
+    """The constituents table in a revision's wikitext, keyed by the table's
+    own header names, plus a count of rows the parser could not map.
+
+    Returns `ParsedTable([], 0)` when the table is absent (e.g. a vandalised
+    or template-only revision), so the caller's walk-back can simply step to
+    an older revision. A row whose cell count differs from the header's is
+    counted in `dropped` (not silently discarded): the builder fails loudly
+    on a non-zero count rather than let a malformed row read as "company not
+    listed"."""
     lines = text.splitlines()
     start = next(
         (i for i, line in enumerate(lines) if 'id="constituents"' in line),
         None,
     )
     if start is None:
-        return []
+        return ParsedTable([], 0)
+    return _parse_table_body(lines[start + 1 :])
 
+
+def _parse_table_body(lines: list[str]) -> ParsedTable:
     header: list[str] = []
     rows: list[dict[str, str]] = []
+    dropped = 0
     current: list[str] | None = None
 
     def flush() -> None:
-        if current and len(current) == len(header) and header:
+        nonlocal dropped
+        if not current or not header:
+            return
+        if len(current) == len(header):
             rows.append(dict(zip(header, current, strict=True)))
+        else:
+            dropped += 1
 
-    for line in lines[start + 1 :]:
+    for line in lines:
         if line.startswith("|}"):
             flush()
             break
@@ -322,10 +360,14 @@ def parse_constituents_wikitext(text: str) -> list[dict[str, str]]:
         elif line.startswith("!"):
             header.extend(_clean_cell(cell.lstrip("!")) for cell in line.split("!!"))
         elif line.startswith("|"):
-            if current is None:
-                current = []
+            current = current or []
             current.extend(_split_cell_line(line))
-    return rows
+    return ParsedTable(rows, dropped)
+
+
+def parse_constituents_wikitext(text: str) -> list[dict[str, str]]:
+    """The parsed row list only (see `parse_constituents_table`)."""
+    return parse_constituents_table(text).rows
 
 
 def find_row(rows: list[dict[str, str]], cik: str, symbol: str) -> dict[str, str] | None:
@@ -344,18 +386,36 @@ def find_row(rows: list[dict[str, str]], cik: str, symbol: str) -> dict[str, str
 # ---------------------------------------------------------------------
 
 
+def _record_parse(stats: ParseStats, revision: Revision, parsed: ParsedTable) -> None:
+    """Account one parsed revision, remembering any dropped rows."""
+    stats.revisions += 1
+    if parsed.dropped:
+        stats.rows_dropped += parsed.dropped
+        stats.dropped_revids.append(revision.revid)
+
+
+def _unfilled_reason(depth: int, skipped: list[dict[str, Any]]) -> str:
+    if depth == 0:
+        # The newest revision at or before valid_to predates valid_from, so
+        # the page has no revision inside this stint's own window.
+        return "no revision dated within valid_from..valid_to"
+    return "symbol_mismatch" if skipped[0]["cik_present"] else "cik_not_found"
+
+
 def _pick_revision(
     stint: dict[str, Any],
     revisions: list[Revision],
     *,
     client: httpx.Client,
     cache: dict[int, str],
+    stats: ParseStats,
 ) -> dict[str, Any]:
     """Walk back from the newest revision at or before `valid_to` to the
     last one that still lists this CIK+symbol, bounded by `valid_from`.
     Returns a dict with the chosen revision/row, the walk-back depth
-    (candidate revisions examined), and -- when nothing matched -- the
-    reason and any symbols the CIK appeared under instead."""
+    (candidate revisions examined), a per-candidate `skipped` explanation,
+    and -- when nothing matched -- the reason and any symbols the CIK
+    appeared under instead."""
     valid_from = date.fromisoformat(stint["valid_from"])
     valid_to = date.fromisoformat(stint["valid_to"])
     window_end = datetime(valid_to.year, valid_to.month, valid_to.day, 23, 59, 59, tzinfo=UTC)
@@ -371,12 +431,13 @@ def _pick_revision(
             "revision": None,
             "row": None,
             "depth": 0,
+            "skipped": [],
             "other_symbols": (),
             "reason": "no revision at or before valid_to in the window",
         }
 
     depth = 0
-    symbols_in_newest: list[str] = []
+    skipped: list[dict[str, Any]] = []
     for index in range(start_index, -1, -1):
         revision = revisions[index]
         if revision.timestamp.date() < valid_from:
@@ -386,32 +447,39 @@ def _pick_revision(
         if content is None:
             content = fetch_revision_content(revision.revid, client)
             cache[revision.revid] = content
-        rows = parse_constituents_wikitext(content)
-        if depth == 1:
-            symbols_in_newest = sorted(
-                {row.get(_SYMBOL, "") for row in rows if row.get(_CIK) == stint["cik"]}
-            )
-        row = find_row(rows, stint["cik"], stint["symbol"])
+        parsed = parse_constituents_table(content)
+        _record_parse(stats, revision, parsed)
+        symbols_for_cik = sorted(
+            {row.get(_SYMBOL, "") for row in parsed.rows if row.get(_CIK) == stint["cik"]}
+        )
+        row = find_row(parsed.rows, stint["cik"], stint["symbol"])
         if row is not None:
             return {
                 "revision": revision,
                 "row": row,
                 "depth": depth,
+                "skipped": skipped,
                 "other_symbols": (),
                 "reason": None,
             }
+        skipped.append(
+            {
+                "revid": revision.revid,
+                "timestamp": _format_timestamp(revision.timestamp),
+                "cik_present": bool(symbols_for_cik),
+                "symbols_for_cik": symbols_for_cik,
+                "rows_dropped": parsed.dropped,
+                "outcome": "cik_absent" if not symbols_for_cik else "symbol_differs",
+            }
+        )
 
-    reason = "cik_not_found" if not symbols_in_newest else "symbol_mismatch"
-    if depth == 0:
-        # The newest revision at or before valid_to predates valid_from, so
-        # the page has no revision inside this stint's own window.
-        reason = "no revision dated within valid_from..valid_to"
     return {
         "revision": None,
         "row": None,
         "depth": depth,
-        "other_symbols": tuple(symbols_in_newest),
-        "reason": reason,
+        "skipped": skipped,
+        "other_symbols": tuple(skipped[0]["symbols_for_cik"]) if skipped else (),
+        "reason": _unfilled_reason(depth, skipped),
     }
 
 
@@ -437,6 +505,7 @@ def _stability_check(
     *,
     client: httpx.Client,
     cache: dict[int, str],
+    stats: ParseStats,
 ) -> list[dict[str, Any]]:
     """Report only: for each filled stint, compare the chosen label with the
     same CIK+symbol's row in the newest revision at least `STABILITY_DAYS`
@@ -474,8 +543,12 @@ def _stability_check(
             report.append(entry)
             continue
         content = cache.get(older.revid, "")
-        rows = parse_constituents_wikitext(content)
-        row = find_row(rows, pick["cik"], pick["symbol"])
+        parsed = parse_constituents_table(content)
+        stats.revisions += 1
+        if parsed.dropped:
+            stats.rows_dropped += parsed.dropped
+            stats.dropped_revids.append(older.revid)
+        row = find_row(parsed.rows, pick["cik"], pick["symbol"])
         entry.update(
             {"older_revid": str(older.revid), "older_timestamp": _format_timestamp(older.timestamp)}
         )
@@ -546,6 +619,7 @@ def fill_gics(
                 "unfilled": [],
                 "stability": [],
                 "stability_differences": [],
+                "parse_stats": {"revisions": 0, "rows_dropped": 0, "dropped_revids": []},
             }
 
         revisions = fetch_revision_list(REVISION_WINDOW_START, date.today(), client)
@@ -564,10 +638,11 @@ def fill_gics(
         }
         if first_candidates:
             cache.update(fetch_revision_contents(sorted(first_candidates), client))
+        stats = ParseStats()
         picks: list[dict[str, Any]] = []
         unfilled: list[dict[str, Any]] = []
         for index, stint in enumerate(pending, start=1):
-            picked = _pick_revision(stint, revisions, client=client, cache=cache)
+            picked = _pick_revision(stint, revisions, client=client, cache=cache, stats=stats)
             if picked["row"] is None:
                 log.info(
                     "[%d/%d] %s: unfilled (%s)",
@@ -611,8 +686,21 @@ def fill_gics(
                     "gics_revision_timestamp": _format_timestamp(revision.timestamp),
                     "walk_back_depth": picked["depth"],
                     "matched_symbol": row.get(_SYMBOL),
+                    "walk_back_skipped": picked["skipped"],
                     "_revision": revision,
                 }
+            )
+
+        stability = _stability_check(picks, revisions, client=client, cache=cache, stats=stats)
+        differences = [
+            entry for entry in stability if entry.get("comparable") and not entry.get("same")
+        ]
+        if stats.rows_dropped:
+            dropped_revids = sorted(set(stats.dropped_revids))
+            raise ValueError(
+                f"parser dropped {stats.rows_dropped} constituents row(s) across "
+                f"{len(dropped_revids)} revision(s) {dropped_revids} -- refusing to "
+                "treat a malformed row as 'company not listed'"
             )
 
         queries.update_gics(
@@ -635,16 +723,15 @@ def fill_gics(
             ],
         )
 
-        stability = _stability_check(picks, revisions, client=client, cache=cache)
-        differences = [
-            entry for entry in stability if entry.get("comparable") and not entry.get("same")
-        ]
         log.info(
-            "Filled %d/%d stints; %d unfilled; %d stability differences",
+            "Filled %d/%d stints; %d unfilled; %d stability differences; "
+            "%d revision(s) parsed, %d row(s) dropped",
             len(picks),
             len(targets),
             len(unfilled),
             len(differences),
+            stats.revisions,
+            stats.rows_dropped,
         )
         return {
             "cutoff": cutoff,
@@ -657,6 +744,11 @@ def fill_gics(
             "unfilled": unfilled,
             "stability": stability,
             "stability_differences": differences,
+            "parse_stats": {
+                "revisions": stats.revisions,
+                "rows_dropped": stats.rows_dropped,
+                "dropped_revids": sorted(set(stats.dropped_revids)),
+            },
         }
     finally:
         if owns_client:
@@ -673,6 +765,9 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
     shutil.copy2(source_path, out_path)
     db = queries._connect(out_path)
     try:
+        # Add the citation columns to this copy only; the read path never
+        # migrates, so the source and the default universe DB stay untouched.
+        queries.migrate_gics_columns(db)
         return fill_gics(db)
     finally:
         db.close()
@@ -681,6 +776,8 @@ def build_gics_db(source: str | Path, out: str | Path) -> dict[str, Any]:
 __all__ = [
     "MEDIAWIKI_API_URL",
     "SP500_PAGE_TITLE",
+    "ParseStats",
+    "ParsedTable",
     "Revision",
     "build_gics_db",
     "fetch_revision_content",
@@ -688,6 +785,7 @@ __all__ = [
     "fetch_revision_list",
     "fill_gics",
     "find_row",
+    "parse_constituents_table",
     "parse_constituents_wikitext",
     "validate_paths",
 ]

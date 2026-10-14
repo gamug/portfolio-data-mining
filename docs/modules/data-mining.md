@@ -56,7 +56,12 @@ never translated into today's GICS structure. The citation (MediaWiki
 revision id and timestamp) goes in the two additive `universe_membership`
 columns `gics_revision_id`/`gics_revision_timestamp`, written by a
 stint-keyed UPDATE — never `write_intervals` — so every row the fill does
-not touch keeps them NULL.
+not touch keeps them NULL. Those columns are added to the builder's output
+copy only (`queries.migrate_gics_columns`); the read path never migrates, so
+the gateway's `/universe` route never alters the sha1-tracked file it opens
+(an old-schema file reads with both fields as `None`). A row the parser
+cannot map (cell count != header) is counted, and the builder raises rather
+than let it read as "company not listed".
 
 It is an explicit build step, run **after** `universe-backfill`:
 

@@ -10,6 +10,8 @@ data/universe.db (UNIVERSE_DB_PATH is monkeypatched to a tmp_path file).
 
 from __future__ import annotations
 
+import hashlib
+import sqlite3
 from datetime import date, datetime
 from pathlib import Path
 
@@ -139,6 +141,29 @@ def test_parse_eight_column_layout() -> None:
 
 def test_parse_missing_table_returns_empty() -> None:
     assert universe_gics.parse_constituents_wikitext("<html>page structure changed</html>") == []
+
+
+def test_parse_counts_dropped_rows() -> None:
+    # The second data row is one cell short of the header, so it cannot be
+    # mapped -- it must be counted, not silently dropped.
+    text = """
+{| class="wikitable sortable" id="constituents"
+|-
+![[Ticker symbol|Symbol]]
+! Security !! [[GICS Sector|GICS]] Sector !! GICS Sub-Industry !! Headquarters Location !! Date added !! [[Central Index Key|CIK]] !! Founded
+|-
+|{{NasdaqSymbol|AAA}}
+|[[A]]|| Industrials || Widgets || [[X]] || 2000-01-01 || 0000000001 || 1990
+|-
+|{{NasdaqSymbol|BBB}}
+|[[B]]|| Industrials || Widgets || [[X]] || 2000-01-01 || 0000000002
+|}
+"""
+    parsed = universe_gics.parse_constituents_table(text)
+
+    assert parsed.dropped == 1
+    assert [row["Symbol"] for row in parsed.rows] == ["AAA"]
+    assert [row["Symbol"] for row in universe_gics.parse_constituents_wikitext(text)] == ["AAA"]
 
 
 def test_find_row_requires_symbol_match() -> None:
@@ -290,10 +315,16 @@ def test_pick_revision_walks_back_to_last_listing(monkeypatch: pytest.MonkeyPatc
         "valid_to": "2022-02-20",
     }
 
-    picked = universe_gics._pick_revision(stint, revisions, client=None, cache={})
+    picked = universe_gics._pick_revision(
+        stint, revisions, client=None, cache={}, stats=universe_gics.ParseStats()
+    )
 
     assert picked["revision"] is not None and picked["revision"].revid == 1
     assert picked["depth"] == 3
+    # The two newer candidates did not list the CIK at all.
+    assert [s["outcome"] for s in picked["skipped"]] == ["cik_absent", "cik_absent"]
+    assert all(s["cik_present"] is False for s in picked["skipped"])
+    assert [s["revid"] for s in picked["skipped"]] == [3, 2]
 
 
 def test_pick_revision_is_bounded_by_valid_from(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -318,7 +349,9 @@ def test_pick_revision_is_bounded_by_valid_from(monkeypatch: pytest.MonkeyPatch)
         "valid_to": "2022-02-20",
     }
 
-    picked = universe_gics._pick_revision(stint, revisions, client=None, cache={})
+    picked = universe_gics._pick_revision(
+        stint, revisions, client=None, cache={}, stats=universe_gics.ParseStats()
+    )
 
     assert picked["revision"] is None
     assert picked["depth"] == 2
@@ -338,7 +371,9 @@ def test_pick_revision_reports_no_revision_in_window(monkeypatch: pytest.MonkeyP
         "valid_to": "2023-07-05",
     }
 
-    picked = universe_gics._pick_revision(stint, revisions, client=None, cache={})
+    picked = universe_gics._pick_revision(
+        stint, revisions, client=None, cache={}, stats=universe_gics.ParseStats()
+    )
 
     assert picked["revision"] is None
     assert picked["depth"] == 0
@@ -358,11 +393,15 @@ def test_pick_revision_reports_symbol_mismatch(monkeypatch: pytest.MonkeyPatch) 
         "valid_to": "2022-04-10",
     }
 
-    picked = universe_gics._pick_revision(stint, revisions, client=None, cache={})
+    picked = universe_gics._pick_revision(
+        stint, revisions, client=None, cache={}, stats=universe_gics.ParseStats()
+    )
 
     assert picked["revision"] is None
     assert picked["reason"] == "symbol_mismatch"
     assert picked["other_symbols"] == ("WBD",)
+    assert picked["skipped"][0]["outcome"] == "symbol_differs"
+    assert picked["skipped"][0]["symbols_for_cik"] == ["WBD"]
 
 
 # ---------------------------------------------------------------------
@@ -412,6 +451,14 @@ def _seed(db) -> None:
     )
 
 
+def _fresh_db():
+    """A tmp DB with the GICS citation columns added, the way the builder's
+    output copy gets them (the read path never migrates)."""
+    db = queries._connect()
+    queries.migrate_gics_columns(db)
+    return db
+
+
 def _patch_fetches(
     monkeypatch: pytest.MonkeyPatch, contents: dict[int, str] | None = None
 ) -> dict[str, int]:
@@ -436,7 +483,7 @@ def _patch_fetches(
 
 
 def test_fill_gics_fills_targets_and_cites_revision(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = queries._connect()
+    db = _fresh_db()
     _seed(db)
     calls = _patch_fetches(monkeypatch)
 
@@ -468,7 +515,7 @@ def test_fill_gics_fills_targets_and_cites_revision(monkeypatch: pytest.MonkeyPa
 
 
 def test_fill_gics_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = queries._connect()
+    db = _fresh_db()
     _seed(db)
     _patch_fetches(monkeypatch)
     universe_gics.fill_gics(db)
@@ -486,7 +533,7 @@ def test_fill_gics_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fill_gics_reports_stability_difference(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = queries._connect()
+    db = _fresh_db()
     _seed(db)
     contents = dict(_CONTENTS)
     # 30 days before GPS's chosen revision (rev 1) is rev 0; give it a
@@ -529,7 +576,7 @@ def test_validate_paths_accepts_a_new_name(tmp_path: Path) -> None:
 
 
 def test_gics_columns_are_migrated_and_exposed_in_public_dict() -> None:
-    db = queries._connect()
+    db = _fresh_db()
     _seed(db)
     columns = set(db.table_columns("universe_membership"))
     assert {"gics_revision_id", "gics_revision_timestamp"} <= columns
@@ -541,10 +588,108 @@ def test_gics_columns_are_migrated_and_exposed_in_public_dict() -> None:
 
 
 def test_fetch_gics_targets_excludes_members_with_an_open_stint() -> None:
-    db = queries._connect()
+    db = _fresh_db()
     _seed(db)
     # CUR has an open stint, so it is not a target even if it later closes;
     # OLD predates the cutoff.
     targets = queries.fetch_gics_targets(db, "2022-01-01")
     assert {t["symbol"] for t in targets} == {"DISCK", "GPS"}
+    db.close()
+
+
+# ---------------------------------------------------------------------
+# Read path must never mutate the file it opens
+# ---------------------------------------------------------------------
+
+_OLD_SCHEMA_DDL = """
+CREATE TABLE universe_membership (
+    symbol            TEXT NOT NULL,
+    security          TEXT NOT NULL,
+    gics_sector       TEXT,
+    gics_sub_industry TEXT,
+    hq_location       TEXT,
+    date_added        TEXT,
+    cik               TEXT,
+    founded           TEXT,
+    valid_from        TEXT NOT NULL,
+    valid_to          TEXT,
+    source            TEXT NOT NULL
+);
+CREATE INDEX idx_membership_symbol ON universe_membership (symbol);
+CREATE INDEX idx_membership_valid   ON universe_membership (valid_from, valid_to);
+"""
+
+
+def _make_old_schema_db(path: Path) -> None:
+    con = sqlite3.connect(path)
+    con.executescript(_OLD_SCHEMA_DDL)
+    con.execute(
+        "INSERT INTO universe_membership VALUES "
+        "('AAA','A','Industrials','Widgets','Nowhere','2000-01-01','0000000001',"
+        "'1990','2000-01-01',NULL,'live_snapshot')"
+    )
+    con.commit()
+    con.close()
+
+
+def test_read_path_leaves_old_schema_file_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gateway's `/universe` route opens `$UNIVERSE_DB_PATH` for reading;
+    that file is sha1-tracked and must not change. A file predating the GICS
+    citation columns is read with those fields as None, not migrated."""
+    path = tmp_path / "old.db"
+    _make_old_schema_db(path)
+    before = hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
+
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
+    db = queries._connect()
+    try:
+        rows = queries.query_membership_as_of(db, "2024-01-01")
+    finally:
+        db.close()
+
+    after = hashlib.sha1(path.read_bytes(), usedforsecurity=False).hexdigest()
+    assert before == after
+    assert rows and rows[0]["Symbol"] == "AAA"
+    assert rows[0]["gics_revision_id"] is None
+    assert rows[0]["gics_revision_timestamp"] is None
+
+
+def test_read_path_does_not_add_gics_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "old.db"
+    _make_old_schema_db(path)
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
+
+    db = queries._connect()
+    try:
+        columns = set(db.table_columns("universe_membership"))
+    finally:
+        db.close()
+
+    assert "gics_revision_id" not in columns
+    assert "gics_revision_timestamp" not in columns
+
+
+def test_fill_gics_raises_when_the_parser_drops_a_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = _fresh_db()
+    _seed(db)
+    # A revision whose table has a malformed row (cell count != header).
+    bad = """
+{| class="wikitable sortable" id="constituents"
+|-
+![[Ticker symbol|Symbol]]
+! Security !! [[GICS Sector|GICS]] Sector !! GICS Sub-Industry !! Headquarters Location !! Date added !! [[Central Index Key|CIK]] !! Founded
+|-
+|{{NasdaqSymbol|GPS}}
+|[[Gap]]|| Consumer Discretionary || Apparel Retail || [[X]] || 1986-08-31 || 0000039911
+|}
+"""
+    contents = {0: bad, 1: bad, 2: bad, 3: bad, 4: bad, 5: bad}
+    _patch_fetches(monkeypatch, contents)
+
+    with pytest.raises(ValueError, match="parser dropped"):
+        universe_gics.fill_gics(db)
     db.close()
