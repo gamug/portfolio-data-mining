@@ -14,6 +14,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py resolve TWTR --as-of 2022-10-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-backfill
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-snapshot
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-gics --out ..\\data\\universe_history_gics.db
     .venv\\Scripts\\python.exe cli\\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py actions XOM --start 2022-01-01 --end 2026-08-27
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-company AAPL --start 2024-01-01 --end 2024-06-01
@@ -39,6 +40,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from data_mining.portfolio import list_universe, resolve_symbol
+from data_mining.universe_gics import build_gics_db, validate_paths
 from data_mining.universe_history import backfill_from_changes, record_snapshot
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
@@ -79,6 +81,15 @@ def cmd_universe_backfill(args: argparse.Namespace, **_clients: Any) -> None:
 
 def cmd_universe_snapshot(args: argparse.Namespace, **_clients: Any) -> None:
     print_json(record_snapshot())
+
+
+def cmd_universe_gics(args: argparse.Namespace, **_clients: Any) -> None:
+    try:
+        validate_paths(args.source, args.out)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    print_json(build_gics_db(args.source, args.out))
 
 
 def cmd_pricing(
@@ -180,6 +191,24 @@ def parse_args() -> argparse.Namespace:
         help="Record today's roster as a forward snapshot (diff vs last known state)",
     )
     p.set_defaults(func=cmd_universe_snapshot)
+
+    p = sub.add_parser(
+        "universe-gics",
+        help="Backfill GICS sector/sub-industry + revision citation for leaver stints "
+        "(run after universe-backfill; writes to a new file)",
+    )
+    p.add_argument(
+        "--source",
+        default=os.environ.get("UNIVERSE_DB_PATH") or "data/universe.db",
+        help="Source universe DB to copy (default: $UNIVERSE_DB_PATH or data/universe.db)",
+    )
+    p.add_argument(
+        "--out",
+        required=True,
+        help="Destination DB to create/fill (must differ from --source and must not be "
+        "named universe_history.db or universe.db)",
+    )
+    p.set_defaults(func=cmd_universe_gics)
 
     p = sub.add_parser(
         "pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)"

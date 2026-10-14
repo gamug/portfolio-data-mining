@@ -17,6 +17,8 @@ Query functions:
 - `query_membership_as_of(db, as_of_s)` -- membership rows valid on a given
   date, mapped to the public dict shape callers already get from the
   as_of=None path.
+- `fetch_gics_targets(db, cutoff)` -- leaver stints needing a GICS label.
+- `update_gics(db, updates)` -- write a stint's GICS label + revision citation.
 """
 
 from __future__ import annotations
@@ -56,11 +58,25 @@ CREATE TABLE IF NOT EXISTS universe_membership (
     founded           TEXT,
     valid_from        TEXT NOT NULL,
     valid_to          TEXT,
-    source            TEXT NOT NULL
+    source            TEXT NOT NULL,
+    gics_revision_id        TEXT,
+    gics_revision_timestamp TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_membership_symbol ON universe_membership (symbol);
 CREATE INDEX IF NOT EXISTS idx_membership_valid   ON universe_membership (valid_from, valid_to);
 """
+
+# Additive, idempotent migration for databases created before the GICS
+# citation columns existed (same pattern as data_mining.schema's
+# _migrate_legacy_sector_column). Applied on every `_connect` so every code
+# path -- the backfill writer included -- sees the columns. They are
+# deliberately NOT in `_DB_COLUMNS`: the leaver-GICS fill writes them with a
+# standalone, stint-keyed UPDATE (`update_gics`), so `write_intervals` never
+# rewrites them and every row the fill does not touch keeps them NULL.
+_GICS_CITATION_COLUMNS = {
+    "gics_revision_id": "TEXT",
+    "gics_revision_timestamp": "TEXT",
+}
 
 
 def _db_path() -> str:
@@ -69,7 +85,7 @@ def _db_path() -> str:
     return os.environ.get("UNIVERSE_DB_PATH") or "data/universe.db"
 
 
-def _connect() -> Database:
+def _connect(path: str | Path | None = None) -> Database:
     """Open (creating the schema if absent) the universe.db `Database`.
 
     Delegates to `portfolio_common.db.Database.connect()` -- row_factory,
@@ -79,10 +95,16 @@ def _connect() -> Database:
     busy_timeout in particular -- a concurrent reader/writer could hit an
     immediate "database is locked" instead of the engine's default 30s
     retry).
+
+    `path` overrides `$UNIVERSE_DB_PATH` (used by the leaver-GICS builder,
+    which operates on an explicit copy so it never touches the default
+    file). The GICS citation columns are added idempotently on every open,
+    so a database created before they existed is upgraded in place.
     """
-    path = Path(_db_path())
-    db = Database.connect(path)
+    target = Path(path) if path is not None else Path(_db_path())
+    db = Database.connect(target)
     db.create_schema(_DDL)
+    db.ensure_columns("universe_membership", _GICS_CITATION_COLUMNS)
     return db
 
 
@@ -146,7 +168,59 @@ def _row_to_public_dict(row: Row) -> dict:
     result = {_INVERSE_COLUMN_MAP[db_col]: row[db_col] for db_col in _COLUMN_MAP.values()}
     result["valid_from"] = row["valid_from"]
     result["valid_to"] = row["valid_to"]
+    result["gics_revision_id"] = row["gics_revision_id"]
+    result["gics_revision_timestamp"] = row["gics_revision_timestamp"]
     return result
+
+
+def fetch_gics_targets(db: Database, cutoff: str = "2022-01-01") -> list[dict]:
+    """The leaver stints the GICS backfill targets: every `valid_to` on or
+    after `cutoff` whose CIK has no open (`valid_to IS NULL`) stint today --
+    i.e. companies that are no longer index members, which the live snapshot
+    cannot classify. Rows already carrying a citation are returned too, so
+    the caller can report "already filled" and skip them (idempotent
+    re-runs)."""
+    rows = db.execute(
+        "SELECT m.symbol, m.cik, m.security, m.valid_from, m.valid_to, "
+        "       m.gics_sector, m.gics_sub_industry, m.gics_revision_id "
+        "FROM universe_membership AS m "
+        "WHERE m.valid_to >= ? AND m.cik IS NOT NULL AND NOT EXISTS ("
+        "    SELECT 1 FROM universe_membership AS o "
+        "    WHERE o.cik = m.cik AND o.valid_to IS NULL"
+        ") ORDER BY m.valid_to, m.symbol",
+        (cutoff,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def update_gics(db: Database, updates: list[dict]) -> None:
+    """Write the GICS label + citation for each target stint, keyed on the
+    natural key `(symbol, cik, valid_from, valid_to)` -- unique in this
+    table (verified: no duplicate key across all rows). Only the four GICS
+    columns are touched; every other column, including the `live_snapshot`
+    rows, is left untouched."""
+    if not updates:
+        return
+    db.executemany(
+        "UPDATE universe_membership SET "
+        "    gics_sector = ?, gics_sub_industry = ?, "
+        "    gics_revision_id = ?, gics_revision_timestamp = ? "
+        "WHERE symbol = ? AND cik = ? AND valid_from = ? AND valid_to = ?",
+        [
+            (
+                u["gics_sector"],
+                u["gics_sub_industry"],
+                u["gics_revision_id"],
+                u["gics_revision_timestamp"],
+                u["symbol"],
+                u["cik"],
+                u["valid_from"],
+                u["valid_to"],
+            )
+            for u in updates
+        ],
+    )
+    db.commit()
 
 
 def query_membership_as_of(db: Database, as_of_s: str) -> list[dict]:

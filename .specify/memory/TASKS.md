@@ -64,6 +64,30 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
+## Work item 9 — GICS sector/sub-industry for the S&P 500 leaver stints (T-046)
+
+Requested by `portfolio-financial-analysis` (its `T-153` part 3, blocking its
+`T-100` full-universe run): the delivered `universe_history.db` has
+`gics_sector`/`gics_sub_industry` filled for the 503 `live_snapshot` rows and
+empty for every `wikipedia_changes_backfill` row, so no company that left the
+index carries a classification. Fill the 90 leaver stints (`valid_to >=
+2022-01-01`, CIK with no open stint) from the revision history of Wikipedia's
+"List of S&P 500 companies" page, and record each label's revision citation.
+Full request: `portfolio-financial-analysis`'s
+`docs/upstream_requests/data_mining_leaver_gics.md`.
+
+- [ ] **T-046** Add `src/data_mining/universe_gics.py` (MediaWiki revision-list +
+      content fetch, header-aware constituents parser, walk-back picker bounded by
+      `valid_from`, report-only stability check) and the `queries` citation columns
+      (`gics_revision_id`/`gics_revision_timestamp`) with `fetch_gics_targets`/
+      `update_gics` (a stint-keyed UPDATE, never `write_intervals`); wire the
+      `universe-gics` CLI subcommand (refuses `--out == --source` and the two
+      canonical DB names). Hermetic tests in `tests/data_mining/test_universe_gics.py`;
+      update `docs/modules/data-mining.md` and `SPEC.md` FR-013/NR-004/§5/§10. Build
+      the new `/workspaces/thesis/data/universe_history_gics.db` and report its sha1,
+      the 90-row fill table, the unfilled list, and the full-row diff vs the source.
+      → `PLAN.md` Work item 9.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -72,6 +96,8 @@ Closed Work items 3, 4, 5, 6 and 7 are in `CHANGELOG.md` (Work item 5 closed 202
 Work item 7, `T-044`, closed 2026-10-09).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
+
+Work item 9 (`T-046`, GICS sector/sub-industry for the S&P 500 leaver stints) is open and active.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

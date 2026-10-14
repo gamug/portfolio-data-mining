@@ -529,10 +529,67 @@ Downstream analysis needs the filer CIK and period of report directly on filing-
 - `{ticker}` path parameter accepting both ticker and CIK documented across OpenAPI schemas and `SPEC.md`.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+## Work item 9 — GICS sector/sub-industry for the S&P 500 leaver stints (code + data, T-046)
+
+**Status: in progress. `T-046` active.**
+
+**Why**: `portfolio-financial-analysis` (its `T-153` part 3, blocking its `T-100`
+full-universe run) needs the leaver stints classified. The delivered
+`universe_history.db` (PR #49) has `gics_sector`/`gics_sub_industry` filled for the
+503 `live_snapshot` rows and empty for all 391 `wikipedia_changes_backfill` rows, so
+the 90 stints inside the backtest window (`valid_to >= 2022-01-01`, CIK with no open
+stint) get no company type, no regulated-utility exemption, no REIT rules, and no
+SECTOR score. Full request: `portfolio-financial-analysis`'s
+`docs/upstream_requests/data_mining_leaver_gics.md`.
+
+**Approach**:
+1. New `src/data_mining/universe_gics.py`: read the "List of S&P 500 companies"
+   revision list from the MediaWiki API (window from 2021-01-01, paged), fetch each
+   candidate revision's content by revid, parse the constituents table **by header
+   name** (the page's column set changed — 2022 revisions carry an extra "SEC filings"
+   column, 2023+ do not, so the live positional parser can't be reused), and for each
+   stint walk back from the newest revision at or before `valid_to` to the last one
+   listing the CIK **and** symbol, bounded by `valid_from`. Labels are copied verbatim;
+   a pre-2023-03-17 label is never translated.
+2. Two additive `universe_membership` columns (`gics_revision_id`,
+   `gics_revision_timestamp`), migrated with `portfolio_common.db.ensure_columns`.
+   `queries.update_gics` writes them with a stint-keyed UPDATE
+   (`symbol`+`cik`+`valid_from`+`valid_to`) — deliberately **not** through
+   `write_intervals`/`_DB_COLUMNS`, so the fill never rewrites a row it does not fill
+   and every other row keeps NULL citation columns.
+3. `universe-gics` CLI subcommand: copies `--source` to `--out`, fills, prints the
+   report as JSON. Refuses `--out == --source` and the names `universe_history.db`/
+   `universe.db`; idempotent on a filled file (a filled stint is skipped, so a re-run
+   makes no network call and writes nothing).
+4. A **report-only** stability check compares each chosen label with the same
+   CIK+symbol's row in the newest revision ≥30 days older. Every difference is surfaced
+   for a human to accept or reject (a vandalised revision must not slip through), never
+   silently trusted, and the chosen label is never changed by it.
+5. Tests: `tests/data_mining/test_universe_gics.py` (hermetic — MockTransport for the
+   MediaWiki API, monkeypatched fetches for the end-to-end fill, tmp-path DB).
+
+**No constitution change** — no new dependency or provider (Wikipedia via `httpx`,
+already used; the page is already scraped by `data_mining.portfolio`), so AI behavior
+#10 does not apply. The builder self-identifies to Wikimedia with `research@example.com`
+and paces serial requests (Technological stock #6).
+
+**Acceptance criteria**:
+- All 90 stints carry `gics_sector`/`gics_sub_industry` plus a revision id/timestamp, or
+  appear on the "could not be filled" list with a reason (and, where the CIK was found
+  under another symbol notation, which).
+- Re-running `universe-gics` on the filled file changes no row.
+- The 503 `live_snapshot` rows and every non-target column are unchanged; the full-row
+  diff vs the source touches only the four GICS columns, only on the 90 target rows.
+- Labels match the chosen revision verbatim.
+- The PR gives the counts, the unfilled list, and the new file's sha1; the source's
+  sha1 stays `fddbdccb71ab4243a0fb76b3027774474d352b99`.
+- `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` clean.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6 and 7 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
-items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 is open and active.
+items 1–2 stay reverted/on hold at the maintainer's prior request. Work items 8 (`T-045`)
+and 9 (`T-046`) are open and active.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
