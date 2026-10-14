@@ -55,6 +55,16 @@ _ROWS = [
 ]
 
 
+def _make_db(tmp_path: Path) -> Path:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
+    return db
+
+
 @pytest.mark.parametrize(
     ("row", "mode"),
     [
@@ -84,12 +94,7 @@ def test_title_counts_as_match_text() -> None:
 
 
 def test_audit_counts_and_read_only(tmp_path: Path) -> None:
-    db = tmp_path / "urls.db"
-    with sqlite3.connect(db) as con:
-        con.execute(
-            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
-        )
-        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
+    db = _make_db(tmp_path)
     before = db.read_bytes()
     result = audit_mod.audit(db, min_rows=1, generic_share=0.2)
     assert result["total_rows"] == len(_ROWS)
@@ -108,12 +113,7 @@ def test_audit_counts_and_read_only(tmp_path: Path) -> None:
 def test_main_reads_database_url(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    db = tmp_path / "urls.db"
-    with sqlite3.connect(db) as con:
-        con.execute(
-            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
-        )
-        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
+    db = _make_db(tmp_path)
     monkeypatch.setenv("DATABASE_URL", str(db))
     assert audit_mod.main(["--min-rows", "1"]) == 0
     assert "rows scanned: 5" in capsys.readouterr().out
@@ -124,16 +124,6 @@ def test_main_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "not found" in capsys.readouterr().err
 
 
-def _make_db(tmp_path: Path) -> Path:
-    db = tmp_path / "urls.db"
-    with sqlite3.connect(db) as con:
-        con.execute(
-            "CREATE TABLE discovered_urls (url TEXT, title TEXT, domain TEXT, company TEXT, ticker TEXT, source TEXT)"
-        )
-        con.executemany("INSERT INTO discovered_urls VALUES (?,?,?,?,?,?)", _ROWS)
-    return db
-
-
 def test_shortcut_domains_match_connector_sources() -> None:
     """SHORTCUT_DOMAINS must equal the connectors that still run the raw substring shortcut."""
     connectors = Path(audit_mod.__file__).resolve().parents[1] / "src/news_collector/connectors"
@@ -141,7 +131,9 @@ def test_shortcut_domains_match_connector_sources() -> None:
     for path in connectors.glob("*.py"):
         text = path.read_text()
         if "ticker.lower() in url.lower()" in text:
-            found.add(re.search(r'domain="([^"]+)"', text).group(1))  # type: ignore[union-attr]
+            match = re.search(r'domain="([^"]+)"', text)
+            assert match, f"{path.name} has the shortcut but no domain= config"
+            found.add(match.group(1))
     assert found == set(audit_mod.SHORTCUT_DOMAINS)
 
 
@@ -159,6 +151,7 @@ def test_json_output_round_trips(tmp_path: Path, capsys: pytest.CaptureFixture[s
     data = json.loads(capsys.readouterr().out)
     assert data["total_rows"] == len(_ROWS)
     assert data["thresholds"]["min_rows"] == 1
+    assert data["thresholds"]["word_tickers"] == list(audit_mod.WORD_TICKERS)
 
 
 def test_min_rows_filters_lists(tmp_path: Path) -> None:

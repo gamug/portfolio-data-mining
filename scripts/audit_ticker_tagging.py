@@ -16,7 +16,7 @@ so the audit cannot drift from the code under test. The database is opened
 read-only.
 
 Usage:
-    PYTHONPATH=src python scripts/audit_ticker_tagging.py [--db PATH]
+    PYTHONPATH=src uv run python scripts/audit_ticker_tagging.py [--db PATH]
         [--json] [--min-rows N] [--generic-share F]
 
 ``--db`` defaults to ``$DATABASE_URL``, else ``data/urls.db``
@@ -176,7 +176,11 @@ def audit(
         )
     return {
         "total_rows": total,
-        "thresholds": {"min_rows": min_rows, "generic_share": generic_share},
+        "thresholds": {
+            "min_rows": min_rows,
+            "generic_share": generic_share,
+            "word_tickers": list(WORD_TICKERS),
+        },
         "by_connector": [_row(c, domain=d, source=src) for (d, src), c in sorted(by_conn.items())],
         "word_tickers": sorted(word_tickers, key=lambda r: -r["rows"]),
         "generic_first_words": sorted(generic, key=lambda r: -r["rows"]),
