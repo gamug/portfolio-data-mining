@@ -7,7 +7,7 @@ and returns plain data; this is the only place SQL text for this table
 lives.
 
 Query functions:
-- `_connect()` -- open (creating the schema if absent) the universe.db `Database`.
+- `connect(path=None)` -- open (creating the schema if absent) the universe.db `Database`.
 - `count_membership_rows(db)` -- row count of `universe_membership`.
 - `clear_membership(db)` -- delete every row (used by a forced backfill).
 - `write_intervals(db, intervals)` -- bulk-insert reconstructed/snapshot intervals.
@@ -69,9 +69,10 @@ CREATE INDEX IF NOT EXISTS idx_membership_valid   ON universe_membership (valid_
 
 # Additive, idempotent migration for databases created before the GICS
 # citation columns existed (same pattern as data_mining.schema's
-# _migrate_legacy_sector_column). Applied on every `_connect` so every code
-# path -- the backfill writer included -- sees the columns. They are
-# deliberately NOT in `_DB_COLUMNS`: the leaver-GICS fill writes them with a
+# _migrate_legacy_sector_column), but applied ONLY by the leaver-GICS builder
+# on its own output copy (`migrate_gics_columns`) -- never on `connect`, so no
+# read path ALTERs a sha1-tracked file. New files get the columns from `_DDL`.
+# They are deliberately NOT in `_DB_COLUMNS`: the leaver-GICS fill writes them with a
 # standalone, stint-keyed UPDATE (`update_gics`), so `write_intervals` never
 # rewrites them and every row the fill does not touch keeps them NULL.
 _GICS_CITATION_COLUMNS = {
@@ -86,7 +87,7 @@ def _db_path() -> str:
     return os.environ.get("UNIVERSE_DB_PATH") or "data/universe.db"
 
 
-def _connect(path: str | Path | None = None) -> Database:
+def connect(path: str | Path | None = None) -> Database:
     """Open (creating the schema if absent) the universe.db `Database`.
 
     Delegates to `portfolio_common.db.Database.connect()` -- row_factory,
@@ -116,7 +117,7 @@ def migrate_gics_columns(db: Database) -> None:
     """Add the two GICS citation columns to `universe_membership` if absent.
 
     Called only by the leaver-GICS builder, on its own output copy -- never
-    from `_connect`, so no read path ever ALTERs the file it opens (the
+    from `connect`, so no read path ever ALTERs the file it opens (the
     gateway's `/universe` route opens `$UNIVERSE_DB_PATH`, which is
     sha1-tracked and must not change). Idempotent."""
     db.ensure_columns("universe_membership", _GICS_CITATION_COLUMNS)

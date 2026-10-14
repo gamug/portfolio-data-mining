@@ -293,7 +293,7 @@ uv run cli/pricing_cli.py universe-snapshot        # periodic, by hand: refresh 
 uv run cli/sec_edgar_cli.py filings AAPL --form 10-K
 uv run cli/<service>_cli.py --help          # full subcommand list per service
 
-uv run pytest                               # full suite (230 tests as of PR #36)
+uv run pytest                               # full suite
 uv run pytest tests/<package> -q            # one module's tests
 
 uv run ruff check .                         # lint (config: .code_quality/ruff.toml via root pointer)

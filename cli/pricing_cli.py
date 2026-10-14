@@ -40,7 +40,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from data_mining.portfolio import list_universe, resolve_symbol
-from data_mining.universe_gics import build_gics_db, validate_paths
+from data_mining.universe_gics import build_gics_db
 from data_mining.universe_history import backfill_from_changes, record_snapshot
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
@@ -85,11 +85,11 @@ def cmd_universe_snapshot(args: argparse.Namespace, **_clients: Any) -> None:
 
 def cmd_universe_gics(args: argparse.Namespace, **_clients: Any) -> None:
     try:
-        validate_paths(args.source, args.out)
+        report = build_gics_db(args.source, args.out)
     except ValueError as e:
         print(str(e), file=sys.stderr)
         sys.exit(1)
-    print_json(build_gics_db(args.source, args.out))
+    print_json(report)
 
 
 def cmd_pricing(
