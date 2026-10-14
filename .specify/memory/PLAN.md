@@ -738,8 +738,18 @@ tagged company; that is a small-sample estimate, not a measurement.
    retention check), so the fix is judged on evidence and nothing is labeled
    twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
-   Design options T-055 must decide between or combine, given the per-path
-   rates above:
+   **Decided 2026-10-14 (maintainer): split the work by what each side can
+   see.** Discovery sees only the URL (the 462k `cnbc` sitemap rows have no
+   title), so this repo applies only the cheap, deterministic strict rules below
+   (it also saves fetching bodies for obviously wrong pairs); the semantic
+   question "is the company a subject of the article" is answered by
+   `portfolio-nlp` from the body and its NER organization spans, and this repo
+   keeps the questionable pairs marked (quarantine, step 4) so that stage only
+   judges those. Rejected: fixing everything from the slug alone (precision
+   capped by a hand-kept stoplist) and moving everything to `portfolio-nlp`
+   (wrong rows stay in `urls.db`, ~450k bodies fetched for mostly wrong pairs).
+   The numeric targets are still set in T-055 from the hand labels. The
+   options below are the discovery-side parts of that split:
    - **Provenance for `ddg`**: treat a hit returned for a *company-name* query
      as evidence for that company (it is where the search engine did the
      matching), stop issuing bare-ticker queries when the ticker is an ordinary
