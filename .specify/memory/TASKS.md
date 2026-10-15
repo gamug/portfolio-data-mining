@@ -127,7 +127,13 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`
       FR-014 and the `PLAN.md` acceptance criteria before any code is written.
-      → step 2.
+      **Proposed 2026-10-15, awaiting approval (no code):** three-class rule
+      `accept`/`review`/`reject` from URL+title, quarantine for `review` and
+      `reject`, `ddg` query provenance, once-per-article attribution for
+      `sitemap`; targets: wrong rate among `accept` at most 15%, correct pairs
+      kept at least 95%, known-correct `accept` at least 90%, plus a fresh
+      ~100-pair hand-labeled check after T-056. All figures in `PLAN.md` Work
+      item 10 reproduce with `scripts/score_ticker_rules.py`. → step 2.
 - [ ] **T-056** Implement the rule once, in a shared `BaseConnector` helper
       (built on `_company_pattern`) that **all seven** connectors that match
       companies delegate to — `cnbc`, `ft`, `investing`, `nasdaq`,

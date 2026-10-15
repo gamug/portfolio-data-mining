@@ -24,6 +24,7 @@ import argparse
 import csv
 import re
 import sys
+from collections import defaultdict
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
@@ -47,6 +48,17 @@ STOPWORDS = frozenset(
     }
 )
 
+# Ordinary words that are also tickers or look like them in a headline; an
+# upper-case ticker among these never counts as evidence by itself.
+COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
+    {
+        *("AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN", "IS", "ME", "MY"),
+        *("NO", "OF", "OR", "SO", "TO", "UP", "US", "WE", "I", "CAN", "FOR", "ONE", "OUT"),
+        *("NEW", "BIG", "FAST", "KEY", "APP", "FIX"),
+    }
+)
+MIN_SHORT_TICKER = 2
+
 Row = dict[str, str]
 Rule = Callable[[Row, str, str], bool]
 
@@ -57,7 +69,8 @@ def _flat(text: str) -> str:
 
 def _name_in(row: Row, text: str) -> bool:
     name = normalized_name(row["company"])
-    return len(name) >= MIN_NAME and f" {name} " in _flat(text)
+    distinctive = len(name) >= MIN_NAME or any(c.isdigit() for c in name)  # "3M"
+    return distinctive and f" {name} " in _flat(text)
 
 
 def _explicit(ticker: str, title: str, body: str) -> bool:
@@ -104,6 +117,84 @@ def rule_plus_title_signals(row: Row, title: str, body: str) -> bool:
         and re.search(rf"\b{re.escape(first)}\b", title) is not None
     )
     return rule_plus_body_name(row, title, body) or upper or word
+
+
+def _word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
+    return (
+        re.search(rf"(?<![A-Za-z0-9&]){re.escape(token)}(?![A-Za-z0-9&])", text, flags) is not None
+    )
+
+
+def design_class(row: Row, title: str) -> str:
+    """T-055 design v1, from the URL and title only (what discovery can see).
+
+    ``accept``: the full normalized name is in the URL/title, or an explicit
+    ticker form, or an upper-case ticker (2+ letters, not a common word) in the
+    title. ``review``: only a weaker sign, a non-common ticker or a distinctive
+    first word anywhere in the URL/title. ``reject``: nothing else.
+    """
+    ticker = row["ticker"]
+    slug = row["url"].split("//", 1)[-1]
+    text = f"{slug} {title}"
+    strong = (
+        _name_in(row, text)
+        or _explicit(ticker, title, "")
+        or (
+            len(ticker) >= MIN_SHORT_TICKER
+            and ticker not in COMMON_TICKER_WORDS
+            and _word(ticker, title, 0)
+        )
+    )
+    if strong:
+        return "accept"
+    first = row["company"].split()[0].strip(",.")
+    weak = (
+        len(ticker) >= MIN_TICKER and ticker not in COMMON_TICKER_WORDS and _word(ticker, text)
+    ) or (len(first) >= MIN_NAME and first.lower() not in STOPWORDS and _word(first, text))
+    return "review" if weak else "reject"
+
+
+def design_report(data: list[tuple[Row, str, str, str]]) -> str:
+    """Population-weighted shares and wrong rates of the three design classes.
+
+    Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
+    the figures estimate the whole corpus, not the sample mix.
+    """
+    strata: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    size: dict[str, int] = {}
+    known: list[tuple[str, str]] = []
+    for row, _status, title, _body in data:
+        pair = (design_class(row, title), row["label"])
+        if row["stratum"] == "known_correct_candidate":
+            known.append(pair)
+            continue
+        strata[row["stratum"]].append(pair)
+        size[row["stratum"]] = int(row["stratum_size"])
+    weight: dict[tuple[str, str], float] = defaultdict(float)
+    for name, pairs in strata.items():
+        for pair in pairs:
+            weight[pair] += size[name] / len(pairs)
+    total = sum(weight.values())
+    yes_total = sum(w for (_k, lab), w in weight.items() if lab == "yes")
+    lines = ["== design v1 (URL/title only), population-weighted =="]
+    for cls in ("accept", "review", "reject"):
+        yes, no = weight[(cls, "yes")], weight[(cls, "no")]
+        lines.append(
+            f"{cls:8} share {(yes + no) / total:6.1%}  wrong in class "
+            f"{no / (yes + no) if yes + no else 0:6.1%}  (raw n "
+            f"{sum(1 for pairs in strata.values() for p in pairs if p[0] == cls)})"
+        )
+    kept_yes = weight[("accept", "yes")] + weight[("review", "yes")]
+    lines.append(
+        f"correct pairs kept (accept+review): {kept_yes / yes_total:.1%}; "
+        f"accept only: {weight[('accept', 'yes')] / yes_total:.1%}"
+    )
+    yes_known = [c for c, lab in known if lab == "yes"]
+    lines.append(
+        f"known-correct (labeled yes) classed accept: "
+        f"{sum(c == 'accept' for c in yes_known)}/{len(yes_known)}"
+    )
+    return "\n".join(lines)
 
 
 RULES: dict[str, Rule] = {
@@ -194,6 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     data = [d for d in load(db, sample) if d[0]["id"] not in set(args.exclude_ids)]
     print(f"rows scored: {len(data)}; excluded (unclear or unlabeled): {unclear}\n")
     print(render(data))
+    print(design_report(data))
     return 0
 
 

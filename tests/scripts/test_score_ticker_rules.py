@@ -66,6 +66,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
             writer.writerow(
                 {"id": i, "url": u, "ticker": t, "company": c, "label": lab}
                 | {k: "" for k in FIELDS if k not in ("id", "url", "ticker", "company", "label")}
+                | {"stratum": "d/s/both", "stratum_size": "10"}
             )
     return db, sample
 
@@ -100,3 +101,35 @@ def test_main_exclude_and_missing(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "rows scored: 4; excluded (unclear or unlabeled): 0" in out
     assert "current (accepts all)" in out
     assert mod.main(["--db", str(tmp_path / "no.db"), "--sample", str(sample)]) == 1
+
+
+def _row(ticker: str, company: str, url: str = "https://x/a.html") -> dict[str, str]:
+    return {"ticker": ticker, "company": company, "url": url}
+
+
+@pytest.mark.parametrize(
+    ("row", "title", "expected"),
+    [
+        (_row("GM", "General Motors"), "GM lays off 1,000 workers", "accept"),  # short upper-case
+        (_row("A", "Agilent Technologies"), "Trust a month on", "reject"),  # lone letter
+        (_row("ON", "ON Semiconductor"), "Why traders bet ON growth", "reject"),  # common word
+        (_row("MMM", "3M"), "3M trims forecast", "accept"),  # digit name
+        (_row("TTD", "Trade Desk"), "Trade war ends", "reject"),  # stopword first word
+        (_row("TTD", "Trade Desk"), "The Trade Desk raises outlook", "accept"),  # full name
+        (
+            _row("HON", "Honeywell International"),
+            "Honeywell stock soars",
+            "review",
+        ),  # first word only
+        (_row("AAPL", "Apple Inc."), "Stocks (NASDAQ: AAPL) rise", "accept"),  # explicit form
+    ],
+)
+def test_design_class(row: dict[str, str], title: str, expected: str) -> None:
+    assert mod.design_class(row, title) == expected
+
+
+def test_design_report_weights_by_stratum(tmp_path: Path) -> None:
+    db, sample = _fixture(tmp_path)
+    text = mod.design_report(mod.load(db, sample))
+    assert "design v1" in text
+    assert "known-correct (labeled yes) classed accept: 0/0" in text

@@ -741,15 +741,15 @@ the `yes` pairs):
 | rule | kept-correct | kept-wrong | precision | recall |
 |---|---:|---:|---:|---:|
 | `current (accepts all)` | 172 | 91 | 65% | 100% |
-| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 121 | 5 | 96% | 70% |
-| `above, or name twice in body` | 126 | 5 | 96% | 73% |
-| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
+| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 122 | 5 | 96% | 71% |
+| `above, or name twice in body` | 127 | 5 | 96% | 74% |
+| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 164 | 6 | 96% | 95% |
 
 The two disputed-looking labels (`MGM` 317362, `DE` 180987) were approved as
 labeled `no`; for sensitivity, leaving them out (`--exclude-ids 317362 180987`)
 the last rule keeps 4 (not 6) wrong pairs, precision 98%, and flipping both to
 `yes` would give the same 4. On the
-`ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
+`ok`-only rows `portfolio-nlp` sees, the last rule keeps 79 of 80 correct
 and 5 of 61 wrong pairs. Missed or kept wrongly: the remaining wrong ones are a
 phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and the
 `MGM` and `DE` pairs approved as `no`. This shows the current rule's problem is the lack of
@@ -810,7 +810,65 @@ tagged company; that is a small-sample estimate, not a measurement.
      is about, from the full normalized name, explicit ticker forms, and the
      title/body when fetched, instead of testing every company against every
      URL. This is where ~96% of the corpus and ~all the wrong tags are.
-   Direction for the per-company matcher, to be confirmed against step 1's data:
+   **Design v1 proposed 2026-10-15 (T-055, awaiting approval; nothing is coded).**
+Discovery can only see the URL and, for `ddg` rows, the title, so each
+`(url, ticker)` pair is put in one of three classes from those two texts
+(`scripts/score_ticker_rules.py`, function `design_class`, reproduces every
+figure below):
+
+- **accept**: the full normalized company name (digit-bearing names such as
+  `3M` included) is in the URL or title, or an explicit ticker form (`$X`,
+  `(NYSE: X)`, `NASDAQ: X`), or the ticker as an upper-case token of 2+ letters
+  in the title that is not an ordinary word (`GM`, `PG`, `MSFT`; never `A`,
+  `ON`, `IT`, `ARE`, `NOW`). A bare ticker never counts against a lowercase
+  URL slug and never as a raw substring.
+- **review**: only a weaker sign (a non-word ticker or a distinctive first word
+  somewhere in the URL/title; a first word on the stoplist does not count).
+- **reject**: nothing else.
+
+Population-weighted on the 243 stratified hand labels (known-correct rows
+excluded): `accept` is 28.7% of the corpus and wrong 10.9% of the time,
+`review` 12.0% and wrong 64.4%, `reject` 59.2% and wrong ~100%. Together
+`accept` and `review` keep 99.9% of the correct pairs (169 of 172 raw), `accept`
+alone 85.6%; all 17 known-correct pairs labeled `yes` are `accept`. Today
+70% of tagged pairs are wrong; design v1 leaves 10.9% wrong in what
+`portfolio-nlp` reads by default. By path the raw counts are `ddg` accept
+126 correct / 2 wrong, review 11 / 0, and `sitemap` accept 28 / 3, review
+4 / 5, reject 0 / 23. **Caveat: the thresholds and the common-word list were
+chosen after reading the errors on this same sample (in-sample), the
+sitemap strata are 8-15 rows each, and the intervals are wide; the targets
+below leave a margin and are re-measured on a fresh sample (below).**
+
+What happens to each class (the cross-repo shape is agreed in `T-058`
+before the re-tag runs): `accept` rows stay as they are; `review` rows are
+**quarantined** (kept in `urls.db`, flagged, not selected by the default
+`portfolio-nlp` query) and sent to its body/NER judge, which decides; `reject`
+rows are quarantined with a reason so the re-tag is reversible, not deleted.
+For `ddg`, the company-name query is already evidence (`ddg` review rows are
+11 of 11 correct in the sample), so a `ddg` row found by the company-name
+query and classed `review` is promoted to `accept`; this needs the new
+`query` column (T-056) and cannot be applied retroactively to stored rows,
+whose query is unknown, so stored `ddg` review rows stay `review`. For
+`sitemap` the pair is decided once per article across all companies; a URL
+accepted for several companies is legitimate (roundups) and marked
+`multi_company`. A small hand-kept alias list (for example `Google` for
+Alphabet, `P&G` for Procter & Gamble, `Facebook` for Meta) is part of the
+rule and tested; no new dependency.
+
+**Targets proposed (to be written into FR-014 on approval)**, on the shared
+labeled sample (`scripts/score_ticker_rules.py`) and re-checked on a fresh
+out-of-sample set of about 100 hand-labeled pairs drawn after T-056 from the
+accept and review classes:
+
+- wrong-company rate among `accept` rows at most **15%** (today 70%; design v1
+  measures 10.9% in-sample);
+- correct pairs kept as `accept` or `review` at least **95%** (measured 99.9%);
+- known-correct pairs labeled `yes` classed `accept` at least **90%** (measured
+  17 of 17);
+- no `accept` row whose only evidence is an ordinary-word ticker, a stoplist
+  first word or a raw substring (hermetic tests per connector).
+
+Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short
      symbol, and never counts against a lowercase URL slug at all; it counts
      only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an
