@@ -178,6 +178,14 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       on them and the corpus holds none, so they keep `accept` by construction
       (`match_reason = 'feed'`), stated in FR-014; `rss` entries go through the sitemap
       strategy's filter and **are** classified, with their feed title. → step 3.
+      **Results (T-056a, PR #58):** signals as above plus `cashtag`. Exchange forms (`NYSE: X`,
+      `Nasdaq: X`, `NYSE American`, `NYSE MKT`, `NYSEARCA`, parenthesised or not) accept; a bare `(X)`
+      does not; `$X` accepts, but for an ordinary-word ticker or an abbreviation it is `review`.
+      Corpus class sizes: re-tag `accept` 104,614 / `review` 51,295 / `reject` 325,423; discovery
+      86,985 / 63,162 / 331,185. `score_ticker_rules.py --check` reproduces the PLAN table (both
+      samples, both modes) and exits 1 on drift. Known limitation, measured with `--names`: 59,956
+      `accept` rows rest on a one-word name, about 12,400 of them dictionary words (Apple 9,890).
+      T-057's fresh check is the acceptance evidence.
 - [ ] **T-056b** *(shared-schema change; needs the maintainer's constitution AI
       behavior #10 confirmation before it starts: new `discovered_urls` columns, a `status`
       convention and the extractor update touch the two-package DB contract. The design,
