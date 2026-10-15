@@ -140,11 +140,16 @@ async def test_run_one_counts_rejected_rows_and_dedupe_keeps_the_higher_class(
     )
 
     assert (partial.inserted_count, partial.rejected_count, partial.duplicate_count) == (2, 1, 1)
-    stored = {
-        r["url"]: (r["match_class"], r["status"], r["query"])
-        for r in queue._conn.execute("SELECT url, match_class, status, query FROM discovered_urls")  # type: ignore[union-attr]
-    }
-    assert stored == {
+    stored, _total = queue.query(limit=10)
+    assert {u.url: (u.match_class, u.status, u.query) for u in stored} == {
         "https://cnbc.com/a": ("accept", "pending", "q1"),
         "https://cnbc.com/b": ("reject", "skipped", "q1"),
     }
+
+    # the same pair found again inserts nothing, so it reports no new rejected row
+    again = await orch._run_one(
+        Company(ticker="AAPL", name="Apple"),
+        "cnbc.com",
+        DateRange(start=date(2024, 1, 1), end=date(2024, 1, 31)),
+    )
+    assert (again.inserted_count, again.rejected_count) == (0, 0)

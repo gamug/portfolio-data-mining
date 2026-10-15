@@ -181,9 +181,10 @@ def reevaluate_match(db: Database, url_id: int, fetched_title: str | None = None
 
 def record_fetch(db: Database, article: dict) -> None:
     """Persist one fetch result: the article, the row's status, and (for a page that was
-    read) the post-fetch re-evaluation of its match class. The three steps live here so
+    read, whatever its content verdict: `ok`, `paywalled` or `thin_content`) the post-fetch
+    re-evaluation of its match class. The three steps live here so
     the CLI and both API endpoints cannot drift apart."""
     save_article(db, article)
     mark_status(db, article["id"], article["fetch_status"], article["http_status_code"])
-    if article["fetch_status"] == "ok":
+    if article["fetch_status"] != "failed":
         reevaluate_match(db, article["id"], article.get("title"))

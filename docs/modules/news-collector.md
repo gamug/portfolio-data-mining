@@ -32,14 +32,16 @@ the reason and (for `ddg`) the search `query`. `accept` and `review` rows stay `
 needs its body for `portfolio-nlp`'s decision); a `reject` row is stored `skipped` (never fetched).
 **Fetch policy:** the class is computed at discovery from the URL and the title (the `ddg` hit title or an
 RSS entry title; a plain sitemap entry has none), then **re-evaluated after the fetch** by the extractor
-(`extractor.db.reevaluate_match`, called after `mark_status` by the crawler CLI and API) with the stored
+(`extractor.db.reevaluate_match`, called by `extractor.db.record_fetch` in the crawler CLI and API) with the stored
 and the fetched title. It is promote-only (`review`→`accept`), guarded in SQL on the class that was read,
 and never touches a `reject` row. A sitemap `reject` row without a title stays `reject` (about 5,800
 pairs would be `review`/`accept` with a title and are never fetched; the T-057 check measures it).
 Rows from the `api` feeds (`stocktwits`, `yahoo_finance`) are `accept` with `match_reason = 'feed'`. The
 orchestrator's merge of the strategies keeps the higher class of a pair found twice (and its `query`). The
-discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` and the CLI summary report `rejected=`: those
-rows are part of `inserted` but are never fetched, so subtract them to size the fetch queue.
+discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` (`total_rejected`) and the CLI summary report
+`rejected=`: the **newly inserted** rows that are matcher-rejected (`URLQueue.last_inserted_rejected`). They are
+part of `inserted` but never fetched, so `inserted - rejected` sizes the new fetch queue (a re-run inserts
+0 and reports 0).
 `multi_company` is derived, not stored: a URL with two or more `accept` pairs. **Rows discovered before
 `T-056c` carry no class** (stored `accept`): do not feed such a run to `portfolio-nlp` until the T-057
 re-tag. Design and evidence: `PLAN.md` Work item 10.

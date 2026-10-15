@@ -134,7 +134,7 @@ def main() -> None:
         counts = asyncio.run(run(args))
     except KeyboardInterrupt:
         # Every completed URL is committed to the DB as it finishes (see
-        # extractor.db.save_article/mark_status), so nothing done so far is
+        # extractor.db.record_fetch), so nothing done so far is
         # lost -- whatever was still in flight just stays 'pending' and
         # gets retried automatically next run. No separate resume step.
         print("\nInterrupted. Progress so far is saved -- re-run the same command to continue.")

@@ -152,7 +152,9 @@ class PartialStats:
     sitemap_count: int = 0
     inserted_count: int = 0
     duplicate_count: int = 0
-    rejected_count: int = 0  # matcher-rejected rows in the batch (stored skipped, never fetched)
+    rejected_count: int = (
+        0  # newly inserted matcher-rejected rows (part of inserted_count, never fetched)
+    )
     promoted_count: int = 0  # stored rows whose match class rose (rediscovery)
     error: str | None = None
 

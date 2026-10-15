@@ -457,3 +457,27 @@ def test_promoted_but_not_lifted_when_the_status_already_moved_on(queue: URLQueu
 
     assert result == (1, 0)
     assert _stored(queue, "/a").status == "fetched"
+
+
+def test_last_inserted_rejected_counts_only_new_rejected_rows(tmp_path: Path) -> None:
+    def row(url: str, cls: str) -> DiscoveredURL:
+        return DiscoveredURL(
+            url=url,
+            domain="cnbc.com",
+            company="Apple Inc.",
+            ticker="AAPL",
+            source="sitemap",
+            discovered_at=datetime(2026, 8, 10),
+            match_class=cls,  # type: ignore[arg-type]
+        )
+
+    q = URLQueue(str(tmp_path / "q.db"))
+    q.initialize()
+    batch = [row("https://cnbc.com/a", "reject"), row("https://cnbc.com/b", "accept")]
+
+    assert q.enqueue_batch(batch) == 2
+    assert q.last_inserted_rejected == 1
+    assert q.enqueue_batch(batch) == 0
+    assert q.last_inserted_rejected == 0
+    assert q.enqueue_batch([]) == 0
+    assert q.last_inserted_rejected == 0

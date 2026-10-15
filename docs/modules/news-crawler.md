@@ -71,7 +71,7 @@ means across every service in this repo.
 ## Post-fetch re-evaluation
 
 After every fetch the CLI and both extract endpoints call `extractor.db.record_fetch`: save the article,
-set the row's status, and, when the page was read (`fetch_status = 'ok'`), `reevaluate_match` re-classes
+set the row's status, and, when the page was read (any `fetch_status` but `failed`: `ok`, `paywalled`, `thin_content`), `reevaluate_match` re-classes
 the pair with `data_mining.matching` using the stored and the fetched title. It only promotes
 (`review`→`accept`), is guarded in SQL on the class that was read, skips `reject` rows, and commits once
 per promoted row on purpose (the collector writes the same table).

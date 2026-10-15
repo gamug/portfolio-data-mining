@@ -161,3 +161,12 @@ def test_cli_run_reevaluates_the_rows(db_path: str, monkeypatch: pytest.MonkeyPa
     assert counts == {"ok": 1}
     assert _state(db_path, _URL) == ("accept", "ok", 1)
     assert _state(db_path, "https://www.cnbc.com/rej.html") == ("reject", "skipped", 0)
+
+
+def test_record_fetch_reevaluates_a_paywalled_page_that_was_read(db_path: str) -> None:
+    conn = connect(db_path)
+    ensure_articles_table(conn)
+    record_fetch(conn, _article(_id(db_path, _URL), fetch_status="paywalled"))
+    conn.close()
+
+    assert _state(db_path, _URL) == ("accept", "paywalled", 1)

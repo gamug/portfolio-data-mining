@@ -299,7 +299,7 @@ class DiscoveryOrchestrator:
         partial.inserted_count = inserted
         partial.duplicate_count = duplicate_count
         partial.promoted_count = self._queue.last_promotion.promoted
-        partial.rejected_count = sum(1 for u in deduped if u.match_class == "reject")
+        partial.rejected_count = self._queue.last_inserted_rejected
 
         log.info(
             "%s / %s: ddg=%d sitemap/api=%d inserted=%d (of which rejected=%d) dupes=%d promoted=%d",
