@@ -189,7 +189,10 @@ def main(argv: list[str] | None = None) -> int:
     if not db.is_file() or not sample.is_file():
         print("error: urls.db or the sample CSV not found", file=sys.stderr)
         return 1
+    with sample.open(newline="", encoding="utf-8") as fh:
+        unclear = sum(1 for r in csv.DictReader(fh) if r["label"] not in ("yes", "no"))
     data = [d for d in load(db, sample) if d[0]["id"] not in set(args.exclude_ids)]
+    print(f"rows scored: {len(data)}; excluded (unclear or unlabeled): {unclear}\n")
     print(render(data))
     return 0
 

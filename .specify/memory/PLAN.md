@@ -631,16 +631,17 @@ significant company name token is sufficient"). Three failure modes follow:
    `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each; audited: DG
    8,554 and DLTR 8,564 name-only), `Best Buy` → `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
    matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
-   mode's error rate is **unmeasured** — measuring it is T-054.
+   mode's error rate was measured by T-054: **52% wrong** (see the T-054
+   results below).
 3. **Raw substring shortcut in four connectors.** `nasdaq`, `seeking_alpha`,
    `stocktwits` and `yahoo_finance` first run
    `if ticker.lower() in url.lower(): return True` — no word boundary at all.
    Ticker `A` matches any URL containing the letter "a"; `ON` matches
    "season" or "reason". This is looser than mode 1 and a change to
    `_company_pattern` alone does not touch it. Its share of the corpus is
-   **unmeasured**; the sizing figures above were reproduced with the
-   word-boundary regex only, so T-053 recomputes every figure per connector
-   (and counts the rows only the shortcut accepts) before they are relied on.
+   small in what is stored (T-053: 823 rows, all `ddg`) and it is wrong 89% of
+   the time (T-054, 19 of 20 sampled); its reach on a sitemap run of the other
+   connectors is unmeasured.
 
 **T-053 audit results** (`scripts/audit_ticker_tagging.py`, read-only, reproduces
 every figure below from `urls.db`; 481,332 `discovered_urls` rows, 0 rejected by
@@ -738,10 +739,10 @@ the `yes` pairs):
 
 | rule | kept-correct | kept-wrong | precision | recall |
 |---|---:|---:|---:|---:|
-| current (accepts all) | 172 | 91 | 65% | 100% |
-| full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 121 | 5 | 96% | 70% |
-| above, or name twice in the body | 126 | 5 | 96% | 73% |
-| above, or an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
+| `current (accepts all)` | 172 | 91 | 65% | 100% |
+| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 121 | 5 | 96% | 70% |
+| `above, or name twice in body` | 126 | 5 | 96% | 73% |
+| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
 
 With the two unconfirmed labels (`MGM` 317362, `DE` 180987) left out
 (`--exclude-ids 317362 180987`) the same rules keep the same correct pairs and

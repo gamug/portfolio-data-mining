@@ -96,5 +96,7 @@ def test_score_counts_and_ok_filter(tmp_path: Path) -> None:
 def test_main_exclude_and_missing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     db, sample = _fixture(tmp_path)
     assert mod.main(["--db", str(db), "--sample", str(sample), "--exclude-ids", "1"]) == 0
-    assert "current (accepts all)" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "rows scored: 4; excluded (unclear or unlabeled): 0" in out
+    assert "current (accepts all)" in out
     assert mod.main(["--db", str(tmp_path / "no.db"), "--sample", str(sample)]) == 1

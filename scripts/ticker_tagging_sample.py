@@ -61,7 +61,8 @@ from audit_ticker_tagging import WORD_TICKERS, classify  # sibling script, same 
 from data_mining.db import connect, resolve_db_path
 
 DEFAULT_SAMPLE = "data/ticker_tagging_sample.csv"
-DEFAULT_MANUAL = "data/ticker_tagging_manual.csv"
+DEFAULT_MANUAL = "data/ticker_tagging_manual.csv"  # the committed, filled sheet
+DEFAULT_EXPORT = "data/ticker_tagging_manual_new.csv"  # fresh blank sheet, not committed
 SEED = 54
 BIG_STRATUM_N = 15  # cnbc.com sitemap strata are 96% of the corpus
 SMALL_STRATUM_N = 8
@@ -399,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("manual-export", help="write a blank sheet for a person to label")
     p.add_argument("--db", default=None, help=db_help)
     p.add_argument("--sample", default=DEFAULT_SAMPLE)
-    p.add_argument("--out", default=DEFAULT_MANUAL)
+    p.add_argument("--out", default=DEFAULT_EXPORT)
     p.add_argument("--force", action="store_true", help="overwrite an existing sheet")
     p.set_defaults(func=_cmd_manual_export)
     p = sub.add_parser("manual-apply", help="merge a person's labels into the sample")

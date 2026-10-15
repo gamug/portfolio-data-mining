@@ -490,7 +490,8 @@ treating a related FR/NR as done:
     `seeking_alpha`, `stocktwits`, `yahoo_finance`) override
     `url_matches_company` and use it; four of them (`nasdaq`, `seeking_alpha`,
     `stocktwits`, `yahoo_finance`) first accept any URL containing the ticker
-    as a raw substring, which is looser still and unmeasured. On `urls.db`
+    as a raw substring, which is looser still (measured by `T-053`/`T-054`
+    below). On `urls.db`
     (2026-10-14), recomputed with the word-boundary regex only, 49.8% of the
     462,826 sitemap-discovered rows match through the ticker alone and 48.7%
     through the company first word alone; the eight word-like tickers account

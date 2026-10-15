@@ -237,3 +237,7 @@ def test_manual_apply_partial_sheet_and_relabel(tmp_path: Path) -> None:
     merged = {r["id"]: r for r in csv.DictReader(sample.open())}
     assert (merged["0"]["label"], merged["0"]["assistant_label"]) == ("yes", "yes")
     assert (merged["1"]["label"], merged["1"]["labeled_by"]) == ("no", "assistant")
+
+
+def test_default_export_path_is_not_the_committed_sheet() -> None:
+    assert mod.DEFAULT_EXPORT != mod.DEFAULT_MANUAL
