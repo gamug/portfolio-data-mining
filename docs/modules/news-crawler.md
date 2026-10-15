@@ -10,7 +10,7 @@
 
 Turns [news_collector](news-collector.md)'s queue of discovered URLs into a clean,
 structured dataset of full article text + metadata: reads `discovered_urls` rows with
-`status='pending'` from the shared `data/urls.db` (override with `$DATABASE_URL`, see
+`status='pending'` (never a matcher-rejected pair, see below) from the shared `data/urls.db` (override with `$DATABASE_URL`, see
 root `.env.example`), fetches each with `httpx`, extracts
 title/author/pub_date/body via JSON-LD + `trafilatura`, classifies the result
 (`ok` / `paywalled` / `thin_content` / `failed`), and writes a matching row to `articles`
@@ -48,10 +48,28 @@ re-running them produces the same result.
 than `apps/` since it never raises a server — that distinction is what `cli/` vs `apps/`
 means across every service in this repo.
 
+## Matcher-rejected pairs
+
+`news_collector` classes every `(url, ticker)` pair `accept` / `review` / `reject` (see the
+"Matching columns" section of [news-collector.md](news-collector.md)); a rejected pair is stored
+`status = 'skipped' AND match_class = 'reject'` and is never extracted. What that changes here:
+
+- `get_urls_by_status()` and `get_pending_urls()` never return a `reject` row, **whatever status is
+  asked for**: `POST /extract/run?status=skipped` returns paywall skips, not rejected pairs.
+- `POST /discovered/{id}/reset` answers **409** for a rejected row (it is promoted by rediscovery or
+  by the re-tag decision, not reset); `review` and `accept` rows reset as before.
+- `GET /discovered` and `GET /discovered/{id}` return `match_class` and `match_reason`, and the list
+  filters on `match_class`; the `status` filter's `skipped` includes rejected rows.
+- `get_status_counts()` and `GET /status` leave rejected rows out of `counts`/`total` (they were never
+  work, so they must not read as processed); `GET /status` adds `by_match_class` and
+  `get_match_class_counts()` gives the same numbers.
+- The CLI start-up line counts only non-rejected rows as "Already processed" and prints
+  "Matcher-rejected, not fetched: N" separately when N is above zero.
+
 ## Testing
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/extractor -q
 ```
 
-33/33 pass, no known issues.
+42 pass at the time of writing (2026-10-15), no known issues.

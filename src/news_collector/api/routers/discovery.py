@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -84,6 +84,7 @@ async def queue_stats(
     return QueueStatsResponse(
         total=raw["total"],
         by_status=raw["by_status"],
+        by_match_class=raw["by_match_class"],
         by_domain=raw["by_domain"],
     )
 
@@ -110,7 +111,14 @@ async def query_urls(
         default=None, description="Filter by company name (substring match)"
     ),
     status: str | None = Query(
-        default=None, description="Filter by status: pending, fetched, failed, or skipped"
+        default=None,
+        description=(
+            "Filter by status: pending, fetched, failed, or skipped "
+            "(skipped includes matcher-rejected rows, match_class=reject)"
+        ),
+    ),
+    match_class: Literal["accept", "review", "reject"] | None = Query(
+        default=None, description="Filter by company-matching class: accept, review, or reject"
     ),
     source: str | None = Query(
         default=None, description="Filter by discovery source: ddg, sitemap, rss, or api"
@@ -124,7 +132,7 @@ async def query_urls(
     ),
     order_by: str = Query(
         default="discovered_at",
-        description="Column to sort by: id, url, domain, company, ticker, source, discovered_at, pub_date, status",
+        description="Column to sort by: id, url, domain, company, ticker, source, discovered_at, pub_date, status, match_class",
     ),
     descending: bool = Query(default=True, description="Sort descending (default) or ascending"),
     limit: int = Query(default=100, ge=1, le=5000, description="Maximum rows to return"),
@@ -147,6 +155,7 @@ async def query_urls(
             company=company,
             status=status,
             source=source,
+            match_class=match_class,
             url_contains=url_contains,
             pub_date_from=pub_date_from,
             pub_date_to=pub_date_to,

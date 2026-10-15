@@ -31,6 +31,7 @@ from tqdm import tqdm
 from extractor.db import (
     connect,
     ensure_articles_table,
+    get_match_class_counts,
     get_status_counts,
     get_urls_by_status,
     mark_status,
@@ -72,6 +73,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def progress_line(
+    status_counts: dict[str, int], class_counts: dict[str, int], target_status: str, n_rows: int
+) -> str:
+    """The startup line: processed rows (matcher-rejected pairs are not work, so they are
+    not counted) and the rows this run takes, plus the rejected count when there is one."""
+    done = sum(c for status, c in status_counts.items() if status != "pending")
+    line = f"Already processed: {done}. {target_status.capitalize()} this run: {n_rows}."
+    rejected = class_counts.get("reject", 0)
+    return f"{line} Matcher-rejected, not fetched: {rejected}." if rejected else line
+
+
 async def run(args: argparse.Namespace) -> dict:
     conn = connect(args.db)
     ensure_articles_table(conn)
@@ -79,9 +91,11 @@ async def run(args: argparse.Namespace) -> dict:
     target_status = "failed" if args.retry_failed else "pending"
     rows = get_urls_by_status(conn, [target_status], limit=args.limit)
 
-    prior = get_status_counts(conn)
-    already_done = sum(c for status, c in prior.items() if status != "pending")
-    print(f"Already processed: {already_done}. {target_status.capitalize()} this run: {len(rows)}.")
+    print(
+        progress_line(
+            get_status_counts(conn), get_match_class_counts(conn), target_status, len(rows)
+        )
+    )
 
     scheduler = DomainScheduler(
         default_concurrency=args.default_concurrency,

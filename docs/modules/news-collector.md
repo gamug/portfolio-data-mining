@@ -26,10 +26,49 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
   `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
   substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
-  alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
-  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made in that window to
-  `portfolio-nlp`**: its `review` rows (about 63k) are stored unflagged and would enter the default
-  selection like `accept` rows. Design and evidence: `PLAN.md` Work item 10.
+  alone is never `accept`. The class is stored on `discovered_urls` (`T-056b`, below), but the
+  strategies do not set it until `T-056c`: until then `review` pairs are kept like `accept` ones and
+  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made before `T-056c` to
+  `portfolio-nlp`**: its `review` rows (about 63k) are stored as `accept` and would enter the default
+  selection. Design and evidence: `PLAN.md` Work item 10.
+
+**Matching columns on `discovered_urls`** (schema version 2, `data_mining/schema.py`; constitution AI
+behavior #10 confirmed 2026-10-15): `match_class` (`accept`/`review`/`reject`, `NOT NULL DEFAULT
+'accept'`, indexed by `idx_match_class`), `match_reason` (the deciding signal) and `query` (the `ddg`
+search query that returned the row; provenance only, it never changes the class). A matcher-rejected
+pair is stored **`status = 'skipped' AND match_class = 'reject'`** at insert, its `title` untouched, so
+the extractor's and the queue's `status = 'pending'` selection never returns it; `mark_skipped` (paywall,
+irrelevant after inspection) keeps its meaning and leaves `match_class` alone. `enqueue_batch` no longer
+just ignores a duplicate `(url, ticker)`: a rediscovery **promotes** the stored row (it keeps the higher
+class `reject` < `review` < `accept`, takes the new `match_reason` with a higher class, fills a null
+`match_reason`/`query`, and a row stored `reject` goes back to `pending` when its class rises). It never
+demotes. The promotion UPDATE is conditional in SQL because the extractor writes `status` concurrently: `status` is written only to lift a row that is still `skipped` and `reject` in the database (never copied from the earlier read), and a write is skipped when the stored class is no longer the one that was read. `URLQueue.last_promotion` (and `promoted=` in the discovery log lines, `DiscoveryStats.total_promoted`) report how many rows were promoted and lifted per call (writes that happened: a write the class guard skipped is not counted, and a row counts as lifted only if its status really is `pending` afterwards). Existing databases are upgraded by `run_migrations` (their rows default to `accept`; the
+`T-057` re-tag reclassifies them). Both read APIs expose the class: the collector's
+`/discovery/query` and `/discovery/pending` return `match_class`/`match_reason` and `/discovery/query`
+filters on `match_class`; the crawler's `/discovered` does the same. The `status` filter's `skipped`
+includes matcher-rejected rows, so use `by_match_class` (in `queue.stats()`, the collector's
+`/discovery/stats` and the CLI `stats`) to tell them from paywall skips. `match_class` has a `CHECK`
+constraint and `enqueue_batch` raises `ValueError` before writing for any other value. The extractor's
+`get_status_counts` and the crawler's `/status` leave rejected rows out (`/status` adds `by_match_class`; the CLI start-up line prints the rejected count separately). The extractor's
+`get_urls_by_status` never returns a `reject` row, whatever status is asked for, and the crawler's
+`POST /discovered/{id}/reset` answers 409 for one.
+
+**Repeatable migration check** (run before any re-tag, on a copy, never the source):
+```bash
+cp data/urls.db /tmp/urls_copy.db
+PYTHONPATH=src uv run python - <<'PY'
+import sqlite3
+from news_collector.storage.queue import URLQueue
+p = "/tmp/urls_copy.db"
+before = sqlite3.connect(p).execute("SELECT COUNT(*) FROM discovered_urls").fetchone()[0]
+q = URLQueue(p); q.initialize()
+print(before, q._conn.execute(
+    "SELECT COUNT(*), SUM(match_class='accept'), (SELECT COUNT(*) FROM sqlite_master"
+    " WHERE name='idx_match_class'), (SELECT * FROM pragma_user_version) FROM discovered_urls").fetchone()[:])
+PY
+```
+Expect the same row count before and after, every row `accept`, the index present and user_version 2
+(the 481,332-row corpus gave exactly that on 2026-10-15).
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.

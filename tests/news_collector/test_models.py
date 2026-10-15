@@ -100,3 +100,10 @@ def test_discovery_stats_merge_multiple() -> None:
     assert stats.total_inserted == 20
     assert stats.by_domain["cnbc.com"] == 20
     assert len(stats.by_company) == 5
+
+
+def test_discovery_stats_merge_sums_promotions() -> None:
+    stats = DiscoveryStats()
+    stats.merge(PartialStats(company="A", domain="cnbc.com", promoted_count=3))
+    stats.merge(PartialStats(company="B", domain="ft.com", promoted_count=4))
+    assert stats.total_promoted == 7

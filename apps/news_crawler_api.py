@@ -28,6 +28,7 @@ import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -40,6 +41,7 @@ from pydantic import BaseModel
 from extractor.db import (
     connect,
     ensure_articles_table,
+    get_match_class_counts,
     get_status_counts,
     get_urls_by_status,
     mark_status,
@@ -122,8 +124,9 @@ async def get_gics_map() -> dict[str, dict[str, str]]:
 
 
 class StatusCounts(BaseModel):
-    counts: dict[str, int]
+    counts: dict[str, int]  # per status, matcher-rejected pairs left out
     total: int
+    by_match_class: dict[str, int] = {}  # accept / review / reject, all rows
 
 
 class DiscoveredURL(BaseModel):
@@ -136,6 +139,8 @@ class DiscoveredURL(BaseModel):
     status: str
     title: str | None = None
     fetch_status_code: int | None = None
+    match_class: str = "accept"
+    match_reason: str | None = None
 
 
 class Article(BaseModel):
@@ -198,12 +203,20 @@ def status(conn: Database = Depends(get_conn)) -> StatusCounts:
     """Same numbers run_extraction.py prints at startup: discovered_urls
     grouped by status."""
     counts = get_status_counts(conn)
-    return StatusCounts(counts=counts, total=sum(counts.values()))
+    return StatusCounts(
+        counts=counts,
+        total=sum(counts.values()),
+        by_match_class=get_match_class_counts(conn),
+    )
 
 
 @app.get("/discovered", response_model=list[DiscoveredURL])
 def list_discovered(
-    status: str | None = None,
+    status: str | None = Query(
+        None,
+        description="pending, fetched, failed or skipped (skipped includes matcher-rejected rows)",
+    ),
+    match_class: Literal["accept", "review", "reject"] | None = None,
     ticker: str | None = None,
     domain: str | None = None,
     limit: int = Query(50, le=500),
@@ -211,13 +224,17 @@ def list_discovered(
     conn: Database = Depends(get_conn),
 ) -> list[DiscoveredURL]:
     sql = (
-        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
+        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code, "
+        "match_class, match_reason "
         "FROM discovered_urls WHERE 1=1"
     )
     params: list = []
     if status:
         sql += " AND status = ?"
         params.append(status)
+    if match_class:
+        sql += " AND match_class = ?"
+        params.append(match_class)
     if ticker:
         sql += " AND ticker = ?"
         params.append(ticker)
@@ -233,7 +250,8 @@ def list_discovered(
 @app.get("/discovered/{url_id}", response_model=DiscoveredURL)
 def get_discovered(url_id: int, conn: Database = Depends(get_conn)) -> DiscoveredURL:
     row = conn.execute(
-        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
+        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code, "
+        "match_class, match_reason "
         "FROM discovered_urls WHERE id = ?",
         (url_id,),
     ).fetchone()
@@ -247,9 +265,17 @@ def reset_discovered(url_id: int, conn: Database = Depends(get_conn)) -> ResetRe
     """Flip a row back to 'pending' (clearing fetch_status_code) so it can be
     re-extracted -- handy for testing after a code change, without hand-editing
     the DB."""
-    row = conn.execute("SELECT id FROM discovered_urls WHERE id = ?", (url_id,)).fetchone()
+    row = conn.execute(
+        "SELECT id, match_class FROM discovered_urls WHERE id = ?", (url_id,)
+    ).fetchone()
     if row is None:
         raise HTTPException(404, f"discovered_urls id={url_id} not found")
+    if row["match_class"] == "reject":
+        raise HTTPException(
+            409,
+            f"discovered_urls id={url_id} is a matcher-rejected pair (match_class=reject): "
+            "it is promoted by rediscovery or by the re-tag decision, not reset",
+        )
     mark_status(conn, url_id, "pending", http_status_code=None)
     return ResetResult(id=url_id, status="pending")
 

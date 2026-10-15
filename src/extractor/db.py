@@ -26,6 +26,7 @@ __all__ = [
     "connect",
     "enable_foreign_keys",
     "ensure_articles_table",
+    "get_match_class_counts",
     "get_pending_urls",
     "get_status_counts",
     "get_urls_by_status",
@@ -69,6 +70,10 @@ def get_urls_by_status(db: Database, statuses: list[str], limit: int | None = No
     ['pending'] for a normal run or ['failed'] to retry previous failures --
     no separate reset-to-pending step needed, unlike the API's
     /discovered/{id}/reset endpoint.
+
+    A matcher-rejected row (`status = 'skipped' AND match_class = 'reject'`) is
+    never returned, whatever `statuses` asks for: a retry of `skipped` rows must
+    not fetch a quarantined pair.
     """
     placeholders = in_clause(statuses)
     # S608: `placeholders` is just a run of literal "?" characters (one per
@@ -76,7 +81,8 @@ def get_urls_by_status(db: Database, statuses: list[str], limit: int | None = No
     # never interpolated into the SQL text.
     sql = (
         f"SELECT id, url, domain, company, ticker, source, title "  # noqa: S608
-        f"FROM discovered_urls WHERE status IN {placeholders} ORDER BY id"
+        f"FROM discovered_urls WHERE status IN {placeholders} "
+        f"AND match_class != 'reject' ORDER BY id"
     )
     params: list = list(statuses)
     if limit is not None:
@@ -90,8 +96,20 @@ def get_pending_urls(db: Database, limit: int | None = None) -> list[Row]:
 
 
 def get_status_counts(db: Database) -> dict[str, int]:
+    """Rows per status, leaving out matcher-rejected pairs (`match_class = 'reject'`):
+    they were never work for the extractor, so they must not read as processed
+    (`skipped`). See `get_match_class_counts` for them."""
     rows = db.execute(
-        "SELECT status, COUNT(*) AS c FROM discovered_urls GROUP BY status"
+        "SELECT status, COUNT(*) AS c FROM discovered_urls WHERE match_class != 'reject' "
+        "GROUP BY status"
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def get_match_class_counts(db: Database) -> dict[str, int]:
+    """Rows per company-matching class (`accept` / `review` / `reject`)."""
+    rows = db.execute(
+        "SELECT match_class, COUNT(*) AS c FROM discovered_urls GROUP BY match_class"
     ).fetchall()
     return {row[0]: row[1] for row in rows}
 
