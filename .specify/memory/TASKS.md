@@ -255,7 +255,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       counters report `rejected=` (part of `inserted=`, never fetched). `extractor.db.record_fetch`
       (save, status, re-evaluation of a page that was read) is the one post-fetch step used by the
       crawler CLI and both API endpoints; `POST /extract/{id}` answers 409 for a `reject` row.
-      `pytest` 636 passed; `scripts/score_ticker_rules.py --check` exits 0.
+      `scripts/score_ticker_rules.py --check` exits 0 ("figures match PLAN"; no matcher change since T-056a). Test counts live in the PR description.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation

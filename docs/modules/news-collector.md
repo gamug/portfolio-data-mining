@@ -41,7 +41,8 @@ orchestrator's merge of the strategies keeps the higher class of a pair found tw
 discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` (`total_rejected`) and the CLI summary report
 `rejected=`: the **newly inserted** rows that are matcher-rejected (`URLQueue.last_inserted_rejected`). They are
 part of `inserted` but never fetched, so `inserted - rejected` sizes the new fetch queue (a re-run inserts
-0 and reports 0).
+0 and reports 0). The run's `by_domain` and `by_company` (and the CLI summary tables) count **inserted** rows, matcher-rejected ones
+included, like `queue.stats()['by_domain']`; use `by_match_class` or `total_rejected` to tell how many of them will be fetched.
 `multi_company` is derived, not stored: a URL with two or more `accept` pairs. **Rows discovered before
 `T-056c` carry no class** (stored `accept`): do not feed such a run to `portfolio-nlp` until the T-057
 re-tag. Design and evidence: `PLAN.md` Work item 10.

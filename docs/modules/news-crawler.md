@@ -82,4 +82,4 @@ per promoted row on purpose (the collector writes the same table).
 .venv\Scripts\python.exe -m pytest tests/extractor -q
 ```
 
-54 pass at the time of writing (2026-10-15), no known issues.
+55 pass at the time of writing (2026-10-15), no known issues.
