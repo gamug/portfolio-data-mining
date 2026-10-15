@@ -16,9 +16,16 @@ title), excluding the pairs of *both* earlier samples, so the frozen rule has ne
 Pass = at most 5 of the 60 ``accept`` labeled ``no`` and at most 1 of the 40 ``reject`` labeled
 ``yes``; otherwise the work goes back to T-055.
 
+``--verdict LABELED_CSV`` scores a labeled ``--final`` sheet (``final_verdict``) and exits 0 on a pass, 1 on a
+fail; with ``--db`` it also runs ``check_sheet``, which refuses a sheet that is not the T-057 one: a class
+count other than exactly 60 ``accept`` / 40 ``reject``, duplicated or unknown ids, a class the current
+``classify`` no longer gives the pair (a sheet drawn before a matcher change) or an id already in an earlier
+sample. ``retag_urls.py --apply`` runs both on its ``--hand-check`` sheet.
+
 Usage:
     PYTHONPATH=src uv run python scripts/ticker_validation_sample.py [--db PATH]
         [--existing PATH] [--out PATH] [--seed N] [--final]
+    PYTHONPATH=src uv run python scripts/ticker_validation_sample.py --verdict LABELED_CSV [--db PATH]
 """
 
 from __future__ import annotations

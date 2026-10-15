@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes (constitution #10) on 2026-10-15.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is in PR #61, the real run waits for the hand-labeled check.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -928,7 +928,14 @@ correct pairs hidden in discovery mode on both samples, re-measured in T-057).
 **Quarantine** means the pair stays in `urls.db`, is flagged with its class and
 reason, and is left out of the default `articles` selection that
 `portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing it
-is clearing the flag. Nothing is deleted; `reject` is quarantined with a reason,
+is clearing the flag. The flag is `articles.fetch_status = 'quarantined'` with the previous status kept in the new
+nullable `articles.prev_fetch_status` (schema version 3; a shared-schema change confirmed 2026-10-15 and recorded in
+`portfolio-nlp` PR #102, T-132/T-128), so clearing it restores the row exactly and `discovered_urls` is never touched.
+The state stays in sync by itself: `extractor.db.record_fetch` quarantines a non-`accept` article after every fetch and
+releases it on a promotion, and a rediscovery that promotes a fetched pair releases its article too. The re-tag
+(`scripts/retag_urls.py`, T-057) is gated: a labeled sheet that passes the 60/40 verdict and is validated as the fresh
+sheet drawn under the current rule, a backup, the collector and crawler stopped (it aborts before writing if the corpus
+moved), and a post-apply verification against the dry-run plan. Nothing is deleted; `reject` is quarantined with a reason,
 `review` is quarantined and decided by `portfolio-nlp` (its `T-132`, which keeps
 any pair it cannot decide).
 
