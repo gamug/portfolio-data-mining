@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import os
 import sqlite3
 import sys
 from collections import Counter
@@ -271,26 +270,41 @@ def test_top_below_one_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
     assert "--top must be at least 1" in capsys.readouterr().err
 
 
-# Re-tag-mode, in-sample figures (the rule was tuned on both samples): a tripwire so a rule edit
-# cannot move the numbers PLAN reports without someone updating them. The titles
-# come from the local corpus, so this skips where `urls.db` is absent.
-_SAMPLE_FIGURES = {
-    "ticker_tagging_sample.csv": (
-        "accept   share  28.8%  wrong in class  10.9%",
-        "known-correct (labeled yes) classed accept: 17/17",
-    ),
-    "ticker_validation_sample.csv": (
-        "accept   share  20.2%  wrong in class   0.0%",
-        "known-correct (labeled yes) classed accept: 0/0",
-    ),
-}
+def test_check_figures_reports_each_changed_figure() -> None:
+    expected = {("s.csv", False): {"accept": (28.8, 10.9), "known": (17, 17)}}
+    assert (
+        mod.check_figures({("s.csv", False): {"accept": (28.8, 10.9), "known": (17, 17)}}, expected)
+        == []
+    )
+    diffs = mod.check_figures(
+        {("s.csv", False): {"accept": (28.8, 12.0), "known": (17, 17)}}, expected
+    )
+    assert diffs == ["s.csv re-tag accept: expected (28.8, 10.9), got (28.8, 12.0)"]
+    assert len(mod.check_figures({}, expected)) == 2
 
 
-@pytest.mark.parametrize("sample", sorted(_SAMPLE_FIGURES))
-def test_committed_samples_reproduce_the_plan_figures(sample: str) -> None:
-    db = Path(os.environ.get("URLS_DB_FOR_TESTS", "/workspaces/thesis/data/urls.db"))
-    if not db.is_file():
-        pytest.skip("urls.db not available")
-    data = mod.load(db, Path("data") / sample)
-    text = mod.design_report(data)
-    assert all(line in text for line in _SAMPLE_FIGURES[sample])
+def test_expected_figures_cover_both_samples_in_both_modes() -> None:
+    assert sorted(mod.EXPECTED_FIGURES) == [
+        ("ticker_tagging_sample.csv", False),
+        ("ticker_tagging_sample.csv", True),
+        ("ticker_validation_sample.csv", False),
+        ("ticker_validation_sample.csv", True),
+    ]
+
+
+def test_run_check_returns_0_on_match_and_1_on_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db, sample = _fixture(tmp_path)
+    figures = mod.design_figures(mod.load(db, sample))
+    figures_d = mod.design_figures(mod.load(db, sample), discovery=True)
+    monkeypatch.setattr(
+        mod, "EXPECTED_FIGURES", {("s.csv", False): figures, ("s.csv", True): figures_d}
+    )
+    (tmp_path / "s.csv").write_bytes(sample.read_bytes())
+    assert mod.run_check(db, tmp_path) == 0
+    assert "figures match PLAN" in capsys.readouterr().out
+    drifted = {**figures, "accept": (99.9, 99.9)}
+    monkeypatch.setattr(mod, "EXPECTED_FIGURES", {("s.csv", False): drifted})
+    assert mod.run_check(db, tmp_path) == 1
+    assert "differ from PLAN" in capsys.readouterr().out

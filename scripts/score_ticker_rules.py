@@ -18,7 +18,7 @@ list (slow; read-only).
 
 Usage:
     PYTHONPATH=src uv run python scripts/score_ticker_rules.py [--db PATH]
-        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names [--top N]]
+        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names [--top N]] [--check]
 """
 
 from __future__ import annotations
@@ -205,15 +205,15 @@ def render_diff(label: str, moves: Counter[tuple[str, str]], by_ticker: Counter[
     return "\n".join(lines)
 
 
-def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
-    """Population-weighted shares and wrong rates of the three design classes.
+def _tally(
+    data: list[tuple[Row, str, str, str]], discovery: bool
+) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str, str], int], list[tuple[str, str]]]:
+    """Post-stratified ``(class, label)`` weights, raw ``(class, source, label)`` counts and
+    the ``(class, label)`` of the known-correct candidates, for ``design_report``/``design_figures``.
 
-    Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
-    the figures estimate the whole corpus, not the sample mix. Rows are
-    post-stratified: the weight is the *drawn* stratum's size over its sample
-    count, whatever class today's rule gives the row. With ``discovery`` the
-    title is blank for ``sitemap`` rows (discovery sees only their URL, the
-    stored title comes from the later fetch); ``ddg`` rows keep their title.
+    The weight is the *drawn* stratum's size over its sample count, whatever class
+    today's rule gives the row. With ``discovery`` the title is blank for ``sitemap``
+    rows (discovery sees only their URL); ``ddg`` rows keep their title.
     """
     strata: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     size: dict[str, int] = {}
@@ -232,6 +232,36 @@ def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False
         for cls, label, source in pairs:
             weight[(cls, label)] += size[name] / len(pairs)
             raw[(cls, source, label)] += 1
+    return weight, raw, known
+
+
+def design_figures(
+    data: list[tuple[Row, str, str, str]], discovery: bool = False
+) -> dict[str, tuple[float, float] | tuple[int, int]]:
+    """The numbers of ``design_report`` as data: per class ``(share %, wrong %)`` to one
+    decimal, and ``known`` as ``(known-correct classed accept, known-correct labeled yes)``.
+    """
+    weight, _raw, known = _tally(data, discovery)
+    total = sum(weight.values())
+    out: dict[str, tuple[float, float] | tuple[int, int]] = {}
+    for cls in ("accept", "review", "reject"):
+        yes, no = weight[(cls, "yes")], weight[(cls, "no")]
+        out[cls] = (
+            round(100 * (yes + no) / total, 1),
+            round(100 * no / (yes + no), 1) if yes + no else 0.0,
+        )
+    yes_known = [c for c, lab in known if lab == "yes"]
+    out["known"] = (sum(c == "accept" for c in yes_known), len(yes_known))
+    return out
+
+
+def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
+    """Population-weighted shares and wrong rates of the three design classes.
+
+    Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
+    the figures estimate the whole corpus, not the sample mix (see ``_tally``).
+    """
+    weight, raw, known = _tally(data, discovery)
     total = sum(weight.values())
     yes_total = sum(w for (_k, lab), w in weight.items() if lab == "yes")
     mode = "discovery (sitemap URL only)" if discovery else "re-tag (fetched title)"
@@ -258,6 +288,68 @@ def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False
         f"{sum(c == 'accept' for c in yes_known)}/{len(yes_known)}"
     )
     return "\n".join(lines)
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# The PLAN Work item 10 table, as data: (sample file, discovery mode) -> `design_figures`.
+# In-sample (the rule was tuned on both samples), so it only guards against a rule
+# edit moving the reported numbers unnoticed; the acceptance evidence is the T-057
+# fresh check. Update it, and the PLAN table, together with any deliberate rule change.
+EXPECTED_FIGURES: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]] = {
+    ("ticker_tagging_sample.csv", False): {
+        "accept": (28.8, 10.9),
+        "review": (12.1, 64.4),
+        "reject": (59.2, 100.0),
+        "known": (17, 17),
+    },
+    ("ticker_tagging_sample.csv", True): {
+        "accept": (25.3, 12.3),
+        "review": (15.5, 50.2),
+        "reject": (59.2, 100.0),
+        "known": (16, 17),
+    },
+    ("ticker_validation_sample.csv", False): {
+        "accept": (20.2, 0.0),
+        "review": (10.9, 52.5),
+        "reject": (68.9, 100.0),
+        "known": (0, 0),
+    },
+    ("ticker_validation_sample.csv", True): {
+        "accept": (14.3, 0.0),
+        "review": (16.0, 30.6),
+        "reject": (69.7, 100.0),
+        "known": (0, 0),
+    },
+}
+
+
+def check_figures(
+    scored: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]],
+    expected: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]],
+) -> list[str]:
+    """Differences between ``scored`` and ``expected`` figures, one line each (empty: equal)."""
+    diffs = []
+    for key, want in expected.items():
+        got = scored.get(key, {})
+        for name, value in want.items():
+            if got.get(name) != value:
+                mode = "discovery" if key[1] else "re-tag"
+                diffs.append(f"{key[0]} {mode} {name}: expected {value}, got {got.get(name)}")
+    return diffs
+
+
+def run_check(db: Path, data_dir: Path = DATA_DIR) -> int:
+    """Score both committed samples in both modes against ``EXPECTED_FIGURES``; 0 when equal."""
+    scored = {
+        (name, discovery): design_figures(load(db, data_dir / name), discovery)
+        for name, discovery in EXPECTED_FIGURES
+    }
+    diffs = check_figures(scored, EXPECTED_FIGURES)
+    for line in diffs:
+        print(line)
+    print("figures match PLAN" if not diffs else f"{len(diffs)} figure(s) differ from PLAN")
+    return 1 if diffs else 0
 
 
 RULES: dict[str, Rule] = {
@@ -352,11 +444,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="scan the whole corpus (slow) for rows accepted on a one-word company name alone",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="compare both committed samples' figures with the PLAN table; exit 1 on a difference",
+    )
     parser.add_argument("--top", type=int, default=25, help="companies listed by --names")
     args = parser.parse_args(argv)
     if args.top < 1:
         parser.error("--top must be at least 1")
     db = Path(args.db or resolve_db_path())
+    if args.check:
+        if not db.is_file():
+            print("error: urls.db not found", file=sys.stderr)
+            return 1
+        return run_check(db)
     sample = Path(args.sample)
     if not db.is_file() or not sample.is_file():
         print("error: urls.db or the sample CSV not found", file=sys.stderr)

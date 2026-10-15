@@ -234,7 +234,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       with two or more `accept` pairs is multi-company (108,313 of the 320,763 stored
       URLs carry several tickers); the pair stays one row per `(url, ticker)`. Tests: the
       strategies keep `review`/`reject` rows with their class and `query`; the extractor
-      promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
+      promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, `scripts/score_ticker_rules.py --check` exits 0 (or PLAN table and `EXPECTED_FIGURES` are updated together), the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
