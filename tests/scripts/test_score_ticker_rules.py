@@ -6,6 +6,7 @@ import csv
 import importlib.util
 import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -182,15 +183,15 @@ def test_with_host_reproduces_the_old_leak_and_diff_counts_it(tmp_path: Path) ->
     db = tmp_path / "urls.db"
     with sqlite3.connect(db) as con:
         con.execute(
-            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT)"
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT, source TEXT)"
         )
         con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
         con.execute(
-            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ')",
+            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ', 'ddg')",
             (row["url"],),
         )
         con.execute(
-            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM')"
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM', 'ddg')"
         )
     moves, by_ticker = mod.class_diff(db, with_host=True)
     assert moves == {("accept", "reject"): 1}
@@ -231,3 +232,79 @@ def test_corpus_sizes_and_render(tmp_path: Path) -> None:
     text = mod.render_sizes("x", mod.corpus_sizes(db))
     assert "2 rows" in text
     assert "accept " in text
+
+
+def test_single_word_name_hits_counts_only_one_word_name_accepts(tmp_path: Path) -> None:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
+            " company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        rows = [
+            (1, "https://c/visa-bulletin.html", "", "Visa Inc.", "V"),
+            (2, "https://c/visa-fees.html", "", "Visa Inc.", "V"),
+            (3, "https://c/other.html", "Oil rises", "Visa Inc.", "V"),
+            (4, "https://c/procter-and-gamble.html", "", "Procter & Gamble", "PG"),
+        ]
+        con.executemany("INSERT INTO discovered_urls VALUES (?, ?, ?, ?, ?, 'ddg')", rows)
+    hits = mod.single_word_name_hits(db)
+    assert hits == {("V", "visa"): 2}
+    text = mod.render_name_hits(hits)
+    assert "2 rows, 1 companies" in text
+    assert "re-tag mode" in text
+    assert "visa" in text
+
+
+def test_render_name_hits_lists_only_the_top_entries() -> None:
+    text = mod.render_name_hits(Counter({("V", "visa"): 5, ("A", "agilent"): 2}), top=1)
+    assert "top 1" in text
+    assert "visa" in text
+    assert "agilent" not in text
+
+
+def test_top_below_one_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        mod.main(["--names", "--top", "0"])
+    assert "--top must be at least 1" in capsys.readouterr().err
+
+
+def test_check_figures_reports_each_changed_figure() -> None:
+    expected = {("s.csv", False): {"accept": (28.8, 10.9), "known": (17, 17)}}
+    assert (
+        mod.check_figures({("s.csv", False): {"accept": (28.8, 10.9), "known": (17, 17)}}, expected)
+        == []
+    )
+    diffs = mod.check_figures(
+        {("s.csv", False): {"accept": (28.8, 12.0), "known": (17, 17)}}, expected
+    )
+    assert diffs == ["s.csv re-tag accept: expected (28.8, 10.9), got (28.8, 12.0)"]
+    assert len(mod.check_figures({}, expected)) == 2
+
+
+def test_expected_figures_cover_both_samples_in_both_modes() -> None:
+    assert sorted(mod.EXPECTED_FIGURES) == [
+        ("ticker_tagging_sample.csv", False),
+        ("ticker_tagging_sample.csv", True),
+        ("ticker_validation_sample.csv", False),
+        ("ticker_validation_sample.csv", True),
+    ]
+
+
+def test_run_check_returns_0_on_match_and_1_on_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db, sample = _fixture(tmp_path)
+    figures = mod.design_figures(mod.load(db, sample))
+    figures_d = mod.design_figures(mod.load(db, sample), discovery=True)
+    monkeypatch.setattr(
+        mod, "EXPECTED_FIGURES", {("s.csv", False): figures, ("s.csv", True): figures_d}
+    )
+    (tmp_path / "s.csv").write_bytes(sample.read_bytes())
+    assert mod.run_check(db, tmp_path) == 0
+    assert "figures match PLAN" in capsys.readouterr().out
+    drifted = {**figures, "accept": (99.9, 99.9)}
+    monkeypatch.setattr(mod, "EXPECTED_FIGURES", {("s.csv", False): drifted})
+    assert mod.run_check(db, tmp_path) == 1
+    assert "differ from PLAN" in capsys.readouterr().out

@@ -19,6 +19,18 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
 - **Persistence** (`src/news_collector/storage/queue.py`) — SQLite (WAL mode), safe for
   one writer + concurrent readers, so downstream stages can read while this stage writes.
 
+- **Company matching** (`src/data_mining/matching.py`, reached through
+  `BaseConnector.classify_match`) — one shared rule for all seven connectors that decides whether a
+  `(url, ticker)` pair is about the company. It reads only the URL path/query and the title and returns
+  `accept` (the full normalized name or an alias, an explicit ticker form, or an upper-case non-word ticker
+  in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
+  `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
+  substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
+  alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
+  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made in that window to
+  `portfolio-nlp`**: its `review` rows (about 63k) are stored unflagged and would enter the default
+  selection like `accept` rows. Design and evidence: `PLAN.md` Work item 10.
+
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
 
@@ -97,7 +109,7 @@ assistant's labels; it reads the committed sheet by default, so apply a new one 
 `data/ticker_tagging_manual.csv` is the **filled** sheet (the maintainer's labels and notes, with the
 excerpt column removed). `scripts/score_ticker_rules.py` scores the prototype matching rules on the
 labeled sample (`--exclude-ids` to leave rows out). `scripts/ticker_validation_sample.py` draws a fresh
-validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format (`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv` reproduces the first-draft out-of-sample result, since the CSV's `match_mode` is the class the first draft assigned when it was drawn; `score_ticker_rules.py --sample` scores the current rule (`--sizes` prints its exact class sizes over the whole corpus, `--diff` the rows moved by the host fix, the abbreviation list and the alias map; both are slow, read-only scans); the committed `data/ticker_validation_manual.csv` is the filled sheet without excerpts).
+validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format (`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv` reproduces the first-draft out-of-sample result, since the CSV's `match_mode` is the class the first draft assigned when it was drawn; `score_ticker_rules.py --sample` scores the current rule (`--sizes` prints its exact class sizes over the whole corpus, `--diff` the rows moved by the host fix, the abbreviation list and the alias map, `--check` the figures of both committed samples in both modes against the PLAN table (exit 1 on a difference; needs the local corpus, not run by pytest), `--names [--top N]` the rows accepted on a one-word company name alone (the `N` largest companies, default 25); both are slow, read-only scans); the committed `data/ticker_validation_manual.csv` is the filled sheet without excerpts).
 
 ## Testing
 

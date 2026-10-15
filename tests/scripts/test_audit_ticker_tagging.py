@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
 import sqlite3
 from pathlib import Path
 
@@ -124,17 +123,25 @@ def test_main_missing_db(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "not found" in capsys.readouterr().err
 
 
-def test_shortcut_domains_match_connector_sources() -> None:
-    """SHORTCUT_DOMAINS must equal the connectors that still run the raw substring shortcut."""
+def test_no_connector_runs_the_raw_substring_shortcut_any_more() -> None:
+    """T-056a removed `ticker.lower() in url.lower()`; SHORTCUT_DOMAINS is now historical.
+
+    The audit still reproduces what the old rule stored, so the constant stays, but no
+    connector source may bring the shortcut back.
+    """
     connectors = Path(audit_mod.__file__).resolve().parents[1] / "src/news_collector/connectors"
-    found = set()
-    for path in connectors.glob("*.py"):
-        text = path.read_text()
-        if "ticker.lower() in url.lower()" in text:
-            match = re.search(r'domain="([^"]+)"', text)
-            assert match, f"{path.name} has the shortcut but no domain= config"
-            found.add(match.group(1))
-    assert found == set(audit_mod.SHORTCUT_DOMAINS)
+    offenders = [
+        path.name
+        for path in connectors.glob("*.py")
+        if "ticker.lower() in url.lower()" in path.read_text()
+    ]
+    assert offenders == []
+    assert {
+        "nasdaq.com",
+        "seekingalpha.com",
+        "stocktwits.com",
+        "finance.yahoo.com",
+    } == audit_mod.SHORTCUT_DOMAINS
 
 
 def test_render_includes_per_connector_rows_and_header(tmp_path: Path) -> None:

@@ -145,10 +145,10 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       details in `PLAN.md` Work item 10. → step 2.
 - [ ] **T-056** *(split into `T-056a`, `T-056b`, `T-056c` so each piece is
       reviewable and shippable; the IDs stay sub-numbered because `portfolio-nlp`
-      cites only `T-053`–`T-059`. Order: `a` (no schema) → maintainer's constitution #10
-      confirmation → `b` → `c`; T-057 starts after all three.)* Implement the approved
+      cites only `T-053`–`T-059`. Order: `a` (no schema) → `b` (constitution #10
+      confirmed 2026-10-15, starts after PR #58 is reviewed) → `c`; T-057 starts after all three.)* Implement the approved
       three-class rule. `T-056` is done when all three are.
-- [ ] **T-056a** *(no schema change)* The matcher and the connectors. Put the pure
+- [x] **T-056a** *(no schema change; done 2026-10-15, PR #58)* The matcher and the connectors. Put the pure
       module in the **shared library** (`data_mining/matching.py`; both `news_collector`
       and `extractor` already import `data_mining.db`/`schema`, so the direction stays
       stages → `data_mining` and the two stages import nothing from each other): the logic
@@ -178,11 +178,19 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       on them and the corpus holds none, so they keep `accept` by construction
       (`match_reason = 'feed'`), stated in FR-014; `rss` entries go through the sitemap
       strategy's filter and **are** classified, with their feed title. → step 3.
-- [ ] **T-056b** *(shared-schema change; needs the maintainer's constitution AI
-      behavior #10 confirmation before it starts: new `discovered_urls` columns, a `status`
-      convention and the extractor update touch the two-package DB contract. The design,
-      quarantine and a `query` column were approved on 2026-10-15; the exact columns and the
-      `skipped`+`reject` convention are listed here for that confirmation.)* Storage, queue
+      **Results (T-056a, PR #58):** signals as above plus `cashtag`. Exchange forms (`NYSE: X`,
+      `Nasdaq: X`, `NYSE American`, `NYSE MKT`, `NYSEARCA`, parenthesised or not) accept; a bare `(X)`
+      does not; `$X` accepts, but for an ordinary-word ticker or an abbreviation it is `review`.
+      Corpus class sizes: re-tag `accept` 104,614 / `review` 51,295 / `reject` 325,423; discovery
+      86,985 / 63,162 / 331,185. `score_ticker_rules.py --check` reproduces the PLAN table (both
+      samples, both modes) and exits 1 on drift. Known limitation, measured with `--names`: 59,956
+      `accept` rows rest on a one-word name, about 12,400 of them dictionary words (Apple 9,890).
+      T-057's fresh check is the acceptance evidence.
+- [ ] **T-056b** *(shared-schema change; constitution AI behavior #10 **confirmed by the
+      maintainer on 2026-10-15** for the exact columns, the `skipped`+`reject` convention, the
+      queue upsert and the extractor's promote-only update listed here: they touch the
+      two-package DB contract. Starts after PR #58 is reviewed; cite the confirmation and its
+      date in this task's PR description.)* Storage, queue
       and API. **Migration via the real mechanism in `data_mining/schema.py`:** add the
       columns to `_DISCOVERY_DDL`, bump `SCHEMA_VERSION` 1 → 2, add a `run_migrations`
       step calling `db.ensure_columns("discovered_urls", {...})` (the pattern of
@@ -234,7 +242,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       with two or more `accept` pairs is multi-company (108,313 of the 320,763 stored
       URLs carry several tickers); the pair stays one row per `(url, ticker)`. Tests: the
       strategies keep `review`/`reject` rows with their class and `query`; the extractor
-      promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
+      promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, `scripts/score_ticker_rules.py --check` exits 0 (or PLAN table and `EXPECTED_FIGURES` are updated together), the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation

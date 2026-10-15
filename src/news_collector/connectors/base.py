@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from data_mining.matching import Match, MatchClass, classify
 from news_collector.models import DateRange, SitemapEntry
 from news_collector.utils.http import fetch_text
 
@@ -48,7 +49,12 @@ class BaseConnector(ABC):
     - build_ddg_queries   → query strings for DDGStrategy
     - sitemap_urls        → async generator of (url, lastmod) for SitemapRSSStrategy
     - is_article_url      → True when url points to a real article
-    - url_matches_company → True when article is relevant to company/ticker
+    - url_matches_company → False only when the article is classed `reject`
+      for company/ticker (see `classify_match`)
+
+    Matching is done once, in `data_mining.matching` (PLAN Work item 10, T-055),
+    and reached through `classify_match`; connectors no longer carry their own
+    ticker/first-word rule.
     """
 
     def __init__(
@@ -109,12 +115,25 @@ class BaseConnector(ABC):
     @abstractmethod
     def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
         """
-        Return True if the article URL or title is relevant to company/ticker.
+        Return False only when the article is certainly not about company/ticker.
 
         Postconditions:
-        - Case-insensitive match
-        - Matching on ticker OR significant company name token is sufficient
+        - Equals `classify_match(...) != "reject"`: `accept` and `review` pairs are
+          kept (a `review` pair has only weak evidence and is judged downstream, never
+          excluded here)
+        - A ticker never matches as a raw URL substring, and an ordinary-word ticker,
+          a generic first word or an abbreviation alone is never `accept` (a cashtag
+          `$ON` is `review`; only an exchange form such as `NYSE: ON` is `accept`)
+        - Only the URL path/query and the title are read, never the host
         """
+
+    def classify_match(self, url: str, title: str, company: str, ticker: str) -> MatchClass:
+        """Class a `(url, ticker)` pair `accept` / `review` / `reject` (shared rule)."""
+        return classify(url, title, company, ticker).cls
+
+    def explain_match(self, url: str, title: str, company: str, ticker: str) -> Match:
+        """Like `classify_match` but also returns the signal that decided the class."""
+        return classify(url, title, company, ticker)
 
     # ------------------------------------------------------------------
     # Shared helpers available to all connectors
@@ -126,7 +145,12 @@ class BaseConnector(ABC):
             return await fetch_text(self._client, url, extra_headers=self.config.headers)
 
     def _company_pattern(self, company: str, ticker: str) -> re.Pattern[str]:
-        """Compile a regex that matches company name tokens or ticker."""
+        """Compile the legacy ``ticker OR first word`` regex.
+
+        No longer used for matching (see `classify_match`); kept because
+        `scripts/audit_ticker_tagging.py` reuses it to reproduce what the old rule
+        accepted.
+        """
         # Use the first word of company name if it's long enough (>3 chars)
         first_word = company.split(maxsplit=1)[0] if company.split() else company
         token = first_word if len(first_word) > _MIN_TOKEN_LEN else company
@@ -137,10 +161,3 @@ class BaseConnector(ABC):
             rf"\b({escaped_ticker}|{escaped_name})\b",
             re.IGNORECASE,
         )
-
-    def _matches_any(
-        self,
-        pattern: re.Pattern[str],
-        *texts: str,
-    ) -> bool:
-        return any(pattern.search(t) for t in texts if t)

@@ -98,7 +98,4 @@ class SeekingAlphaConnector(BaseConnector):
         return bool(_ARTICLE_RE.match(url))
 
     def url_matches_company(self, url: str, title: str, company: str, ticker: str) -> bool:
-        if ticker.lower() in url.lower():
-            return True
-        pattern = self._company_pattern(company, ticker)
-        return self._matches_any(pattern, title)
+        return self.classify_match(url, title, company, ticker) != "reject"

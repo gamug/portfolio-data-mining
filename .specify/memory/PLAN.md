@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056a`–`c`, `T-057`–`T-060` pending; `T-056a` next (no schema), `T-056b` waits for the maintainer's constitution #10 confirmation.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056a` done; `T-056b`, `T-056c`, `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes (constitution #10) on 2026-10-15, and `T-056b` starts after PR #58 is reviewed.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -822,7 +822,8 @@ is put in one of three classes from those two texts
   `3M` included; `&` read as `and`; a name that is itself an ordinary word, such
   as `News` for News Corp, never counts alone) or a hand-kept alias (`Google`
   for Alphabet, `P&G`, `Facebook` for Meta) is in the URL or title, or an
-  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`), or the ticker as an
+  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`; for an ordinary-word ticker or an
+  abbreviation only the exchange forms, its `$X` is `review`), or the ticker as an
   upper-case token of 2+ letters in the title that is not an ordinary word or
   common abbreviation (`GM`, `MSFT`; never `A`, `ON`, `IT`, `PM`, `MS`). A bare
   ticker never counts against a lowercase URL slug and never as a raw substring.
@@ -876,9 +877,18 @@ share of `sitemap` rows drops (their titles are unknown) and the difference move
 to `review`, not to `reject`**, which is the cost the maintainer asked us to take
 instead of excluding. **Exact class sizes of the current rule over the whole corpus**
 (`score_ticker_rules.py --sizes`, 481,332 rows, read-only). Re-tag mode (fetched
-title): `accept` 104,627 (21.7%; `ddg` 16,272, `sitemap` 88,355), `review` 51,289
-(10.7%), `reject` 325,416 (67.6%). Discovery mode (no title for `sitemap` rows):
-`accept` 86,993 (18.1%), `review` 63,158 (13.1%), `reject` 331,181 (68.8%).
+title): `accept` 104,614 (21.7%; `ddg` 16,264, `sitemap` 88,350), `review` 51,295
+(10.7%), `reject` 325,423 (67.6%). Discovery mode (no title for `sitemap` rows):
+`accept` 86,985 (18.1%), `review` 63,162 (13.1%), `reject` 331,185 (68.8%).
+(Requiring an exchange in the parenthesised ticker form moved 13 rows, from `accept` to `review`/`reject`.)
+**Known limitation, measured** (`--names`): 59,956 `accept` rows (57% of re-tag `accept`) rest on a
+one-word company name alone, across 186 companies, led by Apple 9,890, Amazon 6,390, Microsoft 3,179,
+Nvidia 2,800 and Boeing 2,408. Full list (`--names --top 186`, re-tag mode): the dictionary-word names (Apple 9,890,
+Oracle 741, Visa 509, Carnival 236, Booking 207, Waters 164, Ball 145, Mosaic 105, Progressive 87,
+Flex 81, Dover 67, Hartford 59, Coherent 46, Everest 38, Tapestry 19, Block 18) add up to about
+12,400 rows, 21% of those 59,956 (Apple alone is 80% of them); the rest are distinctive brands. Apple, Oracle and
+Visa are mostly the company in finance news, but a name like `visa-bulletin` for Visa is accepted wrongly. The rule is not
+changed without data; the T-057 fresh check decides.
 `review` is the volume handed to `portfolio-nlp` T-132: about 51,000 pairs on the
 existing corpus (63,000 if the rule ran on bare URLs). The first draft had
 117,900 / 52,088 / 311,344. The `reject` class was 28 of 30 wrong, so "do not exclude"
@@ -908,8 +918,8 @@ fresh check.
 the title for `ddg`) and **re-evaluated after the fetch** with the stored title.
 The rule is monotone, since more text can only add evidence, so re-evaluation can
 only promote and two code paths cannot disagree by demoting. It applies to fetched
-(`accept`/`review`) rows: this is why 63,158 discovery-time `review` pairs fall to
-51,289 in the existing corpus, where every row was fetched. Going forward a
+(`accept`/`review`) rows: this is why 63,162 discovery-time `review` pairs fall to
+51,295 in the existing corpus, where every row was fetched. Going forward a
 `reject` row is written `status = 'skipped'` (with `match_class = 'reject'`) and never fetched, so a `sitemap`
 `reject` row stays `reject` unless a feed title came with it; about 5,800 pairs
 that would improve with a title are therefore not fetched (accepted: 0.0% of

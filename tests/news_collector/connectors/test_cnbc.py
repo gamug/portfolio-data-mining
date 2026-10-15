@@ -31,12 +31,10 @@ def test_is_article_url_rejects_tag_page(connector: CNBCConnector) -> None:
 
 
 def test_url_matches_company_ticker(connector: CNBCConnector) -> None:
-    assert connector.url_matches_company(
-        "https://www.cnbc.com/2024/01/15/aapl-earnings.html",
-        "",
-        "Apple Inc.",
-        "AAPL",
-    )
+    # A lower-case ticker in the slug is weak evidence (`review`): kept, not `accept`.
+    url = "https://www.cnbc.com/2024/01/15/aapl-earnings.html"
+    assert connector.url_matches_company(url, "", "Apple Inc.", "AAPL")
+    assert connector.classify_match(url, "", "Apple Inc.", "AAPL") == "review"
 
 
 def test_url_matches_company_title(connector: CNBCConnector) -> None:

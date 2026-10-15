@@ -18,7 +18,7 @@ list (slow; read-only).
 
 Usage:
     PYTHONPATH=src uv run python scripts/score_ticker_rules.py [--db PATH]
-        [--sample PATH] [--exclude-ids ID ...] [--diff]
+        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names [--top N]] [--check]
 """
 
 from __future__ import annotations
@@ -28,97 +28,41 @@ import csv
 import re
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from audit_ticker_tagging import WORD_TICKERS
-from ticker_tagging_sample import DEFAULT_SAMPLE, normalized_name
+from ticker_tagging_sample import DEFAULT_SAMPLE
 
+from data_mining import matching
 from data_mining.db import connect, resolve_db_path
+from data_mining.matching import (
+    ALIASES,  # noqa: F401 - re-exported for the tests
+    BASELINE_ABBREVIATIONS,
+    MIN_NAME,
+    MIN_TICKER,
+    STOPWORDS,
+    WORD_TICKERS,
+)
 
 BODY_CHARS = 6000
-MIN_NAME = 4
-MIN_TICKER = 3
 REPEATS = 2
-# Lone first words too ordinary to identify a company by themselves.
-STOPWORDS = frozenset(
-    {
-        *("dollar", "american", "trade", "bank", "first", "news", "best", "global", "home"),
-        *("target", "public", "live", "state", "federal", "capital", "texas", "digital"),
-        *("extra", "union", "equity", "international", "general", "united", "national"),
-        *("new", "pacific", "southern", "western", "norfolk"),
-    }
-)
-
-# Ordinary words that are also tickers or look like them in a headline; an
-# upper-case ticker among these never counts as evidence by itself.
-COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
-    {
-        *("AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN", "IS", "ME", "MY"),
-        *("NO", "OF", "OR", "SO", "TO", "UP", "US", "WE", "I", "CAN", "FOR", "ONE", "OUT"),
-        *("NEW", "BIG", "FAST", "KEY", "APP", "FIX"),
-    }
-)
-# 2-letter tickers that are also upper-case abbreviations in a headline ("Egypt PM
-# says"). Never `accept` on their own, but never excluded either: an upper-case
-# hit in the title is `review` (judged downstream), so the list cannot hide a pair.
-ABBREVIATIONS = frozenset({"PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"})
-BASELINE_ABBREVIATIONS: frozenset[str] = frozenset()  # the first draft had none
-# Names a company is also known by, matched like the full name (hand-kept, tested).
-# `coke` for KO was rejected: it is also a fuel and a steel input.
-ALIASES: dict[str, tuple[str, ...]] = {
-    "GOOGL": ("google",),
-    "GOOG": ("google",),
-    "PG": ("p and g",),
-    "META": ("facebook",),
-    "BRK.B": ("berkshire",),
-    "BRK.A": ("berkshire",),
-    "JPM": ("jpmorgan",),
-    "WMT": ("wal mart",),
-}
-MIN_SHORT_TICKER = 2
 
 Row = dict[str, str]
 Rule = Callable[[Row, str, str], bool]
 
 
-def _flat(text: str) -> str:
-    """Lower-case words of ``text``; ``&`` is read as ``and`` (URLs spell it out)."""
-    return (
-        " " + " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower().replace("&", " and ")).split()) + " "
-    )
-
-
-def _full_name(row: Row) -> str:
-    return normalized_name(row["company"].replace("&", " and "))
-
-
-def _name_in(row: Row, text: str, aliases: dict[str, tuple[str, ...]] | None = None) -> bool:
-    """Full normalized name (or an alias) in ``text``; an ordinary word alone never counts."""
-    name = _full_name(row)
-    distinctive = (len(name) >= MIN_NAME or any(c.isdigit() for c in name)) and (
-        name not in STOPWORDS
-    )  # "3M" yes; "News" (News Corp) no
-    flat = _flat(text)
-    names = [name] if distinctive else []
-    names += list((ALIASES if aliases is None else aliases).get(row["ticker"], ()))
-    return any(f" {n} " in flat for n in names)
+def _name_in(row: Row, text: str) -> bool:
+    return matching.name_in(row["company"], row["ticker"], text)
 
 
 def _explicit(ticker: str, title: str, body: str) -> bool:
-    t = re.escape(ticker)
-    pattern = re.compile(
-        rf"(\((?:NYSE|NASDAQ|NYSEARCA|Nasdaq|NYSE American)?:?\s*{t}\)"
-        rf"|(?:NYSE|NASDAQ)\s*:\s*{t}\b|\${t}\b)"
-    )
-    return bool(pattern.search(title) or pattern.search(body[:BODY_CHARS]))
+    return matching.explicit_ticker(ticker, title, body[:BODY_CHARS])
 
 
 def _name_count(row: Row, body: str) -> int:
-    name = _full_name(row)
-    return _flat(body[:BODY_CHARS]).count(f" {name} ") if len(name) >= MIN_NAME else 0
+    name = matching.full_name(row["company"])
+    return matching.flat(body[:BODY_CHARS]).count(f" {name} ") if len(name) >= MIN_NAME else 0
 
 
 def rule_current(_row: Row, _title: str, _body: str) -> bool:
@@ -153,52 +97,32 @@ def rule_plus_title_signals(row: Row, title: str, body: str) -> bool:
     return rule_plus_body_name(row, title, body) or upper or word
 
 
-def _word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
-    return (
-        re.search(rf"(?<![A-Za-z0-9&]){re.escape(token)}(?![A-Za-z0-9&])", text, flags) is not None
-    )
+def design_class(row: Row, title: str, **overrides: object) -> str:
+    """T-055 design v1 class of one pair (``data_mining.matching.classify``).
 
-
-def design_class(
-    row: Row,
-    title: str,
-    *,
-    abbreviations: frozenset[str] = ABBREVIATIONS,
-    with_host: bool = False,
-    aliases: dict[str, tuple[str, ...]] | None = None,
-) -> str:
-    """T-055 design v1, from the URL path and the title (what discovery can see).
-
-    ``accept``: the full normalized company name (``&`` read as ``and``; a name
-    that is itself an ordinary word such as ``News`` never counts) or a hand-kept
-    alias is in the URL path or title, or an explicit ticker form, or an
-    upper-case ticker (2+ letters, not an ordinary word or abbreviation) in the
-    title. ``review``: only a weaker sign, a non-common ticker or a distinctive
-    first word in the URL/title, or an abbreviation-like 2-letter ticker in
-    upper case in the title. ``reject``: nothing else. The host is not matched
-    (``with_host`` exists only to measure what that leak used to accept).
+    ``overrides`` (``abbreviations``, ``with_host``, ``aliases``) reproduce earlier
+    versions of the rule for ``--diff``.
     """
-    ticker = row["ticker"]
-    parts = urlsplit(row["url"])
-    slug = (
-        f"{parts.netloc} {parts.path} {parts.query}" if with_host else f"{parts.path} {parts.query}"
-    )
-    text = f"{slug} {title}"
-    common = COMMON_TICKER_WORDS | abbreviations
-    strong = (
-        _name_in(row, text, aliases)
-        or _explicit(ticker, title, "")
-        or (len(ticker) >= MIN_SHORT_TICKER and ticker not in common and _word(ticker, title, 0))
-    )
-    if strong:
-        return "accept"
-    first = row["company"].split()[0].strip(",.")
-    weak = (
-        (len(ticker) >= MIN_TICKER and ticker not in common and _word(ticker, text))
-        or (len(first) >= MIN_NAME and first.lower() not in STOPWORDS and _word(first, text))
-        or (ticker in abbreviations and _word(ticker, title, 0))
-    )
-    return "review" if weak else "reject"
+    return matching.classify(
+        row["url"],
+        title,
+        row["company"],
+        row["ticker"],
+        **overrides,  # type: ignore[arg-type]
+    ).cls
+
+
+def _iter_corpus(db_path: Path) -> Iterator[tuple[str, str, str, str, str]]:
+    """Read-only scan of every pair: ``(url, ticker, company, source, title)``.
+
+    ``title`` is the discovery title, else the fetched article's, else blank.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    with closing(connect(uri, uri=True)) as con:
+        yield from con.execute(
+            "SELECT d.url, d.ticker, d.company, d.source, COALESCE(NULLIF(d.title, ''), a.title, '')"
+            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
+        )
 
 
 def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, str]], Counter[str]]:
@@ -208,21 +132,15 @@ def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, s
     moved. ``overrides`` are ``design_class`` keywords for the *old* behaviour
     (``abbreviations=...``, ``with_host=True``); read-only.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
     moves: Counter[tuple[str, str]] = Counter()
     by_ticker: Counter[str] = Counter()
-    with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
-            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
-        )
-        for url, ticker, company, title in cur:
-            row = {"url": url, "ticker": ticker, "company": company}
-            old = design_class(row, title, **overrides)  # type: ignore[arg-type]
-            new = design_class(row, title)
-            if old != new:
-                moves[(old, new)] += 1
-                by_ticker[ticker] += 1
+    for url, ticker, company, _source, title in _iter_corpus(db_path):
+        row = {"url": url, "ticker": ticker, "company": company}
+        old = design_class(row, title, **overrides)  # type: ignore[arg-type]
+        new = design_class(row, title)
+        if old != new:
+            moves[(old, new)] += 1
+            by_ticker[ticker] += 1
     return moves, by_ticker
 
 
@@ -232,18 +150,40 @@ def corpus_sizes(db_path: Path, discovery: bool = False) -> Counter[tuple[str, s
     With ``discovery`` the title is blank for ``sitemap`` rows (discovery sees only
     their URL). Read-only.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
     sizes: Counter[tuple[str, str]] = Counter()
-    with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT d.url, d.ticker, d.company, d.source, COALESCE(NULLIF(d.title, ''), a.title, '')"
-            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
-        )
-        for url, ticker, company, source, title in cur:
-            row = {"url": url, "ticker": ticker, "company": company}
-            seen = "" if discovery and source == "sitemap" else title
-            sizes[(design_class(row, seen), source)] += 1
+    for url, ticker, company, source, title in _iter_corpus(db_path):
+        row = {"url": url, "ticker": ticker, "company": company}
+        seen = "" if discovery and source == "sitemap" else title
+        sizes[(design_class(row, seen), source)] += 1
     return sizes
+
+
+def single_word_name_hits(db_path: Path) -> Counter[tuple[str, str]]:
+    """Rows accepted on the company name alone, for one-word names, per ``(ticker, name)``.
+
+    One-word names (Visa, Apple, Block) are the ones most likely to be ordinary
+    words; the counts show which companies lean on that signal. Read-only.
+    """
+    hits: Counter[tuple[str, str]] = Counter()
+    for url, ticker, company, _source, title in _iter_corpus(db_path):
+        name = matching.full_name(company)
+        if " " in name:
+            continue
+        found = matching.classify(url, title, company, ticker)
+        if found.cls == "accept" and found.reason == "name":
+            hits[(ticker, name)] += 1
+    return hits
+
+
+def render_name_hits(hits: Counter[tuple[str, str]], top: int = 25) -> str:
+    """Format ``single_word_name_hits`` output (largest first)."""
+    total = sum(hits.values())
+    lines = [
+        f"== re-tag mode (fetched title): accept on a one-word name alone, {total:,} rows,"
+        f" {len(hits)} companies; top {min(top, len(hits))} =="
+    ]
+    lines += [f"  {t:6} {n:<14} {c:>8,}" for (t, n), c in hits.most_common(top)]
+    return "\n".join(lines)
 
 
 def render_sizes(label: str, sizes: Counter[tuple[str, str]]) -> str:
@@ -265,15 +205,15 @@ def render_diff(label: str, moves: Counter[tuple[str, str]], by_ticker: Counter[
     return "\n".join(lines)
 
 
-def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
-    """Population-weighted shares and wrong rates of the three design classes.
+def _tally(
+    data: list[tuple[Row, str, str, str]], discovery: bool
+) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str, str], int], list[tuple[str, str]]]:
+    """Post-stratified ``(class, label)`` weights, raw ``(class, source, label)`` counts and
+    the ``(class, label)`` of the known-correct candidates, for ``design_report``/``design_figures``.
 
-    Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
-    the figures estimate the whole corpus, not the sample mix. Rows are
-    post-stratified: the weight is the *drawn* stratum's size over its sample
-    count, whatever class today's rule gives the row. With ``discovery`` the
-    title is blank for ``sitemap`` rows (discovery sees only their URL, the
-    stored title comes from the later fetch); ``ddg`` rows keep their title.
+    The weight is the *drawn* stratum's size over its sample count, whatever class
+    today's rule gives the row. With ``discovery`` the title is blank for ``sitemap``
+    rows (discovery sees only their URL); ``ddg`` rows keep their title.
     """
     strata: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     size: dict[str, int] = {}
@@ -292,6 +232,36 @@ def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False
         for cls, label, source in pairs:
             weight[(cls, label)] += size[name] / len(pairs)
             raw[(cls, source, label)] += 1
+    return weight, raw, known
+
+
+def design_figures(
+    data: list[tuple[Row, str, str, str]], discovery: bool = False
+) -> dict[str, tuple[float, float] | tuple[int, int]]:
+    """The numbers of ``design_report`` as data: per class ``(share %, wrong %)`` to one
+    decimal, and ``known`` as ``(known-correct classed accept, known-correct labeled yes)``.
+    """
+    weight, _raw, known = _tally(data, discovery)
+    total = sum(weight.values())
+    out: dict[str, tuple[float, float] | tuple[int, int]] = {}
+    for cls in ("accept", "review", "reject"):
+        yes, no = weight[(cls, "yes")], weight[(cls, "no")]
+        out[cls] = (
+            round(100 * (yes + no) / total, 1),
+            round(100 * no / (yes + no), 1) if yes + no else 0.0,
+        )
+    yes_known = [c for c, lab in known if lab == "yes"]
+    out["known"] = (sum(c == "accept" for c in yes_known), len(yes_known))
+    return out
+
+
+def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
+    """Population-weighted shares and wrong rates of the three design classes.
+
+    Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
+    the figures estimate the whole corpus, not the sample mix (see ``_tally``).
+    """
+    weight, raw, known = _tally(data, discovery)
     total = sum(weight.values())
     yes_total = sum(w for (_k, lab), w in weight.items() if lab == "yes")
     mode = "discovery (sitemap URL only)" if discovery else "re-tag (fetched title)"
@@ -318,6 +288,68 @@ def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False
         f"{sum(c == 'accept' for c in yes_known)}/{len(yes_known)}"
     )
     return "\n".join(lines)
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+# The PLAN Work item 10 table, as data: (sample file, discovery mode) -> `design_figures`.
+# In-sample (the rule was tuned on both samples), so it only guards against a rule
+# edit moving the reported numbers unnoticed; the acceptance evidence is the T-057
+# fresh check. Update it, and the PLAN table, together with any deliberate rule change.
+EXPECTED_FIGURES: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]] = {
+    ("ticker_tagging_sample.csv", False): {
+        "accept": (28.8, 10.9),
+        "review": (12.1, 64.4),
+        "reject": (59.2, 100.0),
+        "known": (17, 17),
+    },
+    ("ticker_tagging_sample.csv", True): {
+        "accept": (25.3, 12.3),
+        "review": (15.5, 50.2),
+        "reject": (59.2, 100.0),
+        "known": (16, 17),
+    },
+    ("ticker_validation_sample.csv", False): {
+        "accept": (20.2, 0.0),
+        "review": (10.9, 52.5),
+        "reject": (68.9, 100.0),
+        "known": (0, 0),
+    },
+    ("ticker_validation_sample.csv", True): {
+        "accept": (14.3, 0.0),
+        "review": (16.0, 30.6),
+        "reject": (69.7, 100.0),
+        "known": (0, 0),
+    },
+}
+
+
+def check_figures(
+    scored: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]],
+    expected: dict[tuple[str, bool], dict[str, tuple[float, float] | tuple[int, int]]],
+) -> list[str]:
+    """Differences between ``scored`` and ``expected`` figures, one line each (empty: equal)."""
+    diffs = []
+    for key, want in expected.items():
+        got = scored.get(key, {})
+        for name, value in want.items():
+            if got.get(name) != value:
+                mode = "discovery" if key[1] else "re-tag"
+                diffs.append(f"{key[0]} {mode} {name}: expected {value}, got {got.get(name)}")
+    return diffs
+
+
+def run_check(db: Path, data_dir: Path = DATA_DIR) -> int:
+    """Score both committed samples in both modes against ``EXPECTED_FIGURES``; 0 when equal."""
+    scored = {
+        (name, discovery): design_figures(load(db, data_dir / name), discovery)
+        for name, discovery in EXPECTED_FIGURES
+    }
+    diffs = check_figures(scored, EXPECTED_FIGURES)
+    for line in diffs:
+        print(line)
+    print("figures match PLAN" if not diffs else f"{len(diffs)} figure(s) differ from PLAN")
+    return 1 if diffs else 0
 
 
 RULES: dict[str, Rule] = {
@@ -407,8 +439,26 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="scan the whole corpus (slow) for rows moved by the host fix and the abbreviation list",
     )
+    parser.add_argument(
+        "--names",
+        action="store_true",
+        help="scan the whole corpus (slow) for rows accepted on a one-word company name alone",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="compare both committed samples' figures with the PLAN table; exit 1 on a difference",
+    )
+    parser.add_argument("--top", type=int, default=25, help="companies listed by --names")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be at least 1")
     db = Path(args.db or resolve_db_path())
+    if args.check:
+        if not db.is_file():
+            print("error: urls.db not found", file=sys.stderr)
+            return 1
+        return run_check(db)
     sample = Path(args.sample)
     if not db.is_file() or not sample.is_file():
         print("error: urls.db or the sample CSV not found", file=sys.stderr)
@@ -423,6 +473,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.sizes:
         print(render_sizes("re-tag (fetched title)", corpus_sizes(db)))
         print(render_sizes("discovery (sitemap URL only)", corpus_sizes(db, discovery=True)))
+    if args.names:
+        print(render_name_hits(single_word_name_hits(db), args.top))
     if args.diff:
         for label, kw in (
             ("matching the host (old)", {"with_host": True}),
