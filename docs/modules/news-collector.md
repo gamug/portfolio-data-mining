@@ -194,7 +194,8 @@ PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-exp
 #    first committed sample, which must not receive these labels.
 PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-apply \
     --sample data/ticker_retag_check_sample.csv --manual data/ticker_retag_check_manual.csv
-PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --verdict data/ticker_retag_check_sample.csv
+#    (--db adds the sheet checks `--apply` will run: shape, freshness, stale classes; without it only the labels are scored)
+PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --verdict data/ticker_retag_check_sample.csv --db urls.db
 # 3. STOP the collector and the crawler, then (the labeled sample is what --hand-check scores again,
 #    and a FAIL refuses the run; at most 5 of 60 accept wrong, at most 1 of 40 reject correct)
 PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
@@ -205,7 +206,7 @@ PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
 overwriting a file) and `--hand-check SHEET`, which it scores with the same verdict and validates as *the* T-057 sheet before writing anything (a
 failing, unlabeled or missing sheet refuses the run, and so does a sheet that is not exactly 60 `accept` + 40 `reject` rows with unique
 ids that exist, whose classes are what the current matcher gives now (a stale sheet), or whose ids are in either earlier sample;
-`ticker_validation_sample.py --verdict SHEET --db urls.db` runs the same checks; the verdict line and sheet path go to `retag_summary.json` for T-058). The
+`ticker_validation_sample.py --verdict SHEET --db urls.db` runs the same checks). The verdict line and the sheet path go to `retag_summary.json` for T-058. The
 collector and the crawler must be stopped: the run aborts before writing if the row counts, largest ids or rows per status moved
 since the plan was computed (the dry run on a copy has no such need). It migrates, re-tags in one transaction, quarantines in
 a second, then compares the database with the plan (class counts, quarantined counts per class, no `accept`
