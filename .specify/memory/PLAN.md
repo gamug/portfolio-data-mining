@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053` done; `T-054` done; `T-055`–`T-060` pending; `T-055` next.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056`–`T-060` pending; `T-056` next.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -904,6 +904,13 @@ that were `reject`), `META` 89 (`facebook`), `GOOG` 12, `GOOGL` 9, `WMT` 1. The
 small and `portfolio-nlp` sees the article body, and is revisited by the T-057
 fresh check.
 
+**Discovery versus fetch.** The stored class is computed at discovery (URL, plus
+the title for `ddg`) and **re-evaluated after the fetch** with the stored title.
+The rule is monotone, since more text can only add evidence, so re-evaluation can
+only promote (`review`→`accept`, `reject`→`review`) and two code paths cannot
+disagree by demoting; this is why 63,158 discovery-time `review` pairs fall to
+51,289 once titles exist.
+
 **Quarantine** means the pair stays in `urls.db`, is flagged with its class and
 reason, and is left out of the default `articles` selection that
 `portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing it
@@ -923,8 +930,9 @@ all companies, and marking a URL accepted for several companies `multi_company`
 (roundups are legitimate), is a `T-056` design question, not part of what was
 measured here.
 
-**Targets (to be written into FR-014 only after the fresh check passes; not yet
-met on out-of-sample evidence):** wrong-company rate among `accept` rows at most
+**Targets (written into FR-014 on 2026-10-15 as the requirement; the first draft
+missed them out-of-sample and the revised rule is verified only by the fresh check
+below, in T-057):** wrong-company rate among `accept` rows at most
 **15%**; correct pairs kept as `accept` or `review` at least **95%**; known-correct
 pairs labeled `yes` classed `accept` at least **90%** (discovery mode counted
 separately, where 16 of 17 pass); no `accept` row whose only evidence is an
@@ -953,17 +961,25 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
      (Technological stock #7) — prefer a hand-kept stoplist.
    - Recall matters too: the rule must keep what was correctly tagged. Report
      the retained share on a hand-labeled set of known-correct pairs.
-3. **Implement** the rule once, in a shared `BaseConnector` helper built on
-   `_company_pattern`, and make all seven overriding connectors delegate to it
-   (dropping or tightening the substring shortcut in `nasdaq`,
-   `seeking_alpha`, `stocktwits`, `yahoo_finance`); no `BaseConnector`
-   signature change. Rewrite the docstring postcondition that currently
-   blesses "ticker OR first word". Hermetic parametrized tests **per
-   connector**: ambiguous tickers (`A`, `ON`, `IT`, `ARE`), generic first
-   words, alias cases, substring cases, and regression cases for pairs that
-   must still match. Only `tests/news_collector/connectors/test_cnbc.py`
-   exercises `url_matches_company` today (and asserts the permissive rule), so
-   those tests change deliberately and the other six connectors get test files.
+3. **Implement** the approved three-class rule once, in a shared pure module
+   exposed by one new concrete `BaseConnector.classify_match` returning
+   `accept`/`review`/`reject`; the seven overriding connectors' abstract
+   `url_matches_company` keeps its signature and returns `class != "reject"`, the
+   substring shortcut in `nasdaq`, `seeking_alpha`, `stocktwits` and
+   `yahoo_finance` is removed, and the docstring postcondition that blesses
+   "ticker OR first word" is rewritten. `discovered_urls` gains additive
+   `match_class`, `match_reason` and `query` columns (idempotent migration), the
+   `ddg` and `sitemap` strategies keep `review`/`reject` rows with their class
+   instead of dropping them (so new crawls have the quarantine), and the
+   fetcher fetches `accept` and `review` rows only. The class is computed at
+   discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
+   with the stored title; the rule is monotone, so re-evaluation only promotes.
+   `multi_company` is derived (a URL with 2+ `accept` pairs), not stored.
+   Hermetic parametrized tests **per connector** for all three classes, the
+   monotone-promotion test and the migration test (details in `TASKS.md` T-056);
+   only `test_cnbc.py` covers `url_matches_company` today and asserts the
+   permissive rule, so it changes deliberately and the other six connectors get
+   test files.
 4. **Re-tag the existing data (`urls.db`).** Apply the new rule to
    `discovered_urls` / `articles` (481,332 rows each) as a dry run on a copy
    first, reporting how many `(url, ticker)` pairs would be removed, per
@@ -987,13 +1003,14 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
 
 - The audit reproduces the counts above from `urls.db`, and the error rate of
   both failure modes is measured (not assumed) before the rule is chosen.
-- The new matcher rejects the documented examples (`A` on `in-a-month`, `ON`
-  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence, and a
-  ticker as a bare substring such as `A` in any URL) **in each of the seven
-  connectors**, with the wrong-company rate at or below, and known-correct
-  retention at or above, the targets fixed by T-055 (numbers recorded here and
-  in FR-014 before coding) on the shared labeled sample, and with no
-  `BaseConnector` signature change.
+- The new matcher classes the documented examples (`A` on `in-a-month`, `ON`
+  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First`/`News` as sole evidence, and
+  a ticker as a bare substring such as `A` in any URL) as `reject` or `review`,
+  never `accept`, **in each of the seven connectors**; `accept` meets the FR-014
+  targets (wrong rate at most 15%, correct pairs kept as `accept`/`review` at
+  least 95%, known-correct `accept` at least 90%) on the labeled samples, **verified
+  by the T-057 fresh check** (at most 5 of 60 `accept` wrong, at most 1 of 40
+  `reject` correct); no abstract `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending

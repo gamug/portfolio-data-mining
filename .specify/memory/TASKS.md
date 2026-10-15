@@ -113,7 +113,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       The maintainer reviewed the two labels that looked inconsistent with
       their notes, `MGM` id 317362 and `DE` id 180987, and approved them as
       `no` (2026-10-15); known-correct retention of record is 17/20.
-- [ ] **T-055** Record the matching-rule design (starting direction:
+- [x] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
       T-054 numbers behind it, and get it approved before coding. Division of work
@@ -131,35 +131,67 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       Validation sample (`data/ticker_validation_sample.csv`, 100 fresh pairs,
       labeled by the maintainer) showed the first draft missing its 15% target
       (`accept` 20.7% wrong); fixed (ordinary-word names, `&`/`and`, abbreviation
-      list, aliases; `ddg` promotion withdrawn) and re-scored in-sample. Targets
-      (to be written into FR-014 after the fresh check): wrong rate among `accept`
-      at most 15%, correct pairs kept at least 95%, known-correct `accept` at
-      least 90%; a ~100-pair fresh hand-labeled check on the implemented rule
-      belongs to T-057's dry run. All figures reproduce with
+      list, aliases; `ddg` promotion withdrawn) and re-scored in-sample. **Closed
+      2026-10-15:** the targets are written into `SPEC.md` FR-014 and the `PLAN.md`
+      acceptance criteria (wrong rate among `accept` at most 15%, correct pairs kept
+      at least 95%, known-correct `accept` at least 90%); they are verified by the
+      fresh hand-labeled check in T-057's dry run (60 `accept`, 40 `reject`), not
+      here. Outcomes of the open questions: the `ddg` query is stored as provenance
+      only (it does not change a class), and each sitemap article is **not** decided
+      once across companies; the class is per `(url, ticker)` pair and
+      `multi_company` is derived (T-056). All figures reproduce with
       `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
       details in `PLAN.md` Work item 10. → step 2.
-- [ ] **T-056** Implement the rule once, in a shared `BaseConnector` helper
-      (built on `_company_pattern`) that **all seven** connectors that match
-      companies delegate to — `cnbc`, `ft`, `investing`, `nasdaq`,
-      `seeking_alpha`, `stocktwits`, `yahoo_finance` — and remove or tighten
-      the raw `ticker.lower() in url.lower()` shortcut that the last four
-      run first. Each connector overrides the abstract `url_matches_company`,
-      so each override is edited to call the helper. Rewrite the base-class
-      docstring postcondition ("ticker OR significant company name token is
-      sufficient"). Hermetic parametrized tests **per connector** (ambiguous
-      tickers, generic first words, alias cases, must-still-match
-      regressions, the substring cases). Only `test_cnbc.py` covers
-      `url_matches_company` today (`test_url_matches_company_ticker`,
-      `_title`, `_negative`, which assert the permissive rule); update those
-      deliberately and add the missing files for the other six, so the change
-      is not read as a regression. No `BaseConnector` signature change. →
-      step 3.
+- [ ] **T-056** Implement the approved three-class rule once, in a shared
+      pure module (`news_collector/matching.py`: the logic of
+      `scripts/score_ticker_rules.py` `design_class`, with the alias map, the
+      ordinary-word-name rule, `&`→`and`, the abbreviation list, path-only URL
+      matching and no new dependency), exposed through one new **concrete**
+      `BaseConnector.classify_match(url, title, company, ticker) -> "accept" |
+      "review" | "reject"`. The abstract `url_matches_company` keeps its
+      signature; in each of the **seven** connectors that override it
+      (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`, `stocktwits`,
+      `yahoo_finance`) the override returns `classify_match(...) != "reject"`,
+      and the raw `ticker.lower() in url.lower()` shortcut the last four ran
+      first is removed. Rewrite the base-class docstring postcondition
+      ("ticker OR significant company name token is sufficient").
+      **Storage (additive, idempotent migration like the other `ALTER`
+      migrations, `SCHEMA_VERSION` handled as there):** `discovered_urls` gains
+      `match_class TEXT NOT NULL DEFAULT 'accept'`, `match_reason TEXT` (which
+      signal decided: `name`, `alias`, `explicit_ticker`, `upper_ticker`, `weak_ticker`,
+      `weak_first_word`, `abbreviation`, `none`), and `query TEXT` (the `ddg` search
+      query that returned the row; provenance only, it never changes the class).
+      **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`)
+      now call `classify_match` and keep `review` and `reject` rows with their
+      class instead of `continue`, so the quarantine exists for new crawls; the
+      fetcher/extractor fetches `accept` and `review` rows (a `review` pair needs
+      its body for `portfolio-nlp`'s decision) and skips `reject` rows.
+      **Discovery vs fetch:** the class is computed at discovery from the URL (and
+      the title for `ddg`), then **re-evaluated after the fetch** with the stored
+      title; the rule is monotone (more text can only add evidence), so
+      re-evaluation can only promote (`review`→`accept`, `reject`→`review`), never
+      demote; a test locks that property. **`multi_company` is derived, not stored:**
+      a URL with two or more `accept` pairs is multi-company (108,313 of the 320,763
+      stored URLs carry several tickers); the pair stays one row per `(url, ticker)`.
+      Hermetic parametrized tests **per connector** for all three classes
+      (ambiguous tickers `A`/`ON`/`IT`/`ARE`, generic first words `Bank`/`Trade`/
+      `First`/`News`, aliases, `&`/`and`, abbreviations → `review`, the substring
+      cases, host not matched), the monotone-promotion test, the migration, and the
+      strategies keeping `review`/`reject` rows with their class and `query`. Only
+      `test_cnbc.py` covers `url_matches_company` today (and asserts the permissive
+      rule): update it deliberately and add the six missing files. No
+      `BaseConnector` abstract-signature change. → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
       (quarantine over delete) that `portfolio-nlp`'s pending queries
-      (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude —
-      agree the shape with that repo first. The run also writes the list of
+      (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude.
+      Proposed shape, to agree with that repo first: set the `articles` row of
+      every `review`/`reject` pair to `fetch_status = 'quarantined'` (their query
+      already filters on `'ok'`, so no change there is needed to stop reading it),
+      keeping the previous status and the class in `match_class`/`match_reason`/a
+      `prev_fetch_status` column so clearing the flag restores the row exactly; the
+      `accept` rows are untouched. The run also writes the list of
       removed `(url, ticker)` / article ids and the `review` quarantine list
       (class and triggering evidence), which T-058 hands over. Before the real
       run, a fresh hand-labeled check (about 50 newly `accept`, 50 `reject`
