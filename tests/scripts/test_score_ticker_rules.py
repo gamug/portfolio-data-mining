@@ -66,6 +66,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
             writer.writerow(
                 {"id": i, "url": u, "ticker": t, "company": c, "label": lab}
                 | {k: "" for k in FIELDS if k not in ("id", "url", "ticker", "company", "label")}
+                | {"stratum": "d/s/both", "stratum_size": "10"}
             )
     return db, sample
 
@@ -100,3 +101,133 @@ def test_main_exclude_and_missing(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert "rows scored: 4; excluded (unclear or unlabeled): 0" in out
     assert "current (accepts all)" in out
     assert mod.main(["--db", str(tmp_path / "no.db"), "--sample", str(sample)]) == 1
+
+
+def _row(ticker: str, company: str, url: str = "https://x/a.html") -> dict[str, str]:
+    return {"ticker": ticker, "company": company, "url": url}
+
+
+@pytest.mark.parametrize(
+    ("row", "title", "expected"),
+    [
+        (_row("GM", "General Motors"), "GM lays off 1,000 workers", "accept"),  # short upper-case
+        (_row("A", "Agilent Technologies"), "Trust a month on", "reject"),  # lone letter
+        (_row("ON", "ON Semiconductor"), "Why traders bet ON growth", "reject"),  # common word
+        (_row("MMM", "3M"), "3M trims forecast", "accept"),  # digit name
+        (_row("TTD", "Trade Desk"), "Trade war ends", "reject"),  # stopword first word
+        (_row("TTD", "Trade Desk"), "The Trade Desk raises outlook", "accept"),  # full name
+        (
+            _row("HON", "Honeywell International"),
+            "Honeywell stock soars",
+            "review",
+        ),  # first word only
+        (_row("AAPL", "Apple Inc."), "Stocks (NASDAQ: AAPL) rise", "accept"),  # explicit form
+        # real failures found on the validation sample (T-055)
+        (
+            _row("NWSA", "News Corp (Class A)", "https://c/bad-news-driving-the-euro.html"),
+            "Bad News",
+            "reject",
+        ),
+        (
+            _row("PM", "Philip Morris International"),
+            "UPDATE 2-Egypt PM says IMF talks resume",
+            "review",
+        ),
+        (
+            _row("SPGI", "S&P Global", "https://s/s-and-p-global-inc-2022-q1-results"),
+            "S&P Global Inc. 2022 Q1",
+            "accept",
+        ),
+        (
+            _row(
+                "IFF",
+                "International Flavors & Fragrances",
+                "https://s/international-flavors-and-fragrances-inc-2024",
+            ),
+            "x",
+            "accept",
+        ),
+        (
+            _row("PG", "Procter & Gamble"),
+            "Activist firm Trian cuts holdings in P&G, Mondelez",
+            "accept",
+        ),  # alias
+        (
+            _row("GOOGL", "Alphabet Inc. (Class A)"),
+            "Is Google's Prize Acquisition Cause For Alarm?",
+            "accept",
+        ),  # alias
+        (
+            _row("ICE", "Intercontinental Exchange", "https://c/immigrants-ice-report.html"),
+            "Immigrants convicted",
+            "review",
+        ),  # a word-like ticker only: judged downstream
+    ],
+)
+def test_design_class(row: dict[str, str], title: str, expected: str) -> None:
+    assert mod.design_class(row, title) == expected
+
+
+def test_design_report_weights_by_stratum(tmp_path: Path) -> None:
+    db, sample = _fixture(tmp_path)
+    text = mod.design_report(mod.load(db, sample))
+    assert "design v1" in text
+    assert "known-correct (labeled yes) classed accept: 0/0" in text
+
+
+def test_with_host_reproduces_the_old_leak_and_diff_counts_it(tmp_path: Path) -> None:
+    row = _row("NDAQ", "Nasdaq, Inc.", "https://www.nasdaq.com/articles/apple-beats-estimates")
+    assert mod.design_class(row, "Apple beats", with_host=True) == "accept"
+    assert mod.design_class(row, "Apple beats") == "reject"
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ')",
+            (row["url"],),
+        )
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM')"
+        )
+    moves, by_ticker = mod.class_diff(db, with_host=True)
+    assert moves == {("accept", "reject"): 1}
+    assert by_ticker == {"NDAQ": 1}
+    moves, by_ticker = mod.class_diff(db, abbreviations=mod.BASELINE_ABBREVIATIONS)
+    assert moves == {("accept", "review"): 1}
+    assert "class changes vs x: 1 rows" in mod.render_diff("x", moves, by_ticker)
+
+
+@pytest.mark.parametrize(("ticker", "alias"), [(t, a) for t, al in mod.ALIASES.items() for a in al])
+def test_every_alias_accepts_a_title_that_names_it(ticker: str, alias: str) -> None:
+    row = _row(ticker, "Zzzz Holdings Corporation")  # the full name cannot match
+    assert mod.design_class(row, f"Big news about {alias.title()} today") == "accept"
+    assert mod.design_class(row, "Big news today", aliases={}) == "reject"
+
+
+def test_coke_is_not_a_coca_cola_alias() -> None:
+    row = _row("KO", "Coca-Cola Company (The)", "https://c/coke-prices-climb.html")
+    assert mod.design_class(row, "Coke prices climb for steelmakers") == "reject"
+
+
+def test_corpus_sizes_and_render(tmp_path: Path) -> None:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
+            " company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (1, 'https://c/a.html', 'Apple Inc. soars', 'Apple Inc.', 'AAPL', 'sitemap')"
+        )
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/b.html', 'Oil rises', 'Apple Inc.', 'AAPL', 'ddg')"
+        )
+    assert mod.corpus_sizes(db) == {("accept", "sitemap"): 1, ("reject", "ddg"): 1}
+    assert mod.corpus_sizes(db, discovery=True) == {("reject", "sitemap"): 1, ("reject", "ddg"): 1}
+    text = mod.render_sizes("x", mod.corpus_sizes(db))
+    assert "2 rows" in text
+    assert "accept " in text

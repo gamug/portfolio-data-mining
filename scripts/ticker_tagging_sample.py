@@ -323,11 +323,14 @@ def manual_apply(sample_path: Path, manual_path: Path) -> str:
         writer.writerows(sample)
     both = [r for r in sample if r["labeled_by"] == "hand" and r["assistant_label"]]
     disagree = [r["id"] for r in both if r["label"] != r["assistant_label"]]
+    head = f"applied {applied} hand labels ({len(sample) - applied} rows still unlabeled by hand); "
+    if not both:
+        return head + "no assistant labels to compare with"
     pct = f"{agree / applied:.0%}" if applied else "n/a"
     return (
-        f"applied {applied} hand labels ({len(sample) - applied} rows still unlabeled by hand); "
-        f"agreement with the assistant on {len(both)} rows: {agree}/{applied} ({pct}); "
-        f"disagreeing ids: {disagree[:30]}"
+        head
+        + f"agreement with the assistant on {len(both)} rows: {agree}/{applied} ({pct}); "
+        + f"disagreeing ids: {disagree[:30]}"
     )
 
 

@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053` done; `T-054` done; `T-055`–`T-060` pending; `T-055` next.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056a`–`c`, `T-057`–`T-060` pending; `T-056a` next (no schema), `T-056b` waits for the maintainer's constitution #10 confirmation.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -664,7 +664,7 @@ The earlier figures reproduce exactly (`ON` 66,489 ticker-only rows, `A`
 entirely `cnbc.com` sitemap rows (96.2% of the corpus); (b) the substring
 shortcut (failure mode 3) accounts for 823 stored rows (0.17%), all `ddg`,
 because only the shortcut connectors' `ddg` rows exist, but its *potential*
-reach is larger for any future sitemap run on those connectors, so T-056 still
+reach is larger for any future sitemap run on those connectors, so T-056a still
 removes it; (c) the audit counts only rows that were stored, so it cannot see
 candidates the rule rejected. Generic-first-word companies matched by the name
 token alone in over 90% of rows are listed by the script (`Dollar`, `American`,
@@ -722,8 +722,8 @@ findings that shape `T-055`:
   id 180987, 2026-10-15), so 17 of 20 is the figure of record; had both flipped
   to `yes` it would be 19 of 20.
 - The sample is small (8 per small stratum) and the intervals are wide; use the
-  rates as the evidence for choosing a rule, and re-measure on the same pairs
-  after `T-056`.
+  rates as the evidence for choosing a rule, and verify the implemented rule on a fresh
+  sample (the T-057 check), not on these pairs, which are in-sample by now.
 
 **Hand-label policy decisions** (from the maintainer's notes): an acronym
 (`UPS`, `IBM`) counts as the company; a "stocks making the biggest moves"
@@ -733,7 +733,7 @@ legitimately carry several tickers (to be marked `multi_company` for
 counts if the company is its subject even if it is not financial news.
 
 **Prototype evidence for `T-055`** (explorative, in-sample, rules written after
-reading the errors, so optimistic; not a measurement of `T-056`; reproduce with
+reading the errors, so optimistic; not a measurement of `T-056a`; reproduce with
 `scripts/score_ticker_rules.py`, committed with a test). Scoring a
 rule on the 263 hand labels (kept-correct / kept-wrong / precision / recall of
 the `yes` pairs):
@@ -741,15 +741,15 @@ the `yes` pairs):
 | rule | kept-correct | kept-wrong | precision | recall |
 |---|---:|---:|---:|---:|
 | `current (accepts all)` | 172 | 91 | 65% | 100% |
-| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 121 | 5 | 96% | 70% |
-| `above, or name twice in body` | 126 | 5 | 96% | 73% |
-| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
+| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 122 | 5 | 96% | 71% |
+| `above, or name twice in body` | 127 | 5 | 96% | 74% |
+| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 164 | 6 | 96% | 95% |
 
 The two disputed-looking labels (`MGM` 317362, `DE` 180987) were approved as
 labeled `no`; for sensitivity, leaving them out (`--exclude-ids 317362 180987`)
 the last rule keeps 4 (not 6) wrong pairs, precision 98%, and flipping both to
 `yes` would give the same 4. On the
-`ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
+`ok`-only rows `portfolio-nlp` sees, the last rule keeps 79 of 80 correct
 and 5 of 61 wrong pairs. Missed or kept wrongly: the remaining wrong ones are a
 phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and the
 `MGM` and `DE` pairs approved as `no`. This shows the current rule's problem is the lack of
@@ -810,7 +810,149 @@ tagged company; that is a small-sample estimate, not a measurement.
      is about, from the full normalized name, explicit ticker forms, and the
      title/body when fetched, instead of testing every company against every
      URL. This is where ~96% of the corpus and ~all the wrong tags are.
-   Direction for the per-company matcher, to be confirmed against step 1's data:
+   **Design v1, approved 2026-10-15 by the maintainer ("take care not to
+exclude correct pairs") and revised the same day after the validation sample
+(T-055; nothing is coded).** Discovery can only see the URL and, for `ddg`
+rows, the title (the 462k `cnbc` sitemap rows have no title at discovery; a
+title exists only after the article is fetched), so each `(url, ticker)` pair
+is put in one of three classes from those two texts
+(`scripts/score_ticker_rules.py`, function `design_class`):
+
+- **accept**: the full normalized company name (digit-bearing names such as
+  `3M` included; `&` read as `and`; a name that is itself an ordinary word, such
+  as `News` for News Corp, never counts alone) or a hand-kept alias (`Google`
+  for Alphabet, `P&G`, `Facebook` for Meta) is in the URL or title, or an
+  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`), or the ticker as an
+  upper-case token of 2+ letters in the title that is not an ordinary word or
+  common abbreviation (`GM`, `MSFT`; never `A`, `ON`, `IT`, `PM`, `MS`). A bare
+  ticker never counts against a lowercase URL slug and never as a raw substring.
+- **review**: only a weaker sign (a non-common ticker or a distinctive first
+  word somewhere in the URL/title; a stoplist first word does not count), or a
+  2-letter abbreviation-like ticker (`PM`, `HD`, `MS`, ...) in upper case in the
+  title, which can never be `accept` alone but is never excluded either.
+- **reject**: nothing else.
+
+**Out-of-sample result first (validation sample, 100 pairs not used to design
+the rule, strata `(class, source)` as in `data/ticker_validation_sample.csv` /
+`data/ticker_validation_manual.csv`, hand-labeled 2026-10-15; `ticker_tagging_sample.py report --sample
+data/ticker_validation_sample.csv`).** Design v1 as first written did **not**
+meet its draft 15% target: `accept` was **20.7%** wrong (6/40 raw; 5 were `News
+Corp`, 1 was `PM`), `review` 45% (`ddg` 5/10 wrong: `ICE`, `CNP`, `GEN`, `BRO`)
+and `reject` 99.9% wrong (28 of 30; the two correct ones were `S&P Global` and
+`Flavors & Fragrances`, whose URLs spell "&" as "and"). Four changes follow
+from it: a normalized name that is an ordinary word never counts alone; the
+2-letter common-abbreviation list grows (`PM`, `MS`, `MA`, `ED`, `EL`, `IP`,
+`CI`, `HD`, `PH`, `NI`, `DD`); `&` is read as `and`; the proposed `ddg`
+promotion of `review` to `accept` is **withdrawn** (5 of 10 `ddg` review rows
+were wrong, against 11 of 11 under the first draft in the first sample (12 of 12
+after the fixes), so it is not reliable).
+Aliases are part of the rule and tested; no new dependency.
+
+**Re-scored after the changes: both samples are now in-sample** (the rule was
+tuned on the first sample's errors and then on the validation sample's), so the
+figures below are optimistic and are not the acceptance evidence; the
+acceptance evidence is the fresh check in T-057 (below). Reproduce with
+`PYTHONPATH=src python scripts/score_ticker_rules.py --sample <csv>` (the **current**
+rule, post-stratified on the drawn strata). Note that
+`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv`
+reproduces something different: that CSV's `match_mode`/`stratum` columns hold the
+class the **first draft** assigned when the sample was drawn, so `report` gives the
+out-of-sample first-draft result quoted above (20.7% / 45% / 99.9%), not the revised
+rule's figures (the column keeps its name because `report`, `manual-export` and the
+first sample share one schema):
+
+| sample, mode | `accept` share / wrong | `review` share / wrong | `reject` share / wrong | correct pairs hidden as `reject` |
+|---|---|---|---|---|
+| first (243 + 20), re-tag (fetched title) | 28.8% / 10.9% | 12.1% / 64.4% | 59.2% / 100% | 0.0% |
+| first, **discovery** (sitemap URL only) | 25.3% / 12.3% | 15.5% / 50.2% | 59.2% / 100% | 0.0% |
+| validation (100), re-tag | 20.2% / 0.0% | 10.9% / 52.5% | 68.9% / 100% | 0.0% |
+| validation, **discovery** | 14.3% / 0.0% | 16.0% / 30.6% | 69.7% / 100% | 0.0% |
+
+Raw cells (correct / wrong), first sample re-tag: `ddg` accept 125/1, review 12/0,
+reject 1/58; `sitemap` accept 13/1, review 4/5, reject 0/23. Validation re-tag:
+`ddg` accept 18/0, review 4/5, reject 0/13; `sitemap` accept 21/0, review 9/10,
+reject 0/20. Today 70% of tagged pairs are wrong. **At discovery the `accept`
+share of `sitemap` rows drops (their titles are unknown) and the difference moves
+to `review`, not to `reject`**, which is the cost the maintainer asked us to take
+instead of excluding. **Exact class sizes of the current rule over the whole corpus**
+(`score_ticker_rules.py --sizes`, 481,332 rows, read-only). Re-tag mode (fetched
+title): `accept` 104,627 (21.7%; `ddg` 16,272, `sitemap` 88,355), `review` 51,289
+(10.7%), `reject` 325,416 (67.6%). Discovery mode (no title for `sitemap` rows):
+`accept` 86,993 (18.1%), `review` 63,158 (13.1%), `reject` 331,181 (68.8%).
+`review` is the volume handed to `portfolio-nlp` T-132: about 51,000 pairs on the
+existing corpus (63,000 if the rule ran on bare URLs). The first draft had
+117,900 / 52,088 / 311,344. The `reject` class was 28 of 30 wrong, so "do not exclude"
+cost about 2 in 30 correct pairs with the first draft and 0 of 33 after the `&`
+and ordinary-word fixes (in-sample).
+
+**Corpus-wide effect of the last two changes** (`score_ticker_rules.py --diff`,
+whole `urls.db`, 481,332 rows, read-only): matching the URL host used to accept
+`Nasdaq, Inc.` on any `nasdaq.com` URL; **0 stored rows are affected**
+(the corpus does hold 158 `ddg` rows for `nasdaq.com`, but none is tagged NDAQ;
+NDAQ's 34 rows come from `cnbc`, `yahoo` and `seekingalpha`), so no figure above
+changes, but an NDAQ crawl of `nasdaq.com` would have hit it. The 2-letter abbreviation list moves **1,239 rows from `accept` to
+`review` and none to `reject`** (`PM` 879, `HD` 109, `MS` 67, `IP` 60, `DD` 42,
+`CI` 25, `EL` 21, `MA` 17, `ED` 10, `NI` 8, `PH` 1): an upper-case abbreviation
+in the title is `review`, judged downstream, never excluded. Entries without a
+labeled error (all but `PM`) are kept for that reason: the cost of a wrong entry
+is a `review` pair, not a hidden one.
+The alias map (`--diff`, "no alias map") moves **2,782 rows to `accept`**: `JPM`
+2,122 (`jpmorgan`), `BRK.B` 353 (`berkshire`), `PG` 196 (`P&G`, the only ones
+that were `reject`), `META` 89 (`facebook`), `GOOG` 12, `GOOGL` 9, `WMT` 1. The
+`KO` alias `coke` was removed (also a fuel and a steel input; a test locks it).
+`berkshire` is the least specific alias left; it is kept because 353 rows is
+small and `portfolio-nlp` sees the article body, and is revisited by the T-057
+fresh check.
+
+**Discovery versus fetch.** The stored class is computed at discovery (URL, plus
+the title for `ddg`) and **re-evaluated after the fetch** with the stored title.
+The rule is monotone, since more text can only add evidence, so re-evaluation can
+only promote and two code paths cannot disagree by demoting. It applies to fetched
+(`accept`/`review`) rows: this is why 63,158 discovery-time `review` pairs fall to
+51,289 in the existing corpus, where every row was fetched. Going forward a
+`reject` row is written `status = 'skipped'` (with `match_class = 'reject'`) and never fetched, so a `sitemap`
+`reject` row stays `reject` unless a feed title came with it; about 5,800 pairs
+that would improve with a title are therefore not fetched (accepted: 0.0% of
+correct pairs hidden in discovery mode on both samples, re-measured in T-057).
+
+**Quarantine** means the pair stays in `urls.db`, is flagged with its class and
+reason, and is left out of the default `articles` selection that
+`portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing it
+is clearing the flag. Nothing is deleted; `reject` is quarantined with a reason,
+`review` is quarantined and decided by `portfolio-nlp` (its `T-132`, which keeps
+any pair it cannot decide).
+
+What happens to each class (the cross-repo shape is agreed in `T-058` before the
+re-tag runs): `accept` rows stay as they are; `review` rows are quarantined and
+sent to the body/NER judge; `reject` rows are quarantined with a reason, so the
+re-tag is reversible. For `ddg`, record the query that found each row (a new
+additive column, `T-056b`) as provenance for later analysis only; it does not
+change a row's class. For `sitemap`, the same article is stored once per ticker
+that discovered it (212,450 URLs carry one ticker and 108,313 carry two or more,
+up to 8), and the class is evaluated per pair. Deciding each article once across
+all companies was considered and **not adopted**: the class stays per `(url, ticker)`
+pair, and `multi_company` is derived (a URL with two or more `accept` pairs;
+roundups are legitimate), decided in `T-056c`. Neither was measured separately here;
+the class figures are per pair.
+
+**Targets (written into FR-014 on 2026-10-15 as the requirement; the first draft
+missed them out-of-sample and the revised rule is verified only by the fresh check
+below, in T-057):** wrong-company rate among `accept` rows at most
+**15%**; correct pairs kept as `accept` or `review` at least **95%**; known-correct
+pairs labeled `yes` classed `accept` at least **90%** (discovery mode counted
+separately, where 16 of 17 pass); no `accept` row whose only evidence is an
+ordinary-word ticker, a stoplist first word or a raw substring (hermetic tests per
+connector). **Final check (T-057 dry run, before the real re-tag), with a pass criterion:**
+the maintainer hand-labels **60 pairs newly classed `accept`** by the implemented
+rule (drawn after the rule is frozen, stratified by source like the corpus) and
+**40 `reject`** ones. Pass: at most **5 of the 60 `accept` pairs wrong** (observed
+8.3%; the 95% Wilson upper bound is then about 18%, so it supports the 15% target
+only with the earlier samples behind it, and 0-2 wrong is a clear pass) and at most
+**1 of the 40 `reject` pairs correct** (hidden-correct 2.5%). Fail: stop and return
+to T-055 with the new errors, as was done after the validation sample; the real
+re-tag does not run on a failed check.
+
+Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short
      symbol, and never counts against a lowercase URL slug at all; it counts
      only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an
@@ -824,17 +966,40 @@ tagged company; that is a small-sample estimate, not a measurement.
      (Technological stock #7) — prefer a hand-kept stoplist.
    - Recall matters too: the rule must keep what was correctly tagged. Report
      the retained share on a hand-labeled set of known-correct pairs.
-3. **Implement** the rule once, in a shared `BaseConnector` helper built on
-   `_company_pattern`, and make all seven overriding connectors delegate to it
-   (dropping or tightening the substring shortcut in `nasdaq`,
-   `seeking_alpha`, `stocktwits`, `yahoo_finance`); no `BaseConnector`
-   signature change. Rewrite the docstring postcondition that currently
-   blesses "ticker OR first word". Hermetic parametrized tests **per
-   connector**: ambiguous tickers (`A`, `ON`, `IT`, `ARE`), generic first
-   words, alias cases, substring cases, and regression cases for pairs that
-   must still match. Only `tests/news_collector/connectors/test_cnbc.py`
-   exercises `url_matches_company` today (and asserts the permissive rule), so
-   those tests change deliberately and the other six connectors get test files.
+3. **Implement** (tasks `T-056a` matcher and connectors, `T-056b` storage/queue/API, `T-056c`
+   strategies/fetch/re-evaluation, in that order) the approved three-class rule once, in a shared pure module
+   in `data_mining/matching.py` (shared by both stages, which never import each
+   other), exposed by one new concrete `BaseConnector.classify_match` returning
+   `accept`/`review`/`reject`; the seven overriding connectors' abstract
+   `url_matches_company` keeps its signature and returns `class != "reject"`, the
+   substring shortcut in `nasdaq`, `seeking_alpha`, `stocktwits` and
+   `yahoo_finance` is removed, and the docstring postcondition that blesses
+   "ticker OR first word" is rewritten. `discovered_urls` gains additive
+   `match_class`, `match_reason` and `query` columns (`SCHEMA_VERSION` 1 → 2, a
+   `run_migrations` step with `ensure_columns`, an index on `match_class`), the
+   `ddg` and `sitemap` strategies keep `review`/`reject` rows with their class
+   instead of dropping them (so new crawls have the quarantine), `reject` rows
+   are written `status = 'skipped' AND match_class = 'reject'` (the existing
+   `skipped` meaning, paywall/irrelevant after inspection, is kept distinct by
+   `match_class`; `mark_skipped` is not used and `title` is preserved) so the
+   fetcher and queue, which select by `status`, never fetch them, and
+   `accept`/`review` rows stay `pending`; `/discovered` exposes `match_class`.
+   The queue's insert becomes an upsert (an `INSERT OR IGNORE` would drop a
+   promotion when a `reject` pair is rediscovered with a title): on conflict it keeps
+   the higher class and resets `skipped` to `pending` when the class rises. `api`
+   feeds (`stocktwits`, `yahoo_finance`) are ticker-keyed, were never measured and keep
+   `accept` by construction; `rss` entries are classified. The extractor re-evaluates
+   a fetched row's class through its existing `discovered_urls` update (promote only). This is a shared-schema change under
+   constitution AI behavior #10: the maintainer confirms the exact columns and the
+   `skipped`+`reject` convention before T-056b starts. The class is computed at
+   discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
+   with the stored title; the rule is monotone, so re-evaluation only promotes.
+   `multi_company` is derived (a URL with 2+ `accept` pairs), not stored.
+   Hermetic parametrized tests **per connector** for all three classes, the
+   monotone-promotion test and the migration test (details in `TASKS.md` T-056a–c);
+   only `test_cnbc.py` covers `url_matches_company` today and asserts the
+   permissive rule, so it changes deliberately and the other six connectors get
+   test files.
 4. **Re-tag the existing data (`urls.db`).** Apply the new rule to
    `discovered_urls` / `articles` (481,332 rows each) as a dry run on a copy
    first, reporting how many `(url, ticker)` pairs would be removed, per
@@ -858,13 +1023,14 @@ tagged company; that is a small-sample estimate, not a measurement.
 
 - The audit reproduces the counts above from `urls.db`, and the error rate of
   both failure modes is measured (not assumed) before the rule is chosen.
-- The new matcher rejects the documented examples (`A` on `in-a-month`, `ON`
-  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First` as sole evidence, and a
-  ticker as a bare substring such as `A` in any URL) **in each of the seven
-  connectors**, with the wrong-company rate at or below, and known-correct
-  retention at or above, the targets fixed by T-055 (numbers recorded here and
-  in FR-014 before coding) on the shared labeled sample, and with no
-  `BaseConnector` signature change.
+- The new matcher classes the documented examples (`A` on `in-a-month`, `ON`
+  on `trusts-trump-on-trade`, `Bank`/`Trade`/`First`/`News` as sole evidence, and
+  a ticker as a bare substring such as `A` in any URL) as `reject` or `review`,
+  never `accept`, **in each of the seven connectors**; `accept` meets the FR-014
+  targets (wrong rate at most 15%, correct pairs kept as `accept`/`review` at
+  least 95%, known-correct `accept` at least 90%) on the labeled samples, **verified
+  by the T-057 fresh check** (at most 5 of 60 `accept` wrong, at most 1 of 40
+  `reject` correct); no abstract `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
