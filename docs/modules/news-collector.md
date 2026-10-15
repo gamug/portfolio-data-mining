@@ -26,10 +26,27 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
   `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
   substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
-  alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
-  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made in that window to
-  `portfolio-nlp`**: its `review` rows (about 63k) are stored unflagged and would enter the default
-  selection like `accept` rows. Design and evidence: `PLAN.md` Work item 10.
+  alone is never `accept`. The class is stored on `discovered_urls` (`T-056b`, below), but the
+  strategies do not set it until `T-056c`: until then `review` pairs are kept like `accept` ones and
+  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made before `T-056c` to
+  `portfolio-nlp`**: its `review` rows (about 63k) are stored as `accept` and would enter the default
+  selection. Design and evidence: `PLAN.md` Work item 10.
+
+**Matching columns on `discovered_urls`** (schema version 2, `data_mining/schema.py`; constitution AI
+behavior #10 confirmed 2026-10-15): `match_class` (`accept`/`review`/`reject`, `NOT NULL DEFAULT
+'accept'`, indexed by `idx_match_class`), `match_reason` (the deciding signal) and `query` (the `ddg`
+search query that returned the row; provenance only, it never changes the class). A matcher-rejected
+pair is stored **`status = 'skipped' AND match_class = 'reject'`** at insert, its `title` untouched, so
+the extractor's and the queue's `status = 'pending'` selection never returns it; `mark_skipped` (paywall,
+irrelevant after inspection) keeps its meaning and leaves `match_class` alone. `enqueue_batch` no longer
+just ignores a duplicate `(url, ticker)`: a rediscovery **promotes** the stored row (it keeps the higher
+class `reject` < `review` < `accept`, takes the new `match_reason` with a higher class, fills a null
+`match_reason`/`query`, and a row stored `reject` goes back to `pending` when its class rises). It never
+demotes. Existing databases are upgraded by `run_migrations` (their rows default to `accept`; the
+`T-057` re-tag reclassifies them). Both read APIs expose the class: the collector's
+`/discovery/query` and `/discovery/pending` return `match_class`/`match_reason` and `/discovery/query`
+filters on `match_class`; the crawler's `/discovered` does the same. The `status` filter's `skipped`
+includes matcher-rejected rows.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.

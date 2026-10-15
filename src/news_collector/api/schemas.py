@@ -99,6 +99,9 @@ class DiscoveredURLOut(BaseModel):
     source: str
     pub_date: date | None = None
     title: str | None = None
+    # Company-matching class (`accept` / `review` / `reject`) and the signal behind it.
+    match_class: str = "accept"
+    match_reason: str | None = None
 
 
 class DiscoverResponse(BaseModel):

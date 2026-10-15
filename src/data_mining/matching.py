@@ -35,6 +35,9 @@ from urllib.parse import urlsplit
 
 MatchClass = Literal["accept", "review", "reject"]
 
+# `reject` < `review` < `accept`: a stored class is only ever promoted (T-056b/c).
+CLASS_RANK: dict[MatchClass, int] = {"reject": 0, "review": 1, "accept": 2}
+
 # Ordinary English words that are also tickers (PLAN Work item 10, failure mode 1).
 WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
 

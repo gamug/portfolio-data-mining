@@ -28,6 +28,7 @@ import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
@@ -136,6 +137,8 @@ class DiscoveredURL(BaseModel):
     status: str
     title: str | None = None
     fetch_status_code: int | None = None
+    match_class: str = "accept"
+    match_reason: str | None = None
 
 
 class Article(BaseModel):
@@ -203,7 +206,11 @@ def status(conn: Database = Depends(get_conn)) -> StatusCounts:
 
 @app.get("/discovered", response_model=list[DiscoveredURL])
 def list_discovered(
-    status: str | None = None,
+    status: str | None = Query(
+        None,
+        description="pending, fetched, failed or skipped (skipped includes matcher-rejected rows)",
+    ),
+    match_class: Literal["accept", "review", "reject"] | None = None,
     ticker: str | None = None,
     domain: str | None = None,
     limit: int = Query(50, le=500),
@@ -211,13 +218,17 @@ def list_discovered(
     conn: Database = Depends(get_conn),
 ) -> list[DiscoveredURL]:
     sql = (
-        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
+        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code, "
+        "match_class, match_reason "
         "FROM discovered_urls WHERE 1=1"
     )
     params: list = []
     if status:
         sql += " AND status = ?"
         params.append(status)
+    if match_class:
+        sql += " AND match_class = ?"
+        params.append(match_class)
     if ticker:
         sql += " AND ticker = ?"
         params.append(ticker)
@@ -233,7 +244,8 @@ def list_discovered(
 @app.get("/discovered/{url_id}", response_model=DiscoveredURL)
 def get_discovered(url_id: int, conn: Database = Depends(get_conn)) -> DiscoveredURL:
     row = conn.execute(
-        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code "
+        "SELECT id, url, domain, company, ticker, source, status, title, fetch_status_code, "
+        "match_class, match_reason "
         "FROM discovered_urls WHERE id = ?",
         (url_id,),
     ).fetchone()

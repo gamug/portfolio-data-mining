@@ -109,3 +109,79 @@ def test_run_migrations_without_articles_table_is_a_noop(db: Database) -> None:
     run_migrations(db)  # no articles table at all -- must not raise
 
     assert "articles" not in _table_names(db)
+
+
+LEGACY_DISCOVERED_V1 = """
+CREATE TABLE discovered_urls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    url             TEXT    NOT NULL,
+    domain          TEXT    NOT NULL,
+    company         TEXT    NOT NULL,
+    ticker          TEXT    NOT NULL,
+    source          TEXT    NOT NULL,
+    discovered_at   TEXT    NOT NULL,
+    pub_date        TEXT,
+    title           TEXT,
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    fetch_status_code INTEGER,
+    UNIQUE (url, ticker)
+)
+"""
+
+
+def _discovered_columns(db: Database) -> set[str]:
+    return {row[1] for row in db.execute("PRAGMA table_info(discovered_urls)").fetchall()}
+
+
+def _index_names(db: Database) -> set[str]:
+    return {
+        row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+
+
+def test_schema_version_is_2() -> None:
+    assert SCHEMA_VERSION == 2
+
+
+def test_fresh_schema_has_match_columns_and_index(db: Database) -> None:
+    apply_schema(db)
+    run_migrations(db)
+
+    assert {"match_class", "match_reason", "query"} <= _discovered_columns(db)
+    assert "idx_match_class" in _index_names(db)
+
+
+def test_run_migrations_upgrades_a_version_1_discovered_urls(db: Database) -> None:
+    db.execute(LEGACY_DISCOVERED_V1)
+    db.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at)"
+        " VALUES ('https://cnbc.com/a', 'cnbc.com', '3M', 'MMM', 'sitemap', '2026-08-10T00:00:00')"
+    )
+    db.commit()
+
+    apply_schema(db)  # what every opener runs first: must not fail on the old table
+    run_migrations(db)
+    run_migrations(db)  # idempotent
+
+    assert {"match_class", "match_reason", "query"} <= _discovered_columns(db)
+    assert "idx_match_class" in _index_names(db)
+    row = db.execute(
+        "SELECT match_class, match_reason, query, status FROM discovered_urls"
+    ).fetchone()
+    assert tuple(row) == ("accept", None, None, "pending")  # existing rows default to accept
+
+
+def test_run_migrations_leaves_a_current_database_untouched(db: Database) -> None:
+    apply_schema(db)
+    run_migrations(db)
+    db.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at,"
+        " match_class, match_reason, query) VALUES ('https://cnbc.com/a', 'cnbc.com', '3M', 'MMM',"
+        " 'ddg', '2026-08-10T00:00:00', 'review', 'weak_ticker', 'q')"
+    )
+    db.commit()
+    before = db.execute("SELECT * FROM discovered_urls").fetchall()
+
+    run_migrations(db)
+
+    assert db.execute("SELECT * FROM discovered_urls").fetchall() == before

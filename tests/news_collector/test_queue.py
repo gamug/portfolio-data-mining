@@ -230,3 +230,130 @@ def test_enqueue_inserts_at_most_len_input(urls: list[str]) -> None:
         discovered = [_make_url(u) for u in urls]
         inserted = q.enqueue_batch(discovered)
         assert 0 <= inserted <= len(urls)
+
+
+# ---------------------------------------------------------------------------
+# Matching class (T-056b)
+# ---------------------------------------------------------------------------
+
+
+def _classed(url: str, match_class: str, **kw: object) -> DiscoveredURL:
+    u = _make_url(url)
+    u.match_class = match_class  # type: ignore[assignment]
+    for key, value in kw.items():
+        setattr(u, key, value)
+    return u
+
+
+def _stored(queue: URLQueue, url: str) -> DiscoveredURL:
+    rows, _ = queue.query(url_contains=url)
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_reject_is_stored_skipped_and_never_pending(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [_classed("https://x.com/rej", "reject"), _classed("https://x.com/acc", "accept")]
+    )
+    assert [u.url for u in queue.get_pending()] == ["https://x.com/acc"]
+    row = _stored(queue, "rej")
+    assert (row.status, row.match_class) == ("skipped", "reject")
+
+
+def test_reject_insert_keeps_the_title(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/rej", "reject", title="Some headline")])
+    assert _stored(queue, "rej").title == "Some headline"
+
+
+def test_review_is_pending_and_keeps_class_reason_and_query(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [_classed("https://x.com/r", "review", match_reason="weak_first_word", query="apple news")]
+    )
+    row = queue.get_pending()[0]
+    assert (row.match_class, row.match_reason, row.query) == (
+        "review",
+        "weak_first_word",
+        "apple news",
+    )
+
+
+def test_mark_skipped_leaves_match_class_alone(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/p", "review")])
+    queue.mark_skipped("https://x.com/p", "paywall")
+    row = _stored(queue, "/p")
+    assert (row.status, row.match_class, row.title) == ("skipped", "review", "paywall")
+
+
+def test_rediscovery_with_a_higher_class_promotes_and_resets_status(queue: URLQueue) -> None:
+    first = _classed("https://x.com/a", "reject", match_reason="none")
+    queue.enqueue_batch([first])
+    again = _classed("https://x.com/a", "accept", match_reason="name", query="apple stock")
+    assert queue.enqueue_batch([again]) == 0  # not a new row
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.match_reason, row.query, row.status) == (
+        "accept",
+        "name",
+        "apple stock",
+        "pending",
+    )
+    assert again.id == first.id
+    assert [u.url for u in queue.get_pending()] == ["https://x.com/a"]
+
+
+def test_rediscovery_promotes_to_review_and_lifts_the_skip(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/a", "reject")])
+    queue.enqueue_batch([_classed("https://x.com/a", "review", match_reason="weak_ticker")])
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.status) == ("review", "pending")
+
+
+def test_rediscovery_never_demotes(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/a", "accept", match_reason="name")])
+    queue.enqueue_batch([_classed("https://x.com/a", "reject", match_reason="none")])
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.match_reason, row.status) == ("accept", "name", "pending")
+
+
+def test_rediscovery_fills_null_query_and_reason_without_changing_the_class(
+    queue: URLQueue,
+) -> None:
+    queue.enqueue_batch([_classed("https://x.com/a", "review")])
+    queue.enqueue_batch(
+        [_classed("https://x.com/a", "review", match_reason="weak_ticker", query="q1")]
+    )
+    queue.enqueue_batch([_classed("https://x.com/a", "review", match_reason="other", query="q2")])
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.match_reason, row.query) == ("review", "weak_ticker", "q1")
+
+
+def test_promotion_does_not_reset_a_paywall_skip(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/a", "review")])
+    queue.mark_skipped("https://x.com/a", "paywall")
+    queue.enqueue_batch([_classed("https://x.com/a", "accept", match_reason="name")])
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.status) == ("accept", "skipped")
+
+
+def test_two_entries_for_one_pair_in_a_batch_compose(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [
+            _classed("https://x.com/a", "reject"),
+            _classed("https://x.com/a", "accept", match_reason="name"),
+        ]
+    )
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.status) == ("accept", "pending")
+
+
+def test_query_filters_by_match_class(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [
+            _classed("https://x.com/1", "accept"),
+            _classed("https://x.com/2", "review"),
+            _classed("https://x.com/3", "reject"),
+        ]
+    )
+    rows, total = queue.query(match_class="reject")
+    assert total == 1
+    assert rows[0].url == "https://x.com/3"
+    assert queue.query(status="skipped")[1] == 1

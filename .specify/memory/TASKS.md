@@ -186,7 +186,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       samples, both modes) and exits 1 on drift. Known limitation, measured with `--names`: 59,956
       `accept` rows rest on a one-word name, about 12,400 of them dictionary words (Apple 9,890).
       T-057's fresh check is the acceptance evidence.
-- [ ] **T-056b** *(shared-schema change; constitution AI behavior #10 **confirmed by the
+- [x] **T-056b** *(done 2026-10-15; shared-schema change; constitution AI behavior #10 **confirmed by the
       maintainer on 2026-10-15** for the exact columns, the `skipped`+`reject` convention, the
       queue upsert and the extractor's promote-only update listed here: they touch the
       two-package DB contract. Starts after PR #58 is reviewed; cite the confirmation and its
@@ -220,6 +220,12 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `accept` row is; the insert keeps a `reject` row's `title`; `mark_skipped` leaves
       `match_class` alone; sitemap-then-ddg re-discovery promotes the row and resets
       `status`; the API listing and filter. **Done when:** the same four gates clean, the migration test and the `schema.py` docstring (`SCHEMA_VERSION` 2) updated, `SPEC.md` FR-014 and `docs/modules/news-collector.md` describe the columns, and the maintainer's #10 confirmation is recorded here. → step 3.
+      **Results (T-056b):** the promotion runs in `URLQueue._promote_duplicates` (portable SQL, the dialect's
+      `upsert` can only overwrite with `excluded.c`), after the insert; a row skipped for another reason (paywall)
+      is not reset by a promotion. The API surface is the collector's `/discovery/query` and `/discovery/pending`
+      and the crawler's `/discovered` (the task text's `/discovered` is the crawler's route). Existing rows default to
+      `accept` until the T-057 re-tag. The strategies still build `DiscoveredURL` with the default class, so nothing
+      is quarantined until T-056c.
 - [ ] **T-056c** Strategies, fetch policy and re-evaluation (after `a` and `b`).
       **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`) call
       `classify_match` and keep `review` and `reject` rows with their class and (for `ddg`)

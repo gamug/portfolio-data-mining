@@ -70,6 +70,8 @@ def _to_out(url: DiscoveredURL) -> DiscoveredURLOut:
         source=url.source,
         pub_date=url.pub_date,
         title=url.title,
+        match_class=url.match_class,
+        match_reason=url.match_reason,
     )
 
 

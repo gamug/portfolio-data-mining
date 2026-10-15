@@ -13,6 +13,7 @@ from typing import TypedDict
 from portfolio_common.db import Allowlist, Database, Row, in_clause
 
 from data_mining.db import connect
+from data_mining.matching import CLASS_RANK
 from data_mining.schema import apply_schema, run_migrations
 from news_collector.models import DiscoveredURL
 
@@ -36,7 +37,16 @@ def _is_success_status(status_code: int) -> bool:
 # Columns query() is allowed to ORDER BY — interpolated directly into SQL,
 # so this must stay a closed allowlist rather than accepting arbitrary input.
 _QUERY_ORDER_COLUMNS = Allowlist(
-    "id", "url", "domain", "company", "ticker", "source", "discovered_at", "pub_date", "status"
+    "id",
+    "url",
+    "domain",
+    "company",
+    "ticker",
+    "source",
+    "discovered_at",
+    "pub_date",
+    "status",
+    "match_class",
 )
 
 
@@ -83,7 +93,14 @@ class URLQueue:
         """
         Insert discovered URLs into the queue.
 
-        Duplicates (same url + ticker) are silently ignored via INSERT OR IGNORE.
+        Duplicates (same url + ticker) are not inserted again, but they are not
+        simply dropped either: a rediscovery can carry better evidence, so the stored
+        row is *promoted* (never demoted): it keeps the higher `match_class`
+        (`reject` < `review` < `accept`), takes the new `match_reason` with a higher
+        class, fills a null `match_reason`/`query`, and a row first stored as `reject`
+        (`status = 'skipped'`) goes back to `pending` once its class rises above
+        `reject`. A `reject` row is written `status = 'skipped'` at insert, its
+        `title` untouched, so it never reaches the fetch selection (`status='pending'`).
 
         As a side effect, sets `.id` on each element of `urls` in place to the
         primary key of its `discovered_urls` row (whether newly inserted or a
@@ -108,8 +125,11 @@ class URLQueue:
                 u.discovered_at.isoformat(),
                 u.pub_date.isoformat() if u.pub_date else None,
                 u.title,
-                u.status,
+                "skipped" if u.match_class == "reject" else u.status,
                 u.fetch_status_code,
+                u.match_class,
+                u.match_reason,
+                u.query,
             )
             for u in urls
         ]
@@ -128,6 +148,9 @@ class URLQueue:
                     "title",
                     "status",
                     "fetch_status_code",
+                    "match_class",
+                    "match_reason",
+                    "query",
                 ),
             ),
             rows,
@@ -150,13 +173,55 @@ class URLQueue:
         # groups -- values are bound as query params below, never
         # interpolated into the SQL text.
         id_rows = self._conn.execute(
-            f"SELECT id, url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
+            "SELECT id, url, ticker, status, match_class, match_reason, query "  # noqa: S608
+            f"FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",
             [v for u in urls for v in (u.url, u.ticker)],
         ).fetchall()
-        id_by_key = {(r["url"], r["ticker"]): r["id"] for r in id_rows}
+        stored = {(r["url"], r["ticker"]): dict(r) for r in id_rows}
         for u in urls:
-            u.id = id_by_key.get((u.url, u.ticker))
+            row = stored.get((u.url, u.ticker))
+            u.id = row["id"] if row else None
+        self._promote_duplicates(urls, stored)
         return inserted
+
+    def _promote_duplicates(
+        self, urls: Sequence[DiscoveredURL], stored: dict[tuple[str, str], dict]
+    ) -> None:
+        """Promote stored rows from the batch's evidence (see `enqueue_batch`).
+
+        `stored` holds each pair's row as it is after the insert; it is updated as
+        the batch is walked, so two entries for one pair in one batch compose.
+        """
+        assert self._conn is not None
+        updates: list[tuple] = []
+        for u in urls:
+            row = stored.get((u.url, u.ticker))
+            if row is None:
+                continue
+            raised = CLASS_RANK[u.match_class] > CLASS_RANK[row["match_class"]]
+            match_class = u.match_class if raised else row["match_class"]
+            reason = u.match_reason if raised else row["match_reason"] or u.match_reason
+            query = row["query"] or u.query
+            # only a matcher-rejected row goes back to pending; a row skipped for
+            # another reason (paywall) keeps its status
+            lifted = raised and row["match_class"] == "reject" and row["status"] == "skipped"
+            status = "pending" if lifted else row["status"]
+            changed = (match_class, reason, query, status) != (
+                row["match_class"],
+                row["match_reason"],
+                row["query"],
+                row["status"],
+            )
+            if changed:
+                updates.append((match_class, reason, query, status, row["id"]))
+                row.update(match_class=match_class, match_reason=reason, query=query, status=status)
+        if updates:
+            self._conn.executemany(
+                "UPDATE discovered_urls SET match_class=?, match_reason=?, query=?, status=?"
+                " WHERE id=?",
+                updates,
+            )
+            self._conn.commit()
 
     def mark_fetched(self, url: str, status_code: int) -> None:
         """
@@ -311,6 +376,7 @@ class URLQueue:
         company: str | None = None,
         status: str | None = None,
         source: str | None = None,
+        match_class: str | None = None,
         url_contains: str | None = None,
         pub_date_from: date | None = None,
         pub_date_to: date | None = None,
@@ -348,6 +414,9 @@ class URLQueue:
         if source:
             clauses.append("source=?")
             params.append(source)
+        if match_class:
+            clauses.append("match_class=?")
+            params.append(match_class)
         if url_contains:
             clauses.append("url LIKE ?")
             params.append(f"%{url_contains}%")
@@ -442,5 +511,8 @@ def _row_to_discovered_url(row: Row) -> DiscoveredURL:
         title=row["title"],
         status=row["status"],  # type: ignore[arg-type]
         fetch_status_code=row["fetch_status_code"],
+        match_class=row["match_class"],
+        match_reason=row["match_reason"],
+        query=row["query"],
         id=row["id"],
     )

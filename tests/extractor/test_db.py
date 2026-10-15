@@ -233,3 +233,22 @@ def test_save_article_with_id_not_in_discovered_urls_is_rejected_once_fk_enforce
                 "fetched_at": "2026-08-11T00:00:00",
             },
         )
+
+
+def test_get_pending_urls_excludes_matcher_rejected_rows(conn: Database) -> None:
+    # T-056b: a rejected pair is written `status='skipped' AND match_class='reject'`,
+    # so the extractor's status-only selection never returns it.
+    conn.execute(
+        "ALTER TABLE discovered_urls ADD COLUMN match_class TEXT NOT NULL DEFAULT 'accept'"
+    )
+    conn.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at,"
+        " status, match_class) VALUES ('https://cnbc.com/rej', 'cnbc.com', '3M', 'MMM', 'sitemap',"
+        " '2026-08-10T00:00:00', 'skipped', 'reject')"
+    )
+    conn.commit()
+
+    urls = [row["url"] for row in get_pending_urls(conn)]
+
+    assert "https://cnbc.com/rej" not in urls
+    assert urls == ["https://cnbc.com/a", "https://cnbc.com/b"]
