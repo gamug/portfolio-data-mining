@@ -142,86 +142,95 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `multi_company` is derived (T-056). All figures reproduce with
       `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
       details in `PLAN.md` Work item 10. → step 2.
-- [ ] **T-056** Implement the approved three-class rule once, in a shared
-      pure module in the **shared library** (`data_mining/matching.py`; both
-      `news_collector` and `extractor` already import `data_mining.db`/`schema`, so
-      the direction stays stages → `data_mining` and the two stages still import
-      nothing from each other: the logic of
-      `scripts/score_ticker_rules.py` `design_class`, with the alias map, the
-      ordinary-word-name rule, `&`→`and`, the abbreviation list, path-only URL
-      matching and no new dependency), exposed to the connectors through one new **concrete**
-      `BaseConnector.classify_match(url, title, company, ticker) -> "accept" |
-      "review" | "reject"`. The abstract `url_matches_company` keeps its
-      signature; in each of the **seven** connectors that override it
-      (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`, `stocktwits`,
-      `yahoo_finance`) the override returns `classify_match(...) != "reject"`,
-      and the raw `ticker.lower() in url.lower()` shortcut the last four ran
-      first is removed. Rewrite the base-class docstring postcondition
-      ("ticker OR significant company name token is sufficient").
-      **Storage (additive, via the real mechanism in `data_mining/schema.py`):** add
-      the columns to `_DISCOVERY_DDL`, bump `SCHEMA_VERSION` 1 → 2, and add a step in
-      `run_migrations` that calls `db.ensure_columns("discovered_urls", {...})` (the
-      pattern of `_migrate_legacy_sector_column`; forward-only, idempotent), plus an
-      index `idx_match_class` on `discovered_urls(match_class)` (the fetcher and the
-      re-tag filter on it; cheap on 481k rows). A test upgrades an old-schema database
-      and leaves a current one untouched. `discovered_urls` gains
-      `match_class TEXT NOT NULL DEFAULT 'accept'`, `match_reason TEXT` (which
-      signal decided: `name`, `alias`, `explicit_ticker`, `upper_ticker`, `weak_ticker`,
-      `weak_first_word`, `abbreviation`, `none`), and `query TEXT` (the `ddg` search
-      query that returned the row; provenance only, it never changes the class).
-      **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`)
-      now call `classify_match` and keep `review` and `reject` rows with their
-      class instead of `continue`, so the quarantine exists for new crawls. **Skipping
-      `reject` rows is by status, kept distinct from the existing `skipped`
-      meaning:** `URLStatus` already has `skipped` (paywall / irrelevant after
-      inspection; `URLQueue.mark_skipped`/`mark_skipped_by_id` set it and write their
-      reason into `title`). A matcher-rejected pair is therefore defined as
-      **`status = 'skipped' AND match_class = 'reject'`**, so it is always identified by
-      `match_class`; it is written at insert time (`DiscoveredURL` gains
-      `match_class`/`match_reason`/`query`, and the queue's insert path writes
-      `status = 'skipped'` for `match_class == 'reject'` and never touches `title`);
-      `mark_skipped` keeps its meaning and is never used for rejects. It is not the
-      default `'pending'` because the extractor
-      (`extractor/db.py` `get_urls_by_status` / `get_pending_urls`) and the queue
-      (`news_collector/storage/queue.py` `get_pending`, and the per-ticker counts that
-      filter `status='pending'`) select by `status` only; `accept` and `review` rows
-      stay `pending` (a `review` pair needs its body for `portfolio-nlp`'s decision).
-      Tests: a `reject` row is never returned by `get_pending_urls` or `get_pending`
-      and an `accept` row is; the insert keeps a `reject` row's `title`;
-      `mark_skipped` leaves `match_class` alone. **API:** `/discovered` responses
-      include `match_class` and `match_reason`, the list gains a `match_class`
-      filter, and the `status` filter description says `skipped` includes
-      matcher-rejected rows; an API test covers the listing and the filter.
-      **Discovery vs fetch:** the class is computed at discovery from the URL (and
-      the title for `ddg`), then **re-evaluated after the fetch** with the stored
-      title; the rule is monotone (more text can only add evidence), so
-      re-evaluation can only promote, never demote, and a test locks that property.
-      **Who re-evaluates:** the extractor, through its existing post-fetch update of
-      `discovered_urls` (`extractor/db.py`), calling `data_mining.matching` (no
-      import of `news_collector`) and writing only `match_class`/`match_reason`,
-      guarded in SQL so it can only promote. It applies to **fetched** rows, i.e.
-      `accept`/`review` ones (`review`→`accept`
-      when the title supplies the evidence). A `reject` row is never fetched, so a
-      `sitemap` `reject` row (no title at discovery) stays `reject` unless a feed
-      title was supplied with it (`entry.title` of an RSS entry). Accepted cost:
-      about 5,800 pairs that are `reject` at discovery but would be `review` or
-      `accept` with a title are never fetched; `hidden as reject` was 0.0% in
-      discovery mode on both labeled samples, and the T-057 check measures it again. **`multi_company` is derived, not stored:**
-      a URL with two or more `accept` pairs is multi-company (108,313 of the 320,763
-      stored URLs carry several tickers); the pair stays one row per `(url, ticker)`.
-      Hermetic parametrized tests **per connector** for all three classes
-      (ambiguous tickers `A`/`ON`/`IT`/`ARE`, generic first words `Bank`/`Trade`/
-      `First`/`News`, aliases, `&`/`and`, abbreviations → `review`, the substring
-      cases, host not matched), the monotone-promotion test, the migration, and the
-      strategies keeping `review`/`reject` rows with their class and `query`. Only
-      `test_cnbc.py` covers `url_matches_company` today (and asserts the permissive
-      rule): update it deliberately and add the six missing files. No
-      `BaseConnector` abstract-signature change. **Constitution AI behavior #10:**
-      new `discovered_urls` columns, a `status` convention and an extractor update
-      are a shared-schema change touching the two-package DB contract, so the
-      maintainer confirms them before this task starts (the design, quarantine and a
-      `query` column were approved on 2026-10-15; the exact columns and the
-      `skipped`+`reject` convention are listed here for that confirmation). → step 3.
+- [ ] **T-056** *(split into `T-056a`, `T-056b`, `T-056c` so each piece is
+      reviewable and shippable; the IDs stay sub-numbered because `portfolio-nlp`
+      cites only `T-053`–`T-059`. Order: `a` (no schema) → maintainer's constitution #10
+      confirmation → `b` → `c`; T-057 starts after all three.)* Implement the approved
+      three-class rule. `T-056` is done when all three are.
+- [ ] **T-056a** *(no schema change)* The matcher and the connectors. Put the pure
+      module in the **shared library** (`data_mining/matching.py`; both `news_collector`
+      and `extractor` already import `data_mining.db`/`schema`, so the direction stays
+      stages → `data_mining` and the two stages import nothing from each other): the logic
+      of `scripts/score_ticker_rules.py` `design_class` (alias map, ordinary-word-name
+      rule, `&`→`and`, abbreviation list, path-only URL matching, no new dependency),
+      returning the class and the deciding signal (`name`, `alias`, `explicit_ticker`,
+      `upper_ticker`, `weak_ticker`, `weak_first_word`, `abbreviation`, `none`). Expose it to
+      the connectors through one new **concrete** `BaseConnector.classify_match(url, title,
+      company, ticker) -> "accept" | "review" | "reject"`; the abstract
+      `url_matches_company` keeps its signature and, in each of the **seven** connectors
+      that override it (`cnbc`, `ft`, `investing`, `nasdaq`, `seeking_alpha`, `stocktwits`,
+      `yahoo_finance`), returns `classify_match(...) != "reject"`; the raw
+      `ticker.lower() in url.lower()` shortcut the last four ran first is removed; the
+      base-class docstring postcondition ("ticker OR significant company name token is
+      sufficient") is rewritten. The rule is monotone (more text can only add evidence), and
+      a test locks that. Hermetic parametrized tests **per connector** for all three
+      classes (ambiguous tickers `A`/`ON`/`IT`/`ARE`, generic first words `Bank`/`Trade`/
+      `First`/`News`, aliases, `&`/`and`, abbreviations → `review`, the substring cases, host
+      not matched); only `test_cnbc.py` covers `url_matches_company` today (and asserts the
+      permissive rule), so update it deliberately and add the six missing files.
+      **`api` feeds are out of the rule's scope:** the `stocktwits` and `yahoo_finance`
+      connectors build `DiscoveredURL(source="api")` directly from ticker-keyed feeds
+      (message URLs, provider news; no company in the URL), the rule was never measured
+      on them and the corpus holds none, so they keep `accept` by construction
+      (`match_reason = 'feed'`), stated in FR-014; `rss` entries go through the sitemap
+      strategy's filter and **are** classified, with their feed title. → step 3.
+- [ ] **T-056b** *(shared-schema change; needs the maintainer's constitution AI
+      behavior #10 confirmation before it starts: new `discovered_urls` columns, a `status`
+      convention and the extractor update touch the two-package DB contract. The design,
+      quarantine and a `query` column were approved on 2026-10-15; the exact columns and the
+      `skipped`+`reject` convention are listed here for that confirmation.)* Storage, queue
+      and API. **Migration via the real mechanism in `data_mining/schema.py`:** add the
+      columns to `_DISCOVERY_DDL`, bump `SCHEMA_VERSION` 1 → 2, add a `run_migrations`
+      step calling `db.ensure_columns("discovered_urls", {...})` (the pattern of
+      `_migrate_legacy_sector_column`; forward-only, idempotent) and an index
+      `idx_match_class` on `discovered_urls(match_class)`; a test upgrades an old-schema
+      database and leaves a current one untouched. Columns: `match_class TEXT NOT NULL
+      DEFAULT 'accept'`, `match_reason TEXT`, `query TEXT` (the `ddg` search query that
+      returned the row; provenance only, it never changes the class). **Status
+      convention, distinct from the existing `skipped`:** `URLStatus` already has
+      `skipped` (paywall / irrelevant after inspection; `mark_skipped`/`mark_skipped_by_id`
+      set it and write their reason into `title`). A matcher-rejected pair is
+      **`status = 'skipped' AND match_class = 'reject'`**, written at insert time
+      (`DiscoveredURL` gains `match_class`/`match_reason`/`query`; the queue's insert path
+      writes `status = 'skipped'` for `reject` and never touches `title`); `mark_skipped`
+      keeps its meaning and is never used for rejects. It is not the default `'pending'`
+      because the extractor (`extractor/db.py` `get_urls_by_status`/`get_pending_urls`) and
+      the queue (`storage/queue.py` `get_pending` and the per-ticker counts filtering
+      `status='pending'`) select by `status` only. **Upsert, not `INSERT OR IGNORE`:**
+      `enqueue_batch` ignores a duplicate `(url, ticker)`, which would discard a promotion
+      when a pair first stored as `reject` (sitemap, no title) is rediscovered with a title
+      (`ddg`). On conflict keep the higher class (`reject` < `review` < `accept`), fill
+      `query`/`match_reason` when null, and reset `status` from `skipped` to `pending` when
+      the class rises above `reject`. **API:** `/discovered` responses include
+      `match_class` and `match_reason`, the list gains a `match_class` filter, and the
+      `status` filter description says `skipped` includes matcher-rejected rows. Tests: the
+      migration; a `reject` row is never returned by `get_pending_urls`/`get_pending` and an
+      `accept` row is; the insert keeps a `reject` row's `title`; `mark_skipped` leaves
+      `match_class` alone; sitemap-then-ddg re-discovery promotes the row and resets
+      `status`; the API listing and filter. → step 3.
+- [ ] **T-056c** Strategies, fetch policy and re-evaluation (after `a` and `b`).
+      **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`) call
+      `classify_match` and keep `review` and `reject` rows with their class and (for `ddg`)
+      `query` instead of `continue`, so the quarantine exists for new crawls; `accept`
+      and `review` rows stay `pending` (a `review` pair needs its body for
+      `portfolio-nlp`'s decision), `reject` rows are `skipped`. **Discovery vs fetch:** the
+      class is computed at discovery from the URL (and the title for `ddg`), then
+      **re-evaluated after the fetch** with the stored title; monotone, so it can only
+      promote, never demote. **Who re-evaluates:** the extractor, through its existing
+      post-fetch update of `discovered_urls` (`extractor/db.py`), calling
+      `data_mining.matching` (no import of `news_collector`) and writing only
+      `match_class`/`match_reason`, guarded in SQL so it can only promote. It applies to
+      **fetched** rows, i.e. `accept`/`review` ones (`review`→`accept` when the title
+      supplies the evidence). A `reject` row is never fetched, so a `sitemap` `reject` row
+      (no title at discovery) stays `reject` unless a feed title was supplied with it
+      (`entry.title` of an RSS entry). Accepted cost: about 5,800 pairs that are `reject`
+      at discovery but would be `review` or `accept` with a title are never fetched;
+      `hidden as reject` was 0.0% in discovery mode on both labeled samples, and the
+      T-057 check measures it again. **`multi_company` is derived, not stored:** a URL
+      with two or more `accept` pairs is multi-company (108,313 of the 320,763 stored
+      URLs carry several tickers); the pair stays one row per `(url, ticker)`. Tests: the
+      strategies keep `review`/`reject` rows with their class and `query`; the extractor
+      promotes a fetched `review` row and never demotes. → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation

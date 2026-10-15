@@ -887,10 +887,10 @@ and ordinary-word fixes (in-sample).
 
 **Corpus-wide effect of the last two changes** (`score_ticker_rules.py --diff`,
 whole `urls.db`, 481,332 rows, read-only): matching the URL host used to accept
-`Nasdaq, Inc.` on any `nasdaq.com` URL; **0 stored rows are affected** (the
-corpus has no `nasdaq.com` rows, NDAQ is stored from `cnbc`, `yahoo` and
-`seekingalpha`), so no figure above changes, but a `nasdaq.com` crawl would have
-hit it. The 2-letter abbreviation list moves **1,239 rows from `accept` to
+`Nasdaq, Inc.` on any `nasdaq.com` URL; **0 stored rows are affected**
+(the corpus does hold 158 `ddg` rows for `nasdaq.com`, but none is tagged NDAQ;
+NDAQ's 34 rows come from `cnbc`, `yahoo` and `seekingalpha`), so no figure above
+changes, but an NDAQ crawl of `nasdaq.com` would have hit it. The 2-letter abbreviation list moves **1,239 rows from `accept` to
 `review` and none to `reject`** (`PM` 879, `HD` 109, `MS` 67, `IP` 60, `DD` 42,
 `CI` 25, `EL` 21, `MA` 17, `ED` 10, `NI` 8, `PH` 1): an upper-case abbreviation
 in the title is `review`, judged downstream, never excluded. Entries without a
@@ -965,7 +965,8 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
      (Technological stock #7) — prefer a hand-kept stoplist.
    - Recall matters too: the rule must keep what was correctly tagged. Report
      the retained share on a hand-labeled set of known-correct pairs.
-3. **Implement** the approved three-class rule once, in a shared pure module
+3. **Implement** (tasks `T-056a` matcher and connectors, `T-056b` storage/queue/API, `T-056c`
+   strategies/fetch/re-evaluation, in that order) the approved three-class rule once, in a shared pure module
    in `data_mining/matching.py` (shared by both stages, which never import each
    other), exposed by one new concrete `BaseConnector.classify_match` returning
    `accept`/`review`/`reject`; the seven overriding connectors' abstract
@@ -982,8 +983,12 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
    `match_class`; `mark_skipped` is not used and `title` is preserved) so the
    fetcher and queue, which select by `status`, never fetch them, and
    `accept`/`review` rows stay `pending`; `/discovered` exposes `match_class`.
-   The extractor re-evaluates a fetched row's class through its existing
-   `discovered_urls` update (promote only). This is a shared-schema change under
+   The queue's insert becomes an upsert (an `INSERT OR IGNORE` would drop a
+   promotion when a `reject` pair is rediscovered with a title): on conflict it keeps
+   the higher class and resets `skipped` to `pending` when the class rises. `api`
+   feeds (`stocktwits`, `yahoo_finance`) are ticker-keyed, were never measured and keep
+   `accept` by construction; `rss` entries are classified. The extractor re-evaluates
+   a fetched row's class through its existing `discovered_urls` update (promote only). This is a shared-schema change under
    constitution AI behavior #10: the maintainer confirms the exact columns and the
    `skipped`+`reject` convention before T-056 starts. The class is computed at
    discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
