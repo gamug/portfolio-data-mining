@@ -99,8 +99,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       company: `yes`/`no`/`unclear`). **Labeling is done in this repo, by hand;
       it does not depend on `portfolio-nlp`** (data flows from this repo to
       that one, never back). Commit the sample (pairs + labels) so it can be
-      reused: `portfolio-nlp` T-117 reads it, and T-056's retention
-      measurement is computed on the same pairs. The committed file carries
+      reused: `portfolio-nlp` T-117 reads it, and the retention
+      measurement of the implemented rule (the T-057 fresh check) is added to the same
+      sample's evidence. The committed file carries
       `url`, `ticker`, `company`, `match_mode`, `label`, `labeled_by`
       (`hand`/`assistant`) and the assistant's `assistant_label`. Report; the
       rule is chosen from this, not assumed. → step 1.
@@ -139,7 +140,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       here. Outcomes of the open questions: the `ddg` query is stored as provenance
       only (it does not change a class), and each sitemap article is **not** decided
       once across companies; the class is per `(url, ticker)` pair and
-      `multi_company` is derived (T-056). All figures reproduce with
+      `multi_company` is derived (T-056c). All figures reproduce with
       `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
       details in `PLAN.md` Work item 10. → step 2.
 - [ ] **T-056** *(split into `T-056a`, `T-056b`, `T-056c` so each piece is
@@ -168,6 +169,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `First`/`News`, aliases, `&`/`and`, abbreviations → `review`, the substring cases, host
       not matched); only `test_cnbc.py` covers `url_matches_company` today (and asserts the
       permissive rule), so update it deliberately and add the six missing files.
+      **Done when:** `ruff check`, `ruff format --check`, `mypy`, `pytest` clean;
+      FR-014's tests (per connector) pass; the base-class docstring and
+      `docs/modules/news-collector.md` describe the matcher; mergeable without `b`/`c`.
       **`api` feeds are out of the rule's scope:** the `stocktwits` and `yahoo_finance`
       connectors build `DiscoveredURL(source="api")` directly from ticker-keyed feeds
       (message URLs, provider news; no company in the URL), the rule was never measured
@@ -207,7 +211,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       migration; a `reject` row is never returned by `get_pending_urls`/`get_pending` and an
       `accept` row is; the insert keeps a `reject` row's `title`; `mark_skipped` leaves
       `match_class` alone; sitemap-then-ddg re-discovery promotes the row and resets
-      `status`; the API listing and filter. → step 3.
+      `status`; the API listing and filter. **Done when:** the same four gates clean, the migration test and the `schema.py` docstring (`SCHEMA_VERSION` 2) updated, `SPEC.md` FR-014 and `docs/modules/news-collector.md` describe the columns, and the maintainer's #10 confirmation is recorded here. → step 3.
 - [ ] **T-056c** Strategies, fetch policy and re-evaluation (after `a` and `b`).
       **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`) call
       `classify_match` and keep `review` and `reject` rows with their class and (for `ddg`)
@@ -230,7 +234,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       with two or more `accept` pairs is multi-company (108,313 of the 320,763 stored
       URLs carry several tickers); the pair stays one row per `(url, ticker)`. Tests: the
       strategies keep `review`/`reject` rows with their class and `query`; the extractor
-      promotes a fetched `review` row and never demotes. → step 3.
+      promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
@@ -276,7 +280,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       bodies), and tests on real excerpts including the false positives found
       (CNBC articles that contain "just a moment" or "CAPTCHA" in normal prose).
       Separately report the duplicate-processing finding (302,512 distinct
-      bodies among 459,112 `ok` rows) so `T-055`/`T-056` can decide to attribute
+      bodies among 459,112 `ok` rows) so `T-055`/`T-056c` can decide to attribute
       each URL once. → quality of what step 4 hands over.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts

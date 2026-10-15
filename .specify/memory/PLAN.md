@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056`–`T-060` pending; `T-056` next.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056a`–`c`, `T-057`–`T-060` pending; `T-056a` next (no schema), `T-056b` waits for the maintainer's constitution #10 confirmation.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -664,7 +664,7 @@ The earlier figures reproduce exactly (`ON` 66,489 ticker-only rows, `A`
 entirely `cnbc.com` sitemap rows (96.2% of the corpus); (b) the substring
 shortcut (failure mode 3) accounts for 823 stored rows (0.17%), all `ddg`,
 because only the shortcut connectors' `ddg` rows exist, but its *potential*
-reach is larger for any future sitemap run on those connectors, so T-056 still
+reach is larger for any future sitemap run on those connectors, so T-056a still
 removes it; (c) the audit counts only rows that were stored, so it cannot see
 candidates the rule rejected. Generic-first-word companies matched by the name
 token alone in over 90% of rows are listed by the script (`Dollar`, `American`,
@@ -722,8 +722,8 @@ findings that shape `T-055`:
   id 180987, 2026-10-15), so 17 of 20 is the figure of record; had both flipped
   to `yes` it would be 19 of 20.
 - The sample is small (8 per small stratum) and the intervals are wide; use the
-  rates as the evidence for choosing a rule, and re-measure on the same pairs
-  after `T-056`.
+  rates as the evidence for choosing a rule, and verify the implemented rule on a fresh
+  sample (the T-057 check), not on these pairs, which are in-sample by now.
 
 **Hand-label policy decisions** (from the maintainer's notes): an acronym
 (`UPS`, `IBM`) counts as the company; a "stocks making the biggest moves"
@@ -733,7 +733,7 @@ legitimately carry several tickers (to be marked `multi_company` for
 counts if the company is its subject even if it is not financial news.
 
 **Prototype evidence for `T-055`** (explorative, in-sample, rules written after
-reading the errors, so optimistic; not a measurement of `T-056`; reproduce with
+reading the errors, so optimistic; not a measurement of `T-056a`; reproduce with
 `scripts/score_ticker_rules.py`, committed with a test). Scoring a
 rule on the 263 hand labels (kept-correct / kept-wrong / precision / recall of
 the `yes` pairs):
@@ -926,13 +926,14 @@ What happens to each class (the cross-repo shape is agreed in `T-058` before the
 re-tag runs): `accept` rows stay as they are; `review` rows are quarantined and
 sent to the body/NER judge; `reject` rows are quarantined with a reason, so the
 re-tag is reversible. For `ddg`, record the query that found each row (a new
-additive column, `T-056`) as provenance for later analysis only; it does not
+additive column, `T-056b`) as provenance for later analysis only; it does not
 change a row's class. For `sitemap`, the same article is stored once per ticker
 that discovered it (212,450 URLs carry one ticker and 108,313 carry two or more,
 up to 8), and the class is evaluated per pair. Deciding each article once across
-all companies, and marking a URL accepted for several companies `multi_company`
-(roundups are legitimate), is a `T-056` design question, not part of what was
-measured here.
+all companies was considered and **not adopted**: the class stays per `(url, ticker)`
+pair, and `multi_company` is derived (a URL with two or more `accept` pairs;
+roundups are legitimate), decided in `T-056c`. Neither was measured separately here;
+the class figures are per pair.
 
 **Targets (written into FR-014 on 2026-10-15 as the requirement; the first draft
 missed them out-of-sample and the revised rule is verified only by the fresh check
