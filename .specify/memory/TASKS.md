@@ -91,7 +91,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `(ticker, company, domain, source)` cells, so the word-ticker and
       generic-word tables are split per connector/source); results in
       `PLAN.md` Work item 10.
-- [x] **T-054** Measure each failure mode's real error rate. Build **one**
+- [ ] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker
       substring shortcut / name-token-only / both) and including
@@ -104,21 +104,25 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `url`, `ticker`, `company`, `match_mode`, `label`, `labeled_by`
       (`hand`/`assistant`) and the assistant's `assistant_label`. Report; the
       rule is chosen from this, not assumed. → step 1.
-      Done: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
+      Built: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
       (263 pairs, all hand-labeled by the maintainer; an assistant's first pass
-      agreed on 91%) and `data/ticker_tagging_manual.csv` (the labeling sheet);
-      results, prototype rules and the duplicate/quality analysis are in
-      `PLAN.md` Work item 10. Two hand labels are still queued for the
-      maintainer to confirm (`MGM` id 317362 and `DE` id 180987, whose notes
-      read as `yes`); a flip changes known-correct retention from 17/20 to 19/20
-      only. Re-run `manual-apply` and `report` after any edit to the sheet.
+      agreed on 91%), `data/ticker_tagging_manual.csv` (the **filled** labeling
+      sheet with the maintainer's notes, excerpts removed) and
+      `scripts/score_ticker_rules.py` (reproduces the prototype-rule table);
+      results and the duplicate/quality analysis are in `PLAN.md` Work item 10.
+      **Left open (tick when done):** the maintainer confirms two labels in the
+      known-correct stratum, `MGM` id 317362 (article is MGM Resorts, note says
+      "about MGM not GM", label `no`) and `DE` id 180987 (John Deere CEO
+      interview, label `no`, note says Deere is a person's name here). Known-correct
+      retention is 17/20 as labeled and 19/20 if both flip; the prototype table is
+      given both ways in `PLAN.md`. Then re-run `manual-apply` and `report`.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
       T-054 numbers behind it, and get it approved before coding. Division of work
       decided (`PLAN.md` Work item 10 step 2): strict deterministic rules here,
       semantic relevance in `portfolio-nlp`, questionable pairs quarantined. Decide, with the
-      per-path rates in `PLAN.md` (`ddg` 8% wrong, `sitemap` 74%): use the
+      per-path rates in `PLAN.md` (`ddg` 7% wrong, `sitemap` 73%): use the
       company-name search query as evidence for `ddg` rows (and record the query
       per row), and attribute each `sitemap` article once instead of testing
       every company against every URL. The same

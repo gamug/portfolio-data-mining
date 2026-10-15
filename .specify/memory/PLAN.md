@@ -731,7 +731,8 @@ legitimately carry several tickers (to be marked `multi_company` for
 counts if the company is its subject even if it is not financial news.
 
 **Prototype evidence for `T-055`** (explorative, in-sample, rules written after
-reading the errors, so optimistic; not a measurement of `T-056`). Scoring a
+reading the errors, so optimistic; not a measurement of `T-056`; reproduce with
+`scripts/score_ticker_rules.py`, committed with a test). Scoring a
 rule on the 263 hand labels (kept-correct / kept-wrong / precision / recall of
 the `yes` pairs):
 
@@ -742,10 +743,14 @@ the `yes` pairs):
 | above, or name twice in the body | 126 | 5 | 96% | 73% |
 | above, or an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
 
-On the `ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
+With the two unconfirmed labels (`MGM` 317362, `DE` 180987) left out
+(`--exclude-ids 317362 180987`) the same rules keep the same correct pairs and
+the last one keeps 4 (not 6) wrong pairs, precision 98%; if both flip to `yes`
+they become two more kept-correct pairs and kept-wrong is 4 as well. On the
+`ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
 and 5 of 61 wrong pairs. Missed or kept wrongly: the remaining wrong ones are a
-phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and a
-possibly mislabeled `MGM`. This shows the current rule's problem is the lack of
+phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and the
+unconfirmed `MGM` and `DE` labels. This shows the current rule's problem is the lack of
 any evidence beyond a word match, not an inherently hard task: a handful of
 deterministic checks on the title and body recover most of it.
 

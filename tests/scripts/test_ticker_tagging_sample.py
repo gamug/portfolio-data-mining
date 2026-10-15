@@ -125,7 +125,7 @@ def test_report_weights_strata_and_excludes_unclear(tmp_path: Path) -> None:
     text = mod.report(path)
     assert "unclear rows excluded from every rate: 1" in text
     assert "ticker_only" in text
-    assert "known-correct candidates labeled yes: 4/5" in text
+    assert "known-correct retention (labeled yes): 4/5 = 80%" in text
     mode_rates = {
         name: rate
         for name, _, _, rate, _ in mod._rate_rows(
@@ -197,3 +197,43 @@ def test_manual_apply_rejects_bad_label(tmp_path: Path, capsys: pytest.CaptureFi
     sheet.write_text("id,label\n0,maybe\n")
     assert mod.main(["manual-apply", "--sample", str(sample), "--manual", str(sheet)]) == 1
     assert "yes/no/unclear" in capsys.readouterr().err
+
+
+def _sheet(path: Path, rows: list[tuple[str, str]]) -> None:
+    path.write_text("id,label\n" + "".join(f"{i},{lab}\n" for i, lab in rows))
+
+
+def test_manual_export_refuses_to_overwrite(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db = _db(tmp_path)
+    sample = tmp_path / "sample.csv"
+    assert mod.main(["sample", "--db", str(db), "--out", str(sample)]) == 0
+    sheet = tmp_path / "manual.csv"
+    sheet.write_text("hand labels")
+    args = ["manual-export", "--db", str(db), "--sample", str(sample), "--out", str(sheet)]
+    assert mod.main(args) == 1
+    assert "--force" in capsys.readouterr().err
+    assert sheet.read_text() == "hand labels"
+    assert mod.main([*args, "--force"]) == 0
+    assert sheet.read_text().startswith("id,ticker,company")
+
+
+def test_manual_apply_partial_sheet_and_relabel(tmp_path: Path) -> None:
+    sample = tmp_path / "s.csv"
+    _write(sample, [("d/s/both", "both", 10, "yes"), ("d/s/both", "both", 10, "no")])
+    rows = list(csv.DictReader(sample.open()))
+    for r in rows:
+        r["labeled_by"] = "assistant"
+    with sample.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=mod.FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    sheet = tmp_path / "m.csv"
+    _sheet(sheet, [("0", "no"), ("1", "")])  # row 1 left blank: untouched
+    assert "applied 1 hand labels" in mod.manual_apply(sample, sheet)
+    _sheet(sheet, [("0", "yes"), ("1", "")])  # flip after the first apply
+    mod.manual_apply(sample, sheet)
+    merged = {r["id"]: r for r in csv.DictReader(sample.open())}
+    assert (merged["0"]["label"], merged["0"]["assistant_label"]) == ("yes", "yes")
+    assert (merged["1"]["label"], merged["1"]["labeled_by"]) == ("no", "assistant")

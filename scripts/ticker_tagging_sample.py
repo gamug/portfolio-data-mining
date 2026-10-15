@@ -1,6 +1,6 @@
 """Shared labeled sample of ``(url, ticker)`` pairs for the ticker-tagging work (T-054).
 
-Two subcommands:
+Four subcommands (``sample``, ``report``, ``manual-export``, ``manual-apply``):
 
 ``sample``
     Draw a seeded, stratified sample from ``urls.db`` and write it as a CSV with
@@ -28,7 +28,8 @@ replaces it). This repo labels its own data; nothing here depends on
 ``manual-export``
     Write a CSV for a person to label: the sample pairs with title and a body
     excerpt and an empty ``label`` column (the assistant's labels are left out
-    so they do not bias the person).
+    so they do not bias the person). It refuses to overwrite an existing file
+    (the committed sheet holds the hand labels) unless ``--force`` is given.
 
 ``manual-apply``
     Merge the person's ``label`` values back into the sample (``labeled_by =
@@ -38,6 +39,8 @@ replaces it). This repo labels its own data; nothing here depends on
 Usage:
     PYTHONPATH=src uv run python scripts/ticker_tagging_sample.py sample --out PATH
     PYTHONPATH=src uv run python scripts/ticker_tagging_sample.py report --sample PATH
+    PYTHONPATH=src uv run python scripts/ticker_tagging_sample.py manual-export --out NEW.csv
+    PYTHONPATH=src uv run python scripts/ticker_tagging_sample.py manual-apply --manual NEW.csv
 """
 
 from __future__ import annotations
@@ -250,10 +253,11 @@ def report(sample_path: Path) -> str:
     known = [r for r in rows if r["stratum"] == KNOWN_CORRECT]
     if known:
         k = sum(1 for r in known if r["label"] == "yes")
-        lo, hi = wilson(len(known) - k, len(known))
+        lo, hi = wilson(k, len(known))
         lines += [
             "",
-            f"known-correct candidates labeled yes: {k}/{len(known)} (wrong {lo:.1%}-{hi:.1%})",
+            f"known-correct retention (labeled yes): {k}/{len(known)} = {k / len(known):.0%}"
+            f" (95% interval {lo:.0%}-{hi:.0%})",
         ]
     return "\n".join(lines)
 
@@ -361,6 +365,8 @@ def _cmd_manual_export(args: argparse.Namespace) -> int:
     db = Path(args.db or resolve_db_path())
     if not db.is_file() or not Path(args.sample).is_file():
         return _fail("urls.db or the sample CSV not found")
+    if Path(args.out).exists() and not args.force:
+        return _fail(f"{args.out} exists and may hold hand labels; pass --force to overwrite")
     print(f"wrote {manual_export(db, Path(args.sample), Path(args.out))} rows to {args.out}")
     return 0
 
@@ -394,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--db", default=None, help=db_help)
     p.add_argument("--sample", default=DEFAULT_SAMPLE)
     p.add_argument("--out", default=DEFAULT_MANUAL)
+    p.add_argument("--force", action="store_true", help="overwrite an existing sheet")
     p.set_defaults(func=_cmd_manual_export)
     p = sub.add_parser("manual-apply", help="merge a person's labels into the sample")
     p.add_argument("--sample", default=DEFAULT_SAMPLE)
