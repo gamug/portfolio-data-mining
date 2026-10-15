@@ -13,6 +13,8 @@ S&P 500 universe loader (live scrape + point-in-time history), owned by
   for the leaver stints, from the "List of S&P 500 companies" revision
   history.
 - `errors` -- `UpstreamDataError`, the shared upstream-failure exception type.
+- `matching` -- the pure company-matching rule (`classify`: accept / review /
+  reject) shared by the news-collector connectors and, later, the extractor.
 
 See this folder's README.md for what changes on the way into
 ``portfolio-data-mining``'s own `src/`.

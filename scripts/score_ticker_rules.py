@@ -31,94 +31,38 @@ from collections import Counter, defaultdict
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from audit_ticker_tagging import WORD_TICKERS
-from ticker_tagging_sample import DEFAULT_SAMPLE, normalized_name
+from ticker_tagging_sample import DEFAULT_SAMPLE
 
+from data_mining import matching
 from data_mining.db import connect, resolve_db_path
+from data_mining.matching import (
+    ALIASES,  # noqa: F401 - re-exported for the tests
+    BASELINE_ABBREVIATIONS,
+    MIN_NAME,
+    MIN_TICKER,
+    STOPWORDS,
+    WORD_TICKERS,
+)
 
 BODY_CHARS = 6000
-MIN_NAME = 4
-MIN_TICKER = 3
 REPEATS = 2
-# Lone first words too ordinary to identify a company by themselves.
-STOPWORDS = frozenset(
-    {
-        *("dollar", "american", "trade", "bank", "first", "news", "best", "global", "home"),
-        *("target", "public", "live", "state", "federal", "capital", "texas", "digital"),
-        *("extra", "union", "equity", "international", "general", "united", "national"),
-        *("new", "pacific", "southern", "western", "norfolk"),
-    }
-)
-
-# Ordinary words that are also tickers or look like them in a headline; an
-# upper-case ticker among these never counts as evidence by itself.
-COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
-    {
-        *("AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN", "IS", "ME", "MY"),
-        *("NO", "OF", "OR", "SO", "TO", "UP", "US", "WE", "I", "CAN", "FOR", "ONE", "OUT"),
-        *("NEW", "BIG", "FAST", "KEY", "APP", "FIX"),
-    }
-)
-# 2-letter tickers that are also upper-case abbreviations in a headline ("Egypt PM
-# says"). Never `accept` on their own, but never excluded either: an upper-case
-# hit in the title is `review` (judged downstream), so the list cannot hide a pair.
-ABBREVIATIONS = frozenset({"PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"})
-BASELINE_ABBREVIATIONS: frozenset[str] = frozenset()  # the first draft had none
-# Names a company is also known by, matched like the full name (hand-kept, tested).
-# `coke` for KO was rejected: it is also a fuel and a steel input.
-ALIASES: dict[str, tuple[str, ...]] = {
-    "GOOGL": ("google",),
-    "GOOG": ("google",),
-    "PG": ("p and g",),
-    "META": ("facebook",),
-    "BRK.B": ("berkshire",),
-    "BRK.A": ("berkshire",),
-    "JPM": ("jpmorgan",),
-    "WMT": ("wal mart",),
-}
-MIN_SHORT_TICKER = 2
 
 Row = dict[str, str]
 Rule = Callable[[Row, str, str], bool]
 
 
-def _flat(text: str) -> str:
-    """Lower-case words of ``text``; ``&`` is read as ``and`` (URLs spell it out)."""
-    return (
-        " " + " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower().replace("&", " and ")).split()) + " "
-    )
-
-
-def _full_name(row: Row) -> str:
-    return normalized_name(row["company"].replace("&", " and "))
-
-
-def _name_in(row: Row, text: str, aliases: dict[str, tuple[str, ...]] | None = None) -> bool:
-    """Full normalized name (or an alias) in ``text``; an ordinary word alone never counts."""
-    name = _full_name(row)
-    distinctive = (len(name) >= MIN_NAME or any(c.isdigit() for c in name)) and (
-        name not in STOPWORDS
-    )  # "3M" yes; "News" (News Corp) no
-    flat = _flat(text)
-    names = [name] if distinctive else []
-    names += list((ALIASES if aliases is None else aliases).get(row["ticker"], ()))
-    return any(f" {n} " in flat for n in names)
+def _name_in(row: Row, text: str) -> bool:
+    return matching.name_in(row["company"], row["ticker"], text)
 
 
 def _explicit(ticker: str, title: str, body: str) -> bool:
-    t = re.escape(ticker)
-    pattern = re.compile(
-        rf"(\((?:NYSE|NASDAQ|NYSEARCA|Nasdaq|NYSE American)?:?\s*{t}\)"
-        rf"|(?:NYSE|NASDAQ)\s*:\s*{t}\b|\${t}\b)"
-    )
-    return bool(pattern.search(title) or pattern.search(body[:BODY_CHARS]))
+    return matching.explicit_ticker(ticker, title, body[:BODY_CHARS])
 
 
 def _name_count(row: Row, body: str) -> int:
-    name = _full_name(row)
-    return _flat(body[:BODY_CHARS]).count(f" {name} ") if len(name) >= MIN_NAME else 0
+    name = matching.full_name(row["company"])
+    return matching.flat(body[:BODY_CHARS]).count(f" {name} ") if len(name) >= MIN_NAME else 0
 
 
 def rule_current(_row: Row, _title: str, _body: str) -> bool:
@@ -153,52 +97,19 @@ def rule_plus_title_signals(row: Row, title: str, body: str) -> bool:
     return rule_plus_body_name(row, title, body) or upper or word
 
 
-def _word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
-    return (
-        re.search(rf"(?<![A-Za-z0-9&]){re.escape(token)}(?![A-Za-z0-9&])", text, flags) is not None
-    )
+def design_class(row: Row, title: str, **overrides: object) -> str:
+    """T-055 design v1 class of one pair (``data_mining.matching.classify``).
 
-
-def design_class(
-    row: Row,
-    title: str,
-    *,
-    abbreviations: frozenset[str] = ABBREVIATIONS,
-    with_host: bool = False,
-    aliases: dict[str, tuple[str, ...]] | None = None,
-) -> str:
-    """T-055 design v1, from the URL path and the title (what discovery can see).
-
-    ``accept``: the full normalized company name (``&`` read as ``and``; a name
-    that is itself an ordinary word such as ``News`` never counts) or a hand-kept
-    alias is in the URL path or title, or an explicit ticker form, or an
-    upper-case ticker (2+ letters, not an ordinary word or abbreviation) in the
-    title. ``review``: only a weaker sign, a non-common ticker or a distinctive
-    first word in the URL/title, or an abbreviation-like 2-letter ticker in
-    upper case in the title. ``reject``: nothing else. The host is not matched
-    (``with_host`` exists only to measure what that leak used to accept).
+    ``overrides`` (``abbreviations``, ``with_host``, ``aliases``) reproduce earlier
+    versions of the rule for ``--diff``.
     """
-    ticker = row["ticker"]
-    parts = urlsplit(row["url"])
-    slug = (
-        f"{parts.netloc} {parts.path} {parts.query}" if with_host else f"{parts.path} {parts.query}"
-    )
-    text = f"{slug} {title}"
-    common = COMMON_TICKER_WORDS | abbreviations
-    strong = (
-        _name_in(row, text, aliases)
-        or _explicit(ticker, title, "")
-        or (len(ticker) >= MIN_SHORT_TICKER and ticker not in common and _word(ticker, title, 0))
-    )
-    if strong:
-        return "accept"
-    first = row["company"].split()[0].strip(",.")
-    weak = (
-        (len(ticker) >= MIN_TICKER and ticker not in common and _word(ticker, text))
-        or (len(first) >= MIN_NAME and first.lower() not in STOPWORDS and _word(first, text))
-        or (ticker in abbreviations and _word(ticker, title, 0))
-    )
-    return "review" if weak else "reject"
+    return matching.classify(
+        row["url"],
+        title,
+        row["company"],
+        row["ticker"],
+        **overrides,  # type: ignore[arg-type]
+    ).cls
 
 
 def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, str]], Counter[str]]:

@@ -59,6 +59,7 @@ from typing import Any
 from audit_ticker_tagging import WORD_TICKERS, classify  # sibling script, same directory
 
 from data_mining.db import connect, resolve_db_path
+from data_mining.matching import normalized_name
 
 DEFAULT_SAMPLE = "data/ticker_tagging_sample.csv"
 DEFAULT_MANUAL = "data/ticker_tagging_manual.csv"  # the committed, filled sheet
@@ -88,17 +89,6 @@ MANUAL_FIELDS = ["id", "ticker", "company", "url", "title", "excerpt", "label", 
 EXCERPT_CHARS = 400
 LABELS = ("yes", "no", "unclear")
 KNOWN_CORRECT = "known_correct_candidate"
-
-_SUFFIX = re.compile(
-    r"\b(inc|corp|corporation|co|company|ltd|plc|llc|holdings|group|the|class [a-c])\b\.?",
-    re.IGNORECASE,
-)
-
-
-def normalized_name(company: str) -> str:
-    """Company name lowercased, corporate suffixes dropped, punctuation as spaces."""
-    base = _SUFFIX.sub(" ", company.lower())
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", base).split())
 
 
 def full_name_present(company: str, url: str, title: str | None) -> bool:

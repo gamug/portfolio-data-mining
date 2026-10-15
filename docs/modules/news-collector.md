@@ -19,6 +19,16 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
 - **Persistence** (`src/news_collector/storage/queue.py`) — SQLite (WAL mode), safe for
   one writer + concurrent readers, so downstream stages can read while this stage writes.
 
+- **Company matching** (`src/data_mining/matching.py`, reached through
+  `BaseConnector.classify_match`) — one shared rule for all seven connectors that decides whether a
+  `(url, ticker)` pair is about the company. It reads only the URL path/query and the title and returns
+  `accept` (the full normalized name or an alias, an explicit ticker form, or an upper-case non-word ticker
+  in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
+  `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
+  substring, the host is never matched, and an ordinary-word ticker, a generic first word or an abbreviation
+  alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
+  only `reject` pairs are dropped at discovery. Design and evidence: `PLAN.md` Work item 10.
+
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
 

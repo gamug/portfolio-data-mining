@@ -148,7 +148,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       cites only `T-053`–`T-059`. Order: `a` (no schema) → maintainer's constitution #10
       confirmation → `b` → `c`; T-057 starts after all three.)* Implement the approved
       three-class rule. `T-056` is done when all three are.
-- [ ] **T-056a** *(no schema change)* The matcher and the connectors. Put the pure
+- [x] **T-056a** *(no schema change; done 2026-10-15, PR #58)* The matcher and the connectors. Put the pure
       module in the **shared library** (`data_mining/matching.py`; both `news_collector`
       and `extractor` already import `data_mining.db`/`schema`, so the direction stays
       stages → `data_mining` and the two stages import nothing from each other): the logic

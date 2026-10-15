@@ -1,7 +1,8 @@
 """Read-only audit of how `urls.db` rows were matched to their company (T-053).
 
-Reproduces, per ``(connector, source)``, which part of the *current* matching
-rule accepts each ``discovered_urls`` row:
+Reproduces, per ``(connector, source)``, which part of the *old* matching rule
+(``ticker OR first word``, which stored the rows being audited; replaced by
+``data_mining.matching`` in T-056a) accepts each ``discovered_urls`` row:
 
 * ``both``            ticker and company token both match (word boundary)
 * ``ticker_only``     only the ticker matches (word boundary)
@@ -9,7 +10,7 @@ rule accepts each ``discovered_urls`` row:
 * ``shortcut_only``   neither does, but the raw ``ticker in url`` substring
                       shortcut (nasdaq, seeking_alpha, stocktwits,
                       yahoo_finance) accepts it
-* ``unmatched``       the current rule would reject it
+* ``unmatched``       the old rule would reject it
 
 The word-boundary patterns come from ``BaseConnector._company_pattern`` itself,
 so the audit cannot drift from the code under test. The database is opened
@@ -39,17 +40,18 @@ from pathlib import Path
 from typing import Any, cast
 
 from data_mining.db import connect, resolve_db_path
+from data_mining.matching import WORD_TICKERS
 from news_collector.connectors.base import BaseConnector
 
-# Connectors whose url_matches_company first runs `ticker.lower() in url.lower()`.
-# Hand-kept; tests/scripts verifies it against the connector sources.
+# Connectors whose OLD url_matches_company first ran `ticker.lower() in url.lower()`.
+# Historical (the shortcut was removed in T-056a); the audit reproduces what the old
+# rule stored. tests/scripts verifies no connector source still has it.
 SHORTCUT_DOMAINS = frozenset(
     {"nasdaq.com", "seekingalpha.com", "stocktwits.com", "finance.yahoo.com"}
 )
 
-# The English-word tickers named in PLAN.md Work item 10, failure mode 1.
-# Hand-kept from that list; extend it there and here together.
-WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
+# The English-word tickers named in PLAN.md Work item 10, failure mode 1, kept in
+# one place with the matcher (`data_mining.matching.WORD_TICKERS`).
 
 GENERIC_SHARE = 0.9
 
