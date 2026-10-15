@@ -67,6 +67,7 @@ COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
 ABBREVIATIONS = frozenset({"PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"})
 BASELINE_ABBREVIATIONS: frozenset[str] = frozenset()  # the first draft had none
 # Names a company is also known by, matched like the full name (hand-kept, tested).
+# `coke` for KO was rejected: it is also a fuel and a steel input.
 ALIASES: dict[str, tuple[str, ...]] = {
     "GOOGL": ("google",),
     "GOOG": ("google",),
@@ -76,7 +77,6 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "BRK.A": ("berkshire",),
     "JPM": ("jpmorgan",),
     "WMT": ("wal mart",),
-    "KO": ("coke",),
 }
 MIN_SHORT_TICKER = 2
 
@@ -95,7 +95,7 @@ def _full_name(row: Row) -> str:
     return normalized_name(row["company"].replace("&", " and "))
 
 
-def _name_in(row: Row, text: str) -> bool:
+def _name_in(row: Row, text: str, aliases: dict[str, tuple[str, ...]] | None = None) -> bool:
     """Full normalized name (or an alias) in ``text``; an ordinary word alone never counts."""
     name = _full_name(row)
     distinctive = (len(name) >= MIN_NAME or any(c.isdigit() for c in name)) and (
@@ -103,7 +103,7 @@ def _name_in(row: Row, text: str) -> bool:
     )  # "3M" yes; "News" (News Corp) no
     flat = _flat(text)
     names = [name] if distinctive else []
-    names += [a for a in ALIASES.get(row["ticker"], ())]
+    names += list((ALIASES if aliases is None else aliases).get(row["ticker"], ()))
     return any(f" {n} " in flat for n in names)
 
 
@@ -165,6 +165,7 @@ def design_class(
     *,
     abbreviations: frozenset[str] = ABBREVIATIONS,
     with_host: bool = False,
+    aliases: dict[str, tuple[str, ...]] | None = None,
 ) -> str:
     """T-055 design v1, from the URL path and the title (what discovery can see).
 
@@ -185,7 +186,7 @@ def design_class(
     text = f"{slug} {title}"
     common = COMMON_TICKER_WORDS | abbreviations
     strong = (
-        _name_in(row, text)
+        _name_in(row, text, aliases)
         or _explicit(ticker, title, "")
         or (len(ticker) >= MIN_SHORT_TICKER and ticker not in common and _word(ticker, title, 0))
     )
@@ -223,6 +224,37 @@ def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, s
                 moves[(old, new)] += 1
                 by_ticker[ticker] += 1
     return moves, by_ticker
+
+
+def corpus_sizes(db_path: Path, discovery: bool = False) -> Counter[tuple[str, str]]:
+    """Exact ``(class, source)`` row counts over the whole corpus for the current rule.
+
+    With ``discovery`` the title is blank for ``sitemap`` rows (discovery sees only
+    their URL). Read-only.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    sizes: Counter[tuple[str, str]] = Counter()
+    with closing(connect(uri, uri=True)) as con:
+        cur = con.execute(
+            "SELECT d.url, d.ticker, d.company, d.source, COALESCE(NULLIF(d.title, ''), a.title, '')"
+            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
+        )
+        for url, ticker, company, source, title in cur:
+            row = {"url": url, "ticker": ticker, "company": company}
+            seen = "" if discovery and source == "sitemap" else title
+            sizes[(design_class(row, seen), source)] += 1
+    return sizes
+
+
+def render_sizes(label: str, sizes: Counter[tuple[str, str]]) -> str:
+    """Format ``corpus_sizes`` output with each class's share of the corpus."""
+    total = sum(sizes.values())
+    lines = [f"== current-rule class sizes, {label}: {total:,} rows =="]
+    for cls in ("accept", "review", "reject"):
+        n = sum(v for (c, _s), v in sizes.items() if c == cls)
+        per = ", ".join(f"{src} {sizes[(cls, src)]:,}" for src in ("ddg", "sitemap"))
+        lines.append(f"  {cls:7}{n:>9,} ({n / total:5.1%})  {per}")
+    return "\n".join(lines)
 
 
 def render_diff(label: str, moves: Counter[tuple[str, str]], by_ticker: Counter[str]) -> str:
@@ -366,6 +398,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--sample", default=DEFAULT_SAMPLE)
     parser.add_argument("--exclude-ids", nargs="*", default=[], help="sample ids to leave out")
     parser.add_argument(
+        "--sizes",
+        action="store_true",
+        help="scan the whole corpus (slow) for the exact class sizes of the current rule",
+    )
+    parser.add_argument(
         "--diff",
         action="store_true",
         help="scan the whole corpus (slow) for rows moved by the host fix and the abbreviation list",
@@ -383,10 +420,14 @@ def main(argv: list[str] | None = None) -> int:
     print(render(data))
     print(design_report(data))
     print(design_report(data, discovery=True))
+    if args.sizes:
+        print(render_sizes("re-tag (fetched title)", corpus_sizes(db)))
+        print(render_sizes("discovery (sitemap URL only)", corpus_sizes(db, discovery=True)))
     if args.diff:
         for label, kw in (
             ("matching the host (old)", {"with_host": True}),
             ("no abbreviation list (first draft)", {"abbreviations": BASELINE_ABBREVIATIONS}),
+            ("no alias map", {"aliases": {}}),
         ):
             print(render_diff(label, *class_diff(db, **kw)))
     return 0

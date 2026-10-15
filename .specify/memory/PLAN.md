@@ -827,7 +827,9 @@ is put in one of three classes from those two texts
   common abbreviation (`GM`, `MSFT`; never `A`, `ON`, `IT`, `PM`, `MS`). A bare
   ticker never counts against a lowercase URL slug and never as a raw substring.
 - **review**: only a weaker sign (a non-common ticker or a distinctive first
-  word somewhere in the URL/title; a stoplist first word does not count).
+  word somewhere in the URL/title; a stoplist first word does not count), or a
+  2-letter abbreviation-like ticker (`PM`, `HD`, `MS`, ...) in upper case in the
+  title, which can never be `accept` alone but is never excluded either.
 - **reject**: nothing else.
 
 **Out-of-sample result first (validation sample, 100 pairs not used to design
@@ -850,27 +852,37 @@ Aliases are part of the rule and tested; no new dependency.
 tuned on the first sample's errors and then on the validation sample's), so the
 figures below are optimistic and are not the acceptance evidence; the
 acceptance evidence is the fresh check in T-057 (below). Reproduce with
-`PYTHONPATH=src python scripts/score_ticker_rules.py --sample <csv>`; the
-class shares are weighted by the drawn strata:
+`PYTHONPATH=src python scripts/score_ticker_rules.py --sample <csv>` (the **current**
+rule, post-stratified on the drawn strata). Note that
+`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv`
+reproduces something different: that CSV's `match_mode`/`stratum` columns hold the
+class the **first draft** assigned when the sample was drawn, so `report` gives the
+out-of-sample first-draft result quoted above (20.7% / 45% / 99.9%), not the revised
+rule's figures (the column keeps its name because `report`, `manual-export` and the
+first sample share one schema):
 
 | sample, mode | `accept` share / wrong | `review` share / wrong | `reject` share / wrong | correct pairs hidden as `reject` |
 |---|---|---|---|---|
 | first (243 + 20), re-tag (fetched title) | 28.8% / 10.9% | 12.1% / 64.4% | 59.2% / 100% | 0.0% |
 | first, **discovery** (sitemap URL only) | 25.3% / 12.3% | 15.5% / 50.2% | 59.2% / 100% | 0.0% |
-| validation (100), re-tag | 20.2% / 0.0% | 10.1% / 48.5% | 69.7% / 100% | 0.0% |
+| validation (100), re-tag | 20.2% / 0.0% | 10.9% / 52.5% | 68.9% / 100% | 0.0% |
 | validation, **discovery** | 14.3% / 0.0% | 16.0% / 30.6% | 69.7% / 100% | 0.0% |
 
 Raw cells (correct / wrong), first sample re-tag: `ddg` accept 125/1, review 12/0,
 reject 1/58; `sitemap` accept 13/1, review 4/5, reject 0/23. Validation re-tag:
-`ddg` accept 18/0, review 4/5, reject 0/13; `sitemap` accept 21/0, review 9/9,
-reject 0/21. Today 70% of tagged pairs are wrong. **At discovery the `accept`
+`ddg` accept 18/0, review 4/5, reject 0/13; `sitemap` accept 21/0, review 9/10,
+reject 0/20. Today 70% of tagged pairs are wrong. **At discovery the `accept`
 share of `sitemap` rows drops (their titles are unknown) and the difference moves
 to `review`, not to `reject`**, which is the cost the maintainer asked us to take
-instead of excluding. Exact class sizes over the corpus with the first draft of the
-rule (`scripts/ticker_validation_sample.py`): `accept` 117,900 (24.5%), `review`
-52,088 (10.8%), `reject` 311,344 (64.7%); the re-run for the revised rule is part of
-`T-056`'s dry run. The `reject` class was 28 of 30 wrong, so "do not exclude"
-cost about 2 in 30 correct pairs with the first draft and 0 of 34 after the `&`
+instead of excluding. **Exact class sizes of the current rule over the whole corpus**
+(`score_ticker_rules.py --sizes`, 481,332 rows, read-only). Re-tag mode (fetched
+title): `accept` 104,627 (21.7%; `ddg` 16,272, `sitemap` 88,355), `review` 51,289
+(10.7%), `reject` 325,416 (67.6%). Discovery mode (no title for `sitemap` rows):
+`accept` 86,993 (18.1%), `review` 63,158 (13.1%), `reject` 331,181 (68.8%).
+`review` is the volume handed to `portfolio-nlp` T-132: about 51,000 pairs on the
+existing corpus (63,000 if the rule ran on bare URLs). The first draft had
+117,900 / 52,088 / 311,344. The `reject` class was 28 of 30 wrong, so "do not exclude"
+cost about 2 in 30 correct pairs with the first draft and 0 of 33 after the `&`
 and ordinary-word fixes (in-sample).
 
 **Corpus-wide effect of the last two changes** (`score_ticker_rules.py --diff`,
@@ -884,6 +896,13 @@ hit it. The 2-letter abbreviation list moves **1,239 rows from `accept` to
 in the title is `review`, judged downstream, never excluded. Entries without a
 labeled error (all but `PM`) are kept for that reason: the cost of a wrong entry
 is a `review` pair, not a hidden one.
+The alias map (`--diff`, "no alias map") moves **2,782 rows to `accept`**: `JPM`
+2,122 (`jpmorgan`), `BRK.B` 353 (`berkshire`), `PG` 196 (`P&G`, the only ones
+that were `reject`), `META` 89 (`facebook`), `GOOG` 12, `GOOGL` 9, `WMT` 1. The
+`KO` alias `coke` was removed (also a fuel and a steel input; a test locks it).
+`berkshire` is the least specific alias left; it is kept because 353 rows is
+small and `portfolio-nlp` sees the article body, and is revisited by the T-057
+fresh check.
 
 **Quarantine** means the pair stays in `urls.db`, is flagged with its class and
 reason, and is left out of the default `articles` selection that
@@ -910,9 +929,15 @@ met on out-of-sample evidence):** wrong-company rate among `accept` rows at most
 pairs labeled `yes` classed `accept` at least **90%** (discovery mode counted
 separately, where 16 of 17 pass); no `accept` row whose only evidence is an
 ordinary-word ticker, a stoplist first word or a raw substring (hermetic tests per
-connector). **Final check (T-057 dry run, before the real re-tag):** the maintainer
-hand-labels about 50 pairs newly classed `accept` by the implemented rule and
-50 `reject` ones, drawn after the rule is frozen; the targets must hold there.
+connector). **Final check (T-057 dry run, before the real re-tag), with a pass criterion:**
+the maintainer hand-labels **60 pairs newly classed `accept`** by the implemented
+rule (drawn after the rule is frozen, stratified by source like the corpus) and
+**40 `reject`** ones. Pass: at most **5 of the 60 `accept` pairs wrong** (observed
+8.3%; the 95% Wilson upper bound is then about 18%, so it supports the 15% target
+only with the earlier samples behind it, and 0-2 wrong is a clear pass) and at most
+**1 of the 40 `reject` pairs correct** (hidden-correct 2.5%). Fail: stop and return
+to T-055 with the new errors, as was done after the validation sample; the real
+re-tag does not run on a failed check.
 
 Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short

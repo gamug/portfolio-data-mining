@@ -198,3 +198,36 @@ def test_with_host_reproduces_the_old_leak_and_diff_counts_it(tmp_path: Path) ->
     moves, by_ticker = mod.class_diff(db, abbreviations=mod.BASELINE_ABBREVIATIONS)
     assert moves == {("accept", "review"): 1}
     assert "class changes vs x: 1 rows" in mod.render_diff("x", moves, by_ticker)
+
+
+@pytest.mark.parametrize(("ticker", "alias"), [(t, a) for t, al in mod.ALIASES.items() for a in al])
+def test_every_alias_accepts_a_title_that_names_it(ticker: str, alias: str) -> None:
+    row = _row(ticker, "Zzzz Holdings Corporation")  # the full name cannot match
+    assert mod.design_class(row, f"Big news about {alias.title()} today") == "accept"
+    assert mod.design_class(row, "Big news today", aliases={}) == "reject"
+
+
+def test_coke_is_not_a_coca_cola_alias() -> None:
+    row = _row("KO", "Coca-Cola Company (The)", "https://c/coke-prices-climb.html")
+    assert mod.design_class(row, "Coke prices climb for steelmakers") == "reject"
+
+
+def test_corpus_sizes_and_render(tmp_path: Path) -> None:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
+            " company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (1, 'https://c/a.html', 'Apple Inc. soars', 'Apple Inc.', 'AAPL', 'sitemap')"
+        )
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/b.html', 'Oil rises', 'Apple Inc.', 'AAPL', 'ddg')"
+        )
+    assert mod.corpus_sizes(db) == {("accept", "sitemap"): 1, ("reject", "ddg"): 1}
+    assert mod.corpus_sizes(db, discovery=True) == {("reject", "sitemap"): 1, ("reject", "ddg"): 1}
+    text = mod.render_sizes("x", mod.corpus_sizes(db))
+    assert "2 rows" in text
+    assert "accept " in text
