@@ -155,22 +155,39 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and the raw `ticker.lower() in url.lower()` shortcut the last four ran
       first is removed. Rewrite the base-class docstring postcondition
       ("ticker OR significant company name token is sufficient").
-      **Storage (additive, idempotent migration like the other `ALTER`
-      migrations, `SCHEMA_VERSION` handled as there):** `discovered_urls` gains
+      **Storage (additive, via the real mechanism in `data_mining/schema.py`):** add
+      the columns to `_DISCOVERY_DDL`, bump `SCHEMA_VERSION` 1 → 2, and add a step in
+      `run_migrations` that calls `db.ensure_columns("discovered_urls", {...})` (the
+      pattern of `_migrate_legacy_sector_column`; forward-only, idempotent), plus an
+      index `idx_match_class` on `discovered_urls(match_class)` (the fetcher and the
+      re-tag filter on it; cheap on 481k rows). A test upgrades an old-schema database
+      and leaves a current one untouched. `discovered_urls` gains
       `match_class TEXT NOT NULL DEFAULT 'accept'`, `match_reason TEXT` (which
       signal decided: `name`, `alias`, `explicit_ticker`, `upper_ticker`, `weak_ticker`,
       `weak_first_word`, `abbreviation`, `none`), and `query TEXT` (the `ddg` search
       query that returned the row; provenance only, it never changes the class).
       **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`)
       now call `classify_match` and keep `review` and `reject` rows with their
-      class instead of `continue`, so the quarantine exists for new crawls; the
-      fetcher/extractor fetches `accept` and `review` rows (a `review` pair needs
-      its body for `portfolio-nlp`'s decision) and skips `reject` rows.
+      class instead of `continue`, so the quarantine exists for new crawls. **Skipping
+      `reject` rows is by status:** a `reject` row is written with
+      `status = 'skipped'` (not the default `'pending'`), because the extractor
+      (`extractor/db.py` `get_urls_by_status` / `get_pending_urls`) and the queue
+      (`news_collector/storage/queue.py` `get_pending`, and the per-ticker counts that
+      filter `status='pending'`) select by `status` only; `accept` and `review` rows
+      stay `pending` (a `review` pair needs its body for `portfolio-nlp`'s decision).
+      A test proves a `reject` row is never returned by `get_pending_urls` or
+      `get_pending`, and that an `accept` row is.
       **Discovery vs fetch:** the class is computed at discovery from the URL (and
       the title for `ddg`), then **re-evaluated after the fetch** with the stored
       title; the rule is monotone (more text can only add evidence), so
-      re-evaluation can only promote (`review`→`accept`, `reject`→`review`), never
-      demote; a test locks that property. **`multi_company` is derived, not stored:**
+      re-evaluation can only promote, never demote, and a test locks that property.
+      It applies to **fetched** rows, i.e. `accept`/`review` ones (`review`→`accept`
+      when the title supplies the evidence). A `reject` row is never fetched, so a
+      `sitemap` `reject` row (no title at discovery) stays `reject` unless a feed
+      title was supplied with it (`entry.title` of an RSS entry). Accepted cost:
+      about 5,800 pairs that are `reject` at discovery but would be `review` or
+      `accept` with a title are never fetched; `hidden as reject` was 0.0% in
+      discovery mode on both labeled samples, and the T-057 check measures it again. **`multi_company` is derived, not stored:**
       a URL with two or more `accept` pairs is multi-company (108,313 of the 320,763
       stored URLs carry several tickers); the pair stays one row per `(url, ticker)`.
       Hermetic parametrized tests **per connector** for all three classes
@@ -189,17 +206,26 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       Proposed shape, to agree with that repo first: set the `articles` row of
       every `review`/`reject` pair to `fetch_status = 'quarantined'` (their query
       already filters on `'ok'`, so no change there is needed to stop reading it),
-      keeping the previous status and the class in `match_class`/`match_reason`/a
-      `prev_fetch_status` column so clearing the flag restores the row exactly; the
-      `accept` rows are untouched. The run also writes the list of
+      keeping the previous status in a new `articles.prev_fetch_status` column (the class
+      and reason stay on `discovered_urls` as `match_class`/`match_reason`, joined on
+      `id`) so clearing the flag restores the row exactly; the `accept` rows are
+      untouched, and `reject` rows that were never fetched have no `articles` row (their
+      `discovered_urls.status` is already `skipped`). The run also writes the list of
       removed `(url, ticker)` / article ids and the `review` quarantine list
       (class and triggering evidence), which T-058 hands over. Before the real
-      run, a fresh hand-labeled check (about 50 newly `accept`, 50 `reject`
-      pairs, drawn after the rule is frozen) must meet the T-055 targets. → step 4.
+      run, the fresh hand-labeled check must pass: **60 newly `accept` and 40
+      `reject` pairs**, drawn after the rule is frozen; pass = at most 5 of the 60
+      `accept` wrong and at most 1 of the 40 `reject` correct, otherwise back to T-055
+      (FR-014, `PLAN.md`). → step 4.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
-      (its `T-132` decides them; nothing is excluded on doubt there)
+      (its `T-132` decides them; nothing is excluded on doubt there). **One agreed
+      selection, cited by both repos:** `portfolio-nlp` T-132 reads
+      `SELECT a.id, d.ticker, d.company, d.match_reason FROM articles a JOIN
+      discovered_urls d ON d.id = a.id WHERE a.fetch_status = 'quarantined' AND
+      d.match_class = 'review'`, while its default pipeline query keeps
+      `fetch_status = 'ok'` (so `accept` rows only) and never sees `reject` ones
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
 - [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot

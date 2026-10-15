@@ -907,9 +907,13 @@ fresh check.
 **Discovery versus fetch.** The stored class is computed at discovery (URL, plus
 the title for `ddg`) and **re-evaluated after the fetch** with the stored title.
 The rule is monotone, since more text can only add evidence, so re-evaluation can
-only promote (`review`→`accept`, `reject`→`review`) and two code paths cannot
-disagree by demoting; this is why 63,158 discovery-time `review` pairs fall to
-51,289 once titles exist.
+only promote and two code paths cannot disagree by demoting. It applies to fetched
+(`accept`/`review`) rows: this is why 63,158 discovery-time `review` pairs fall to
+51,289 in the existing corpus, where every row was fetched. Going forward a
+`reject` row is written with `status = 'skipped'` and never fetched, so a `sitemap`
+`reject` row stays `reject` unless a feed title came with it; about 5,800 pairs
+that would improve with a title are therefore not fetched (accepted: 0.0% of
+correct pairs hidden in discovery mode on both samples, re-measured in T-057).
 
 **Quarantine** means the pair stays in `urls.db`, is flagged with its class and
 reason, and is left out of the default `articles` selection that
@@ -968,10 +972,12 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
    substring shortcut in `nasdaq`, `seeking_alpha`, `stocktwits` and
    `yahoo_finance` is removed, and the docstring postcondition that blesses
    "ticker OR first word" is rewritten. `discovered_urls` gains additive
-   `match_class`, `match_reason` and `query` columns (idempotent migration), the
+   `match_class`, `match_reason` and `query` columns (`SCHEMA_VERSION` 1 → 2, a
+   `run_migrations` step with `ensure_columns`, an index on `match_class`), the
    `ddg` and `sitemap` strategies keep `review`/`reject` rows with their class
-   instead of dropping them (so new crawls have the quarantine), and the
-   fetcher fetches `accept` and `review` rows only. The class is computed at
+   instead of dropping them (so new crawls have the quarantine), `reject` rows
+   are written `status = 'skipped'` so the fetcher and queue, which select by
+   `status`, never fetch them, and `accept`/`review` rows stay `pending`. The class is computed at
    discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
    with the stored title; the rule is monotone, so re-evaluation only promotes.
    `multi_company` is derived (a URL with 2+ `accept` pairs), not stored.
