@@ -18,7 +18,7 @@ list (slow; read-only).
 
 Usage:
     PYTHONPATH=src uv run python scripts/score_ticker_rules.py [--db PATH]
-        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names]
+        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names [--top N]]
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import csv
 import re
 import sys
 from collections import Counter, defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import closing
 from pathlib import Path
 
@@ -112,6 +112,19 @@ def design_class(row: Row, title: str, **overrides: object) -> str:
     ).cls
 
 
+def _iter_corpus(db_path: Path) -> Iterator[tuple[str, str, str, str, str]]:
+    """Read-only scan of every pair: ``(url, ticker, company, source, title)``.
+
+    ``title`` is the discovery title, else the fetched article's, else blank.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    with closing(connect(uri, uri=True)) as con:
+        yield from con.execute(
+            "SELECT d.url, d.ticker, d.company, d.source, COALESCE(NULLIF(d.title, ''), a.title, '')"
+            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
+        )
+
+
 def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, str]], Counter[str]]:
     """Scan the whole corpus: rows whose class changes when ``overrides`` are applied.
 
@@ -119,21 +132,15 @@ def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, s
     moved. ``overrides`` are ``design_class`` keywords for the *old* behaviour
     (``abbreviations=...``, ``with_host=True``); read-only.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
     moves: Counter[tuple[str, str]] = Counter()
     by_ticker: Counter[str] = Counter()
-    with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
-            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
-        )
-        for url, ticker, company, title in cur:
-            row = {"url": url, "ticker": ticker, "company": company}
-            old = design_class(row, title, **overrides)  # type: ignore[arg-type]
-            new = design_class(row, title)
-            if old != new:
-                moves[(old, new)] += 1
-                by_ticker[ticker] += 1
+    for url, ticker, company, _source, title in _iter_corpus(db_path):
+        row = {"url": url, "ticker": ticker, "company": company}
+        old = design_class(row, title, **overrides)  # type: ignore[arg-type]
+        new = design_class(row, title)
+        if old != new:
+            moves[(old, new)] += 1
+            by_ticker[ticker] += 1
     return moves, by_ticker
 
 
@@ -143,17 +150,11 @@ def corpus_sizes(db_path: Path, discovery: bool = False) -> Counter[tuple[str, s
     With ``discovery`` the title is blank for ``sitemap`` rows (discovery sees only
     their URL). Read-only.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
     sizes: Counter[tuple[str, str]] = Counter()
-    with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT d.url, d.ticker, d.company, d.source, COALESCE(NULLIF(d.title, ''), a.title, '')"
-            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
-        )
-        for url, ticker, company, source, title in cur:
-            row = {"url": url, "ticker": ticker, "company": company}
-            seen = "" if discovery and source == "sitemap" else title
-            sizes[(design_class(row, seen), source)] += 1
+    for url, ticker, company, source, title in _iter_corpus(db_path):
+        row = {"url": url, "ticker": ticker, "company": company}
+        seen = "" if discovery and source == "sitemap" else title
+        sizes[(design_class(row, seen), source)] += 1
     return sizes
 
 
@@ -163,27 +164,24 @@ def single_word_name_hits(db_path: Path) -> Counter[tuple[str, str]]:
     One-word names (Visa, Apple, Block) are the ones most likely to be ordinary
     words; the counts show which companies lean on that signal. Read-only.
     """
-    uri = f"file:{db_path.resolve()}?mode=ro"
     hits: Counter[tuple[str, str]] = Counter()
-    with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
-            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
-        )
-        for url, ticker, company, title in cur:
-            name = matching.full_name(company)
-            if " " in name:
-                continue
-            found = matching.classify(url, title, company, ticker)
-            if found.cls == "accept" and found.reason == "name":
-                hits[(ticker, name)] += 1
+    for url, ticker, company, _source, title in _iter_corpus(db_path):
+        name = matching.full_name(company)
+        if " " in name:
+            continue
+        found = matching.classify(url, title, company, ticker)
+        if found.cls == "accept" and found.reason == "name":
+            hits[(ticker, name)] += 1
     return hits
 
 
 def render_name_hits(hits: Counter[tuple[str, str]], top: int = 25) -> str:
     """Format ``single_word_name_hits`` output (largest first)."""
     total = sum(hits.values())
-    lines = [f"== accept on a one-word name alone: {total:,} rows, {len(hits)} companies =="]
+    lines = [
+        f"== re-tag mode (fetched title): accept on a one-word name alone, {total:,} rows,"
+        f" {len(hits)} companies; top {min(top, len(hits))} =="
+    ]
     lines += [f"  {t:6} {n:<14} {c:>8,}" for (t, n), c in hits.most_common(top)]
     return "\n".join(lines)
 
@@ -354,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="scan the whole corpus (slow) for rows accepted on a one-word company name alone",
     )
+    parser.add_argument("--top", type=int, default=25, help="companies listed by --names")
     args = parser.parse_args(argv)
     db = Path(args.db or resolve_db_path())
     sample = Path(args.sample)
@@ -371,7 +370,7 @@ def main(argv: list[str] | None = None) -> int:
         print(render_sizes("re-tag (fetched title)", corpus_sizes(db)))
         print(render_sizes("discovery (sitemap URL only)", corpus_sizes(db, discovery=True)))
     if args.names:
-        print(render_name_hits(single_word_name_hits(db)))
+        print(render_name_hits(single_word_name_hits(db), args.top))
     if args.diff:
         for label, kw in (
             ("matching the host (old)", {"with_host": True}),

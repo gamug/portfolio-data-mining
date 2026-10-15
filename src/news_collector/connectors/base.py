@@ -122,7 +122,8 @@ class BaseConnector(ABC):
           kept (a `review` pair has only weak evidence and is judged downstream, never
           excluded here)
         - A ticker never matches as a raw URL substring, and an ordinary-word ticker,
-          a generic first word or an abbreviation alone is never `accept`
+          a generic first word or an abbreviation alone is never `accept` (a cashtag
+          `$ON` is `review`; only an exchange form such as `NYSE: ON` is `accept`)
         - Only the URL path/query and the title are read, never the host
         """
 

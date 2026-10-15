@@ -10,7 +10,8 @@ the title, and returns one of three classes:
   for News Corp, never counts alone) or a hand-kept alias is in the path or title,
   or an explicit ticker form (``$X``, ``(NYSE: X)``, ``NASDAQ: X``), or the ticker
   as an upper-case token of 2+ letters in the title that is not an ordinary word
-  or a common abbreviation.
+  or a common abbreviation. A cashtag (``$X``) of an ordinary-word ticker or an
+  abbreviation is only ``review``; only an exchange form (``NYSE: X``) is ``accept``.
 - ``review``: only a weaker sign: a non-common ticker or a distinctive first word
   somewhere in the path or title, or an abbreviation-like 2-letter ticker in upper
   case in the title. Quarantined and decided downstream; never excluded.
@@ -18,7 +19,8 @@ the title, and returns one of three classes:
 
 The rule is monotone: more text can only add evidence, so classifying again with
 a longer title never lowers the class. A ticker never matches as a raw URL
-substring, and a lone ordinary-word ticker or generic first word is never enough.
+substring, and a lone ordinary-word ticker or generic first word is never enough
+(only an exchange form, ``NYSE: ON``, makes such a ticker ``accept``; a cashtag is ``review``).
 
 Design and evidence: ``.specify/memory/PLAN.md`` Work item 10 (T-055), reproduced
 by ``scripts/score_ticker_rules.py``.
@@ -116,18 +118,25 @@ def word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
     return re.search(pattern, text, flags) is not None
 
 
-def explicit_ticker(ticker: str, *texts: str) -> bool:
+_END = r"(?![A-Za-z0-9&-])"  # same right edge as `word`, plus no hyphen ("NYSE: A-list")
+
+
+def explicit_ticker(ticker: str, *texts: str, cashtag: bool = True) -> bool:
     """An explicit ticker form (``$X``, ``(NYSE: X)``, ``NASDAQ: X``) in any of ``texts``.
 
     The exchange is mandatory: a bare ``(X)`` is not explicit (``(A)``, ``(ON)``,
-    ``(PM)`` are list markers and abbreviations). ``$X`` is a deliberate cashtag
-    and is trusted even for ordinary-word tickers.
+    ``(PM)`` are list markers and abbreviations). ``cashtag=False`` leaves ``$X`` out;
+    `classify` does that for ordinary-word tickers and abbreviations, where ``$X``
+    is only `review` evidence.
     """
     t = re.escape(ticker)
-    pattern = re.compile(
-        rf"(\((?:NYSE American|NYSEARCA|NYSE|NASDAQ|Nasdaq)\s*:\s*{t}\)"
-        rf"|(?:NYSE|NASDAQ)\s*:\s*{t}\b|\${t}\b)"
-    )
+    forms = [
+        rf"\((?:NYSE American|NYSEARCA|NYSE|NASDAQ|Nasdaq)\s*:\s*{t}\)",
+        rf"(?:NYSE|NASDAQ)\s*:\s*{t}{_END}",
+    ]
+    if cashtag:
+        forms.append(rf"\${t}{_END}")
+    pattern = re.compile("|".join(forms))
     return any(pattern.search(text) for text in texts)
 
 
@@ -171,7 +180,7 @@ def _strong(
     found = _name_reason(company, ticker, text, aliases)
     if found:
         return Match("accept", found)
-    if explicit_ticker(ticker, title):
+    if explicit_ticker(ticker, title, cashtag=ticker not in common):
         return Match("accept", "explicit_ticker")
     if len(ticker) >= MIN_SHORT_TICKER and ticker not in common and word(ticker, title, 0):
         return Match("accept", "upper_ticker")
@@ -186,6 +195,8 @@ def _weak(
     abbreviations: frozenset[str],
     common: frozenset[str],
 ) -> Match | None:
+    if ticker in common and explicit_ticker(ticker, title):
+        return Match("review", "cashtag")
     if len(ticker) >= MIN_TICKER and ticker not in common and word(ticker, text):
         return Match("review", "weak_ticker")
     words = company.split(maxsplit=1)

@@ -182,15 +182,15 @@ def test_with_host_reproduces_the_old_leak_and_diff_counts_it(tmp_path: Path) ->
     db = tmp_path / "urls.db"
     with sqlite3.connect(db) as con:
         con.execute(
-            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT)"
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT, source TEXT)"
         )
         con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
         con.execute(
-            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ')",
+            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ', 'ddg')",
             (row["url"],),
         )
         con.execute(
-            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM')"
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM', 'ddg')"
         )
     moves, by_ticker = mod.class_diff(db, with_host=True)
     assert moves == {("accept", "reject"): 1}
@@ -252,4 +252,5 @@ def test_single_word_name_hits_counts_only_one_word_name_accepts(tmp_path: Path)
     assert hits == {("V", "visa"): 2}
     text = mod.render_name_hits(hits)
     assert "2 rows, 1 companies" in text
+    assert "re-tag mode" in text
     assert "visa" in text

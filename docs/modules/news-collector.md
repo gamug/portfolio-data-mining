@@ -25,7 +25,7 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   `accept` (the full normalized name or an alias, an explicit ticker form, or an upper-case non-word ticker
   in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
   `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
-  substring, the host is never matched, and an ordinary-word ticker, a generic first word or an abbreviation
+  substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
   alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
   only `reject` pairs are dropped at discovery. **Do not feed a discovery run made in that window to
   `portfolio-nlp`**: its `review` rows (about 63k) are stored unflagged and would enter the default

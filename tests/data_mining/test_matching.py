@@ -203,10 +203,31 @@ def test_the_rule_is_monotone_more_title_never_lowers_the_class() -> None:
         ("Fed (PM) says", "Philip Morris International", "PM", "review"),
         ("Agilent (NYSE: A) rises", "Agilent Technologies", "A", "accept"),
         ("Agilent (NYSE American: A) rises", "Agilent Technologies", "A", "accept"),
-        ("Rally in $ON today", "ON Semiconductor", "ON", "accept"),
+        ("Rally in $ON today", "ON Semiconductor", "ON", "review"),
     ],
 )
 def test_bare_parenthesised_ticker_is_not_explicit(
+    title: str, company: str, ticker: str, expected: str
+) -> None:
+    assert cls("https://x.com/news/story", title, company, ticker) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "company", "ticker", "expected"),
+    [
+        ("Meet the NYSE: A-list stocks", "Agilent Technologies", "A", "reject"),
+        ("Agilent (NYSE: A-list) rises", "Agilent Technologies", "A", "review"),
+        ("Shares of NYSE: A rise", "Agilent Technologies", "A", "accept"),
+        ("Apple (NASDAQ: AAPL).", "Zzz Corp", "AAPL", "accept"),
+        ("Calls on $TSLA, buyers", "Zzz Corp", "TSLA", "accept"),
+        ("Fed $PM", "Philip Morris International", "PM", "review"),
+        ("Rally in $ON today", "ON Semiconductor", "ON", "review"),
+        ("Rally in $A today", "Agilent Technologies", "A", "review"),
+        ("Price is $ALL in", "Allstate", "ALL", "review"),
+        ("Shares (NYSE: ON) rally", "ON Semiconductor", "ON", "accept"),
+    ],
+)
+def test_explicit_forms_edges_and_cashtags_of_common_tickers(
     title: str, company: str, ticker: str, expected: str
 ) -> None:
     assert cls("https://x.com/news/story", title, company, ticker) == expected

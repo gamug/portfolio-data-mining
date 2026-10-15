@@ -822,7 +822,8 @@ is put in one of three classes from those two texts
   `3M` included; `&` read as `and`; a name that is itself an ordinary word, such
   as `News` for News Corp, never counts alone) or a hand-kept alias (`Google`
   for Alphabet, `P&G`, `Facebook` for Meta) is in the URL or title, or an
-  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`), or the ticker as an
+  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`; for an ordinary-word ticker or an
+  abbreviation only the exchange forms, its `$X` is `review`), or the ticker as an
   upper-case token of 2+ letters in the title that is not an ordinary word or
   common abbreviation (`GM`, `MSFT`; never `A`, `ON`, `IT`, `PM`, `MS`). A bare
   ticker never counts against a lowercase URL slug and never as a raw substring.
@@ -882,8 +883,11 @@ title): `accept` 104,614 (21.7%; `ddg` 16,264, `sitemap` 88,350), `review` 51,29
 (Requiring an exchange in the parenthesised ticker form moved 13 rows, from `accept` to `review`/`reject`.)
 **Known limitation, measured** (`--names`): 59,956 `accept` rows (57% of re-tag `accept`) rest on a
 one-word company name alone, across 186 companies, led by Apple 9,890, Amazon 6,390, Microsoft 3,179,
-Nvidia 2,800 and Boeing 2,408. Most are distinctive brands; the ordinary-word ones (Apple, Oracle) are the
-dominant sense in finance news. A name like `visa-bulletin` for Visa is accepted wrongly. The rule is not
+Nvidia 2,800 and Boeing 2,408. Full list (`--names --top 186`, re-tag mode): the dictionary-word names (Apple 9,890,
+Oracle 741, Visa 509, Carnival 236, Booking 207, Waters 164, Ball 145, Mosaic 105, Progressive 87,
+Flex 81, Dover 67, Hartford 59, Coherent 46, Everest 38, Tapestry 19, Block 18) add up to about
+12,400 rows, 21% of those 59,956 (Apple alone is 80% of them); the rest are distinctive brands. Apple, Oracle and
+Visa are mostly the company in finance news, but a name like `visa-bulletin` for Visa is accepted wrongly. The rule is not
 changed without data; the T-057 fresh check decides.
 `review` is the volume handed to `portfolio-nlp` T-132: about 51,000 pairs on the
 existing corpus (63,000 if the rule ran on bare URLs). The first draft had
