@@ -319,6 +319,18 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
       (constitution AI behavior #12). → acceptance criteria.
 
+## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (T-061)
+
+Requested by `portfolio-financial-analysis` for its `T-100` (full-universe run; raised by `T-153`
+parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private local file."
+
+- [ ] **T-061** Build `src/data_mining/leaver_prices.py` and the `cli/pricing_cli.py
+      leaver-prices` subcommand (like `universe-gics`); port `portfolio-financial-analysis`'s
+      rule-based NYSE calendar into `src/data_mining/nyse_calendar.py`; add the `TIINGO_API_KEY`
+      note to `.env.example`; amend the constitution (Technological stock #8, 1.8.0) and `SPEC.md`
+      FR-015/§2.1/§11/§12; run the fetch into `/workspaces/thesis/data/private/tiingo/`; delete
+      `/tmp/tiingo_feasibility/` once the file passes §4. → `PLAN.md` Work item 11.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7 and 9 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -331,6 +343,9 @@ Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is ope
 Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open;
 `portfolio-nlp` waits on it before starting its own category-stage development.
 
+Work item 11 (`T-061`, Tiingo prices for the 33 leaver lines, requested by
+`portfolio-financial-analysis`) is open and active; it is an independent, one-off data fetch.
+
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
-CI is wanted again. No other work item is open.
+CI is wanted again.
