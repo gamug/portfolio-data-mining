@@ -500,13 +500,14 @@ treating a related FR/NR as done:
     substring shortcut accepts only 823 *stored* rows (all `ddg`, because the
     sitemap strategy has only run for `cnbc`; its reach on a sitemap run of the
     other connectors is unmeasured). `T-054` then
-    measured the error rates on a labeled sample (`data/ticker_tagging_sample.csv`;
-    hand labels pending): about 72% of tagged pairs are wrong overall,
-    96% for ticker-only matches and 52% for name-token-only matches.
+    measured the error rates on a hand-labeled sample
+    (`data/ticker_tagging_sample.csv`): about 70% of tagged pairs are wrong
+    overall, 94% for ticker-only matches and 52% for name-token-only matches;
+    `ddg` rows are wrong 7%, `sitemap` rows 73%.
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**
     (unlike the accepted items above, and unlike §14's permanent boundaries):
-    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-059 (requested by
+    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-060 (requested by
     `portfolio-nlp` T-128), with the requirement in FR-014.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)

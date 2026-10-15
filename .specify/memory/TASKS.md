@@ -76,7 +76,8 @@ unrelated articles. → `PLAN.md` Work item 10, `SPEC.md` §13 item 10 and FR-01
 Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` already
 cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
-after the fact; IDs are never reused, so they stay reserved.
+after the fact; IDs are never reused, so they stay reserved. `T-060` (content-quality
+gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite it.
 
 - [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
@@ -90,7 +91,7 @@ after the fact; IDs are never reused, so they stay reserved.
       `(ticker, company, domain, source)` cells, so the word-ticker and
       generic-word tables are split per connector/source); results in
       `PLAN.md` Work item 10.
-- [ ] **T-054** Measure each failure mode's real error rate. Build **one**
+- [x] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker
       substring shortcut / name-token-only / both) and including
@@ -103,14 +104,14 @@ after the fact; IDs are never reused, so they stay reserved.
       `url`, `ticker`, `company`, `match_mode`, `label`, `labeled_by`
       (`hand`/`assistant`) and the assistant's `assistant_label`. Report; the
       rule is chosen from this, not assumed. → step 1.
-      Built: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
-      (263 pairs, first-pass labels by an AI assistant; results in `PLAN.md`
-      Work item 10) and `data/ticker_tagging_manual.csv`, a blank sheet with
-      title and body excerpt for the maintainer to label. **Open:** fill the
-      `label` column of the sheet (`yes`/`no`/`unclear`; all 263, or as many as
-      you want, starting from the top), run `manual-apply`, which merges the
-      hand labels (`labeled_by = hand`) and prints the agreement with the
-      assistant, then re-run `report`. `T-055` waits for this.
+      Done: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
+      (263 pairs, all hand-labeled by the maintainer; an assistant's first pass
+      agreed on 91%) and `data/ticker_tagging_manual.csv` (the labeling sheet);
+      results, prototype rules and the duplicate/quality analysis are in
+      `PLAN.md` Work item 10. Two hand labels are still queued for the
+      maintainer to confirm (`MGM` id 317362 and `DE` id 180987, whose notes
+      read as `yes`); a flip changes known-correct retention from 17/20 to 19/20
+      only. Re-run `manual-apply` and `report` after any edit to the sheet.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
@@ -154,6 +155,21 @@ after the fact; IDs are never reused, so they stay reserved.
       and `sector_summary` — its T-131)
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
+- [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot
+      challenge or empty body can never reach `portfolio-nlp`. Today the only
+      protection is the extractor's length check (`thin_content`) plus
+      `fetch_status`; checked 2026-10-15 every wall seen in the labeling sheet
+      is already `failed`/`thin_content` and `nlp.db` holds only `ok` rows, but a
+      wall long enough to pass the length check would be marked `ok`. Add a
+      detector for known wall/challenge/paywall phrases at extraction (e.g.
+      "Security Verification", "Just a moment", "unusual traffic", sign-in and
+      subscribe prompts) that leaves such rows non-`ok`, a rerunnable read-only
+      audit of `ok` rows per domain (phrases, word-count floor, duplicate
+      bodies), and tests on real excerpts including the false positives found
+      (CNBC articles that contain "just a moment" or "CAPTCHA" in normal prose).
+      Separately report the duplicate-processing finding (302,512 distinct
+      bodies among 459,112 `ok` rows) so `T-055`/`T-056` can decide to attribute
+      each URL once. → quality of what step 4 hands over.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
@@ -168,7 +184,7 @@ Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 10 (`T-053`–`T-059`, wrong-company tagging, requested by `portfolio-nlp`) is open;
+Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open;
 `portfolio-nlp` waits on it before starting its own category-stage development.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
