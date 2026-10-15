@@ -810,102 +810,96 @@ tagged company; that is a small-sample estimate, not a measurement.
      is about, from the full normalized name, explicit ticker forms, and the
      title/body when fetched, instead of testing every company against every
      URL. This is where ~96% of the corpus and ~all the wrong tags are.
-   **Design v1 proposed 2026-10-15 (T-055, awaiting approval; nothing is coded).**
-Discovery can only see the URL and, for `ddg` rows, the title, so each
-`(url, ticker)` pair is put in one of three classes from those two texts
-(`scripts/score_ticker_rules.py`, function `design_class`, reproduces every
-figure below):
+   **Design v1, approved 2026-10-15 by the maintainer ("take care not to
+exclude correct pairs") and revised the same day after the validation sample
+(T-055; nothing is coded).** Discovery can only see the URL and, for `ddg`
+rows, the title (the 462k `cnbc` sitemap rows have no title at discovery; a
+title exists only after the article is fetched), so each `(url, ticker)` pair
+is put in one of three classes from those two texts
+(`scripts/score_ticker_rules.py`, function `design_class`):
 
 - **accept**: the full normalized company name (digit-bearing names such as
-  `3M` included) is in the URL or title, or an explicit ticker form (`$X`,
-  `(NYSE: X)`, `NASDAQ: X`), or the ticker as an upper-case token of 2+ letters
-  in the title that is not an ordinary word (`GM`, `PG`, `MSFT`; never `A`,
-  `ON`, `IT`, `ARE`, `NOW`). A bare ticker never counts against a lowercase
-  URL slug and never as a raw substring.
-- **review**: only a weaker sign (a non-word ticker or a distinctive first word
-  somewhere in the URL/title; a first word on the stoplist does not count).
+  `3M` included; `&` read as `and`; a name that is itself an ordinary word, such
+  as `News` for News Corp, never counts alone) or a hand-kept alias (`Google`
+  for Alphabet, `P&G`, `Facebook` for Meta) is in the URL or title, or an
+  explicit ticker form (`$X`, `(NYSE: X)`, `NASDAQ: X`), or the ticker as an
+  upper-case token of 2+ letters in the title that is not an ordinary word or
+  common abbreviation (`GM`, `MSFT`; never `A`, `ON`, `IT`, `PM`, `MS`). A bare
+  ticker never counts against a lowercase URL slug and never as a raw substring.
+- **review**: only a weaker sign (a non-common ticker or a distinctive first
+  word somewhere in the URL/title; a stoplist first word does not count).
 - **reject**: nothing else.
 
-Population-weighted on the 243 stratified hand labels (known-correct rows
-excluded): `accept` is 28.7% of the corpus and wrong 10.9% of the time,
-`review` 12.0% and wrong 64.4%, `reject` 59.2% and wrong ~100%. Together
-`accept` and `review` keep 99.9% of the correct pairs (169 of 172 raw), `accept`
-alone 85.6%; all 17 known-correct pairs labeled `yes` are `accept`. Today
-70% of tagged pairs are wrong; design v1 leaves 10.9% wrong in what
-`portfolio-nlp` reads by default. By path the raw counts are `ddg` accept
-126 correct / 2 wrong, review 11 / 0, and `sitemap` accept 28 / 3, review
-4 / 5, reject 0 / 23. **Caveat: the thresholds and the common-word list were
-chosen after reading the errors on this same sample (in-sample), the
-sitemap strata are 8-15 rows each, and the intervals are wide; the targets
-below leave a margin and are re-measured on a fresh sample (below).**
+**Out-of-sample result first (validation sample, 100 pairs not used to design
+the rule, strata `(class, source)` as in `data/ticker_validation_sample.csv` /
+`data/ticker_validation_manual.csv`, hand-labeled 2026-10-15; `ticker_tagging_sample.py report --sample
+data/ticker_validation_sample.csv`).** Design v1 as first written did **not**
+meet its draft 15% target: `accept` was **20.7%** wrong (6/40 raw; 5 were `News
+Corp`, 1 was `PM`), `review` 45% (`ddg` 5/10 wrong: `ICE`, `CNP`, `GEN`, `BRO`)
+and `reject` 99.9% wrong (28 of 30; the two correct ones were `S&P Global` and
+`Flavors & Fragrances`, whose URLs spell "&" as "and"). Four changes follow
+from it: a normalized name that is an ordinary word never counts alone; the
+2-letter common-abbreviation list grows (`PM`, `MS`, `MA`, `ED`, `EL`, `IP`,
+`CI`, `HD`, `PH`, `NI`, `DD`); `&` is read as `and`; the proposed `ddg`
+promotion of `review` to `accept` is **withdrawn** (5 of 10 `ddg` review rows
+were wrong, against 11 of 11 in the first sample, so it is not reliable).
+Aliases are part of the rule and tested; no new dependency.
 
-**Approved 2026-10-15 (maintainer), with one instruction: take care not to
-exclude correct pairs.** Consequences kept in the design: nothing is deleted
-(`reject` is quarantined with a reason, reversible); doubtful pairs go to
-`review`, not `reject`; `portfolio-nlp` keeps any pair it cannot decide
-(`undecided`, its `T-132`); and the fresh sample below contains 30 `reject`
-pairs on purpose, to measure how many correct pairs the rule would hide.
-**Quarantine** means the pair stays in `urls.db`, is flagged with its class
-and reason, and is left out of the default `articles` selection that
-`portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing
-it is clearing the flag. Exact class sizes over the whole corpus
-(`scripts/ticker_validation_sample.py`): `accept` 117,900 rows (24.5%), `review`
-52,088 (10.8%), `reject` 311,344 (64.7%); the sample-weighted estimates above
-(28.7% / 12.0% / 59.2%) are close.
+**Re-scored after the changes: both samples are now in-sample** (the rule was
+tuned on the first sample's errors and then on the validation sample's), so the
+figures below are optimistic and are not the acceptance evidence; the
+acceptance evidence is the fresh check in T-057 (below). Reproduce with
+`PYTHONPATH=src python scripts/score_ticker_rules.py --sample <csv>`; the
+class shares are weighted by the drawn strata:
 
-**Validation results (100 fresh pairs, hand-labeled by the maintainer
-2026-10-15; the rule was not tuned on them): design v1 does NOT meet its draft
-15% target.** Weighted wrong rate by class: `accept` **20.7%** (6/40 raw; `sitemap`
-6/25, `ddg` 0/15), `review` 45% (`ddg` 5/10 wrong, `sitemap` 9/20), `reject`
-99.9% (28 of 30 wrong, 2 correct pairs would be hidden). The failures are
-specific and fixable: five `accept` errors are `News Corp` (its normalized
-name is the ordinary word `news`, matching "bad news", "news conference"), one is
-`PM` (an upper-case 2-letter ticker that is also a common word, "Egypt PM says");
-the two hidden correct pairs are `S&P Global` and `Flavors & Fragrances` (the URL
-spells "&" as "and"); and `ddg` `review` rows are **not** reliably correct (5 of
-10 wrong: `ICE`, `CNP`, `GEN`, `BRO`), so the proposed `ddg` promotion to `accept`
-is withdrawn. Fixes for the next round: a normalized name that is a stoplist or
-common word never counts alone, a longer common-word list for 2-letter tickers,
-`&` read as `and`, no `ddg` promotion; then re-score. The validation sample was
-drawn before these fixes, so after them it is in-sample again, and a last small
-unbiased check (about 50 newly accepted pairs, in the T-057 dry run) is required.
+| sample, mode | `accept` share / wrong | `review` share / wrong | `reject` share / wrong | correct pairs hidden as `reject` |
+|---|---|---|---|---|
+| first (243 + 20), re-tag (fetched title) | 28.8% / 10.9% | 12.1% / 64.4% | 59.2% / 100% | 0.0% |
+| first, **discovery** (sitemap URL only) | 25.3% / 12.3% | 15.5% / 50.2% | 59.2% / 100% | 0.0% |
+| validation (100), re-tag | 20.2% / 0.0% | 10.1% / 48.5% | 69.7% / 100% | 0.0% |
+| validation, **discovery** | 14.3% / 0.0% | 16.0% / 30.6% | 69.7% / 100% | 0.0% |
 
-**Validation sample (labeled):** `data/ticker_validation_sample.csv`, 100
-new pairs not in the first sample, strata `(class, source)` with their
-population sizes (`accept` sitemap 25 / ddg 15, `review` 20 / 10, `reject`
-15 / 15), labeled by the maintainer with the same sheet workflow
-(`ticker_tagging_sample.py manual-export` / `manual-apply` / `report` work on it
-unchanged; the class is not shown on the sheet and the order is shuffled).
-Results replace the in-sample figures and fix the final targets.
+Raw cells (correct / wrong), first sample re-tag: `ddg` accept 125/1, review 12/0,
+reject 1/58; `sitemap` accept 13/1, review 4/5, reject 0/23. Validation re-tag:
+`ddg` accept 18/0, review 4/5, reject 0/13; `sitemap` accept 21/0, review 9/9,
+reject 0/21. Today 70% of tagged pairs are wrong. **At discovery the `accept`
+share of `sitemap` rows drops (their titles are unknown) and the difference moves
+to `review`, not to `reject`**, which is the cost the maintainer asked us to take
+instead of excluding. Exact class sizes over the corpus with the first draft of the
+rule (`scripts/ticker_validation_sample.py`): `accept` 117,900 (24.5%), `review`
+52,088 (10.8%), `reject` 311,344 (64.7%); the re-run for the revised rule is part of
+`T-056`'s dry run. The `reject` class was 28 of 30 wrong, so "do not exclude"
+cost about 2 in 30 correct pairs with the first draft and 0 of 34 after the `&`
+and ordinary-word fixes (in-sample).
 
-What happens to each class (the cross-repo shape is agreed in `T-058`
-before the re-tag runs): `accept` rows stay as they are; `review` rows are
-**quarantined** (kept in `urls.db`, flagged, not selected by the default
-`portfolio-nlp` query) and sent to its body/NER judge, which decides; `reject`
-rows are quarantined with a reason so the re-tag is reversible, not deleted.
-For `ddg`, the company-name query is already evidence (`ddg` review rows are
-11 of 11 correct in the sample), so a `ddg` row found by the company-name
-query and classed `review` is promoted to `accept`; this needs the new
-`query` column (T-056) and cannot be applied retroactively to stored rows,
-whose query is unknown, so stored `ddg` review rows stay `review`. For
-`sitemap` the pair is decided once per article across all companies; a URL
-accepted for several companies is legitimate (roundups) and marked
-`multi_company`. A small hand-kept alias list (for example `Google` for
-Alphabet, `P&G` for Procter & Gamble, `Facebook` for Meta) is part of the
-rule and tested; no new dependency.
+**Quarantine** means the pair stays in `urls.db`, is flagged with its class and
+reason, and is left out of the default `articles` selection that
+`portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing it
+is clearing the flag. Nothing is deleted; `reject` is quarantined with a reason,
+`review` is quarantined and decided by `portfolio-nlp` (its `T-132`, which keeps
+any pair it cannot decide).
 
-**Targets proposed (to be written into FR-014 on approval)**, on the shared
-labeled sample (`scripts/score_ticker_rules.py`) and re-checked on a fresh
-out-of-sample set of about 100 hand-labeled pairs drawn after T-056 from the
-accept and review classes:
+What happens to each class (the cross-repo shape is agreed in `T-058` before the
+re-tag runs): `accept` rows stay as they are; `review` rows are quarantined and
+sent to the body/NER judge; `reject` rows are quarantined with a reason, so the
+re-tag is reversible. For `ddg`, record the query that found each row (a new
+additive column, `T-056`) as provenance for later analysis only; it does not
+change a row's class. For `sitemap`, the same article is stored once per ticker
+that discovered it (212,450 URLs carry one ticker and 108,313 carry two or more,
+up to 8), and the class is evaluated per pair. Deciding each article once across
+all companies, and marking a URL accepted for several companies `multi_company`
+(roundups are legitimate), is a `T-056` design question, not part of what was
+measured here.
 
-- wrong-company rate among `accept` rows at most **15%** (today 70%; design v1
-  measures 10.9% in-sample);
-- correct pairs kept as `accept` or `review` at least **95%** (measured 99.9%);
-- known-correct pairs labeled `yes` classed `accept` at least **90%** (measured
-  17 of 17);
-- no `accept` row whose only evidence is an ordinary-word ticker, a stoplist
-  first word or a raw substring (hermetic tests per connector).
+**Targets (to be written into FR-014 only after the fresh check passes; not yet
+met on out-of-sample evidence):** wrong-company rate among `accept` rows at most
+**15%**; correct pairs kept as `accept` or `review` at least **95%**; known-correct
+pairs labeled `yes` classed `accept` at least **90%** (discovery mode counted
+separately, where 16 of 17 pass); no `accept` row whose only evidence is an
+ordinary-word ticker, a stoplist first word or a raw substring (hermetic tests per
+connector). **Final check (T-057 dry run, before the real re-tag):** the maintainer
+hand-labels about 50 pairs newly classed `accept` by the implemented rule and
+50 `reject` ones, drawn after the rule is frozen; the targets must hold there.
 
 Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short

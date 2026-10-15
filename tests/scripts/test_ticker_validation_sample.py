@@ -30,6 +30,15 @@ def _db(tmp_path: Path) -> Path:
         rows.append(
             (f"https://cnbc.com/x/a-{i}-in-a-month.html", "Agilent Technologies", "A", "sitemap")
         )
+    for i in range(12):  # review (ddg): a non-word ticker in the slug only
+        rows.append(
+            (
+                f"https://finance.yahoo.com/news/cnp-update-{i}.html",
+                "CenterPoint Energy",
+                "CNP",
+                "ddg",
+            )
+        )
     with sqlite3.connect(db) as con:
         con.execute(
             "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
@@ -51,7 +60,8 @@ def test_draw_strata_exclusion_and_determinism(tmp_path: Path) -> None:
     assert first == mod.draw(db, exclude={"1", "2"}, seed=3)
     assert not {"1", "2"} & {str(r["id"]) for r in first}
     by = {r["stratum"]: r for r in first}
-    assert set(by) == {"accept/sitemap", "reject/sitemap"}  # empty strata are skipped
+    assert set(by) == {"accept/sitemap", "reject/sitemap", "review/ddg"}  # empty strata skipped
+    assert sum(r["stratum"] == "review/ddg" for r in first) == 10
     assert by["accept/sitemap"]["stratum_size"] == 30
     assert sum(r["stratum"] == "accept/sitemap" for r in first) == 25
     assert all(r["label"] == "" for r in first)

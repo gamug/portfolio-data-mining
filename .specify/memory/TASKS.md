@@ -127,16 +127,17 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`
       FR-014 and the `PLAN.md` acceptance criteria before any code is written.
-      **Validation labeled 2026-10-15: v1 fails the 15% target (accept 20.7% wrong; see
-      `PLAN.md`); rule fixes pending.** **Design approved 2026-10-15 (maintainer; "take care not to exclude"); targets
-      confirmed after the validation sample is labeled (`data/ticker_validation_sample.csv`,
-      100 fresh pairs, `scripts/ticker_validation_sample.py`):** three-class rule
-      `accept`/`review`/`reject` from URL+title, quarantine for `review` and
-      `reject`, `ddg` query provenance, once-per-article attribution for
-      `sitemap`; targets: wrong rate among `accept` at most 15%, correct pairs
-      kept at least 95%, known-correct `accept` at least 90%, plus a fresh
-      ~100-pair hand-labeled check after T-056. All figures in `PLAN.md` Work
-      item 10 reproduce with `scripts/score_ticker_rules.py`. → step 2.
+      **Design approved 2026-10-15 (maintainer: "take care not to exclude").**
+      Validation sample (`data/ticker_validation_sample.csv`, 100 fresh pairs,
+      labeled by the maintainer) showed the first draft missing its 15% target
+      (`accept` 20.7% wrong); fixed (ordinary-word names, `&`/`and`, abbreviation
+      list, aliases; `ddg` promotion withdrawn) and re-scored in-sample. Targets
+      (to be written into FR-014 after the fresh check): wrong rate among `accept`
+      at most 15%, correct pairs kept at least 95%, known-correct `accept` at
+      least 90%; a ~100-pair fresh hand-labeled check on the implemented rule
+      belongs to T-057's dry run. All figures reproduce with
+      `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
+      details in `PLAN.md` Work item 10. → step 2.
 - [ ] **T-056** Implement the rule once, in a shared `BaseConnector` helper
       (built on `_company_pattern`) that **all seven** connectors that match
       companies delegate to — `cnbc`, `ft`, `investing`, `nasdaq`,
@@ -160,7 +161,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude —
       agree the shape with that repo first. The run also writes the list of
       removed `(url, ticker)` / article ids and the `review` quarantine list
-      (class and triggering evidence), which T-058 hands over. → step 4.
+      (class and triggering evidence), which T-058 hands over. Before the real
+      run, a fresh hand-labeled check (about 50 newly `accept`, 50 `reject`
+      pairs, drawn after the rule is frozen) must meet the T-055 targets. → step 4.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs

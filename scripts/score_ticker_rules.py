@@ -55,8 +55,22 @@ COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
         *("AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN", "IS", "ME", "MY"),
         *("NO", "OF", "OR", "SO", "TO", "UP", "US", "WE", "I", "CAN", "FOR", "ONE", "OUT"),
         *("NEW", "BIG", "FAST", "KEY", "APP", "FIX"),
+        # Upper-case abbreviations of something else in a headline ("Egypt PM says").
+        *("PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"),
     }
 )
+# Names a company is also known by, matched like the full name (hand-kept, tested).
+ALIASES: dict[str, tuple[str, ...]] = {
+    "GOOGL": ("google",),
+    "GOOG": ("google",),
+    "PG": ("p and g",),
+    "META": ("facebook",),
+    "BRK.B": ("berkshire",),
+    "BRK.A": ("berkshire",),
+    "JPM": ("jpmorgan",),
+    "WMT": ("wal mart",),
+    "KO": ("coke",),
+}
 MIN_SHORT_TICKER = 2
 
 Row = dict[str, str]
@@ -64,13 +78,26 @@ Rule = Callable[[Row, str, str], bool]
 
 
 def _flat(text: str) -> str:
-    return " " + " ".join(re.sub(r"[^a-z0-9&]+", " ", text.lower()).split()) + " "
+    """Lower-case words of ``text``; ``&`` is read as ``and`` (URLs spell it out)."""
+    return (
+        " " + " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower().replace("&", " and ")).split()) + " "
+    )
+
+
+def _full_name(row: Row) -> str:
+    return normalized_name(row["company"].replace("&", " and "))
 
 
 def _name_in(row: Row, text: str) -> bool:
-    name = normalized_name(row["company"])
-    distinctive = len(name) >= MIN_NAME or any(c.isdigit() for c in name)  # "3M"
-    return distinctive and f" {name} " in _flat(text)
+    """Full normalized name (or an alias) in ``text``; an ordinary word alone never counts."""
+    name = _full_name(row)
+    distinctive = (len(name) >= MIN_NAME or any(c.isdigit() for c in name)) and (
+        name not in STOPWORDS
+    )  # "3M" yes; "News" (News Corp) no
+    flat = _flat(text)
+    names = [name] if distinctive else []
+    names += [a for a in ALIASES.get(row["ticker"], ())]
+    return any(f" {n} " in flat for n in names)
 
 
 def _explicit(ticker: str, title: str, body: str) -> bool:
@@ -83,7 +110,7 @@ def _explicit(ticker: str, title: str, body: str) -> bool:
 
 
 def _name_count(row: Row, body: str) -> int:
-    name = normalized_name(row["company"])
+    name = _full_name(row)
     return _flat(body[:BODY_CHARS]).count(f" {name} ") if len(name) >= MIN_NAME else 0
 
 
@@ -154,40 +181,52 @@ def design_class(row: Row, title: str) -> str:
     return "review" if weak else "reject"
 
 
-def design_report(data: list[tuple[Row, str, str, str]]) -> str:
+def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
     """Population-weighted shares and wrong rates of the three design classes.
 
     Uses ``stratum_size`` from the sample (known-correct candidates excluded), so
-    the figures estimate the whole corpus, not the sample mix.
+    the figures estimate the whole corpus, not the sample mix. Rows are
+    post-stratified: the weight is the *drawn* stratum's size over its sample
+    count, whatever class today's rule gives the row. With ``discovery`` the
+    title is blank for ``sitemap`` rows (discovery sees only their URL, the
+    stored title comes from the later fetch); ``ddg`` rows keep their title.
     """
-    strata: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    strata: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     size: dict[str, int] = {}
     known: list[tuple[str, str]] = []
     for row, _status, title, _body in data:
-        pair = (design_class(row, title), row["label"])
+        seen = "" if discovery and row["source"] == "sitemap" else title
+        pair = (design_class(row, seen), row["label"])
         if row["stratum"] == "known_correct_candidate":
             known.append(pair)
             continue
-        strata[row["stratum"]].append(pair)
+        strata[row["stratum"]].append((*pair, row["source"]))
         size[row["stratum"]] = int(row["stratum_size"])
     weight: dict[tuple[str, str], float] = defaultdict(float)
+    raw: dict[tuple[str, str, str], int] = defaultdict(int)
     for name, pairs in strata.items():
-        for pair in pairs:
-            weight[pair] += size[name] / len(pairs)
+        for cls, label, source in pairs:
+            weight[(cls, label)] += size[name] / len(pairs)
+            raw[(cls, source, label)] += 1
     total = sum(weight.values())
     yes_total = sum(w for (_k, lab), w in weight.items() if lab == "yes")
-    lines = ["== design v1 (URL/title only), population-weighted =="]
+    mode = "discovery (sitemap URL only)" if discovery else "re-tag (fetched title)"
+    lines = [f"== design v1, {mode}, population-weighted =="]
     for cls in ("accept", "review", "reject"):
         yes, no = weight[(cls, "yes")], weight[(cls, "no")]
+        per = ", ".join(
+            f"{src} {raw[(cls, src, 'yes')]}ok/{raw[(cls, src, 'no')]}wrong"
+            for src in ("ddg", "sitemap")
+        )
         lines.append(
             f"{cls:8} share {(yes + no) / total:6.1%}  wrong in class "
-            f"{no / (yes + no) if yes + no else 0:6.1%}  (raw n "
-            f"{sum(1 for pairs in strata.values() for p in pairs if p[0] == cls)})"
+            f"{no / (yes + no) if yes + no else 0:6.1%}  raw: {per}"
         )
     kept_yes = weight[("accept", "yes")] + weight[("review", "yes")]
     lines.append(
         f"correct pairs kept (accept+review): {kept_yes / yes_total:.1%}; "
-        f"accept only: {weight[('accept', 'yes')] / yes_total:.1%}"
+        f"accept only: {weight[('accept', 'yes')] / yes_total:.1%}; "
+        f"hidden as reject: {weight[('reject', 'yes')] / yes_total:.1%}"
     )
     yes_known = [c for c, lab in known if lab == "yes"]
     lines.append(
@@ -286,6 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"rows scored: {len(data)}; excluded (unclear or unlabeled): {unclear}\n")
     print(render(data))
     print(design_report(data))
+    print(design_report(data, discovery=True))
     return 0
 
 

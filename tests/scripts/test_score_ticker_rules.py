@@ -122,6 +122,46 @@ def _row(ticker: str, company: str, url: str = "https://x/a.html") -> dict[str, 
             "review",
         ),  # first word only
         (_row("AAPL", "Apple Inc."), "Stocks (NASDAQ: AAPL) rise", "accept"),  # explicit form
+        # real failures found on the validation sample (T-055)
+        (
+            _row("NWSA", "News Corp (Class A)", "https://c/bad-news-driving-the-euro.html"),
+            "Bad News",
+            "reject",
+        ),
+        (
+            _row("PM", "Philip Morris International"),
+            "UPDATE 2-Egypt PM says IMF talks resume",
+            "reject",
+        ),
+        (
+            _row("SPGI", "S&P Global", "https://s/s-and-p-global-inc-2022-q1-results"),
+            "S&P Global Inc. 2022 Q1",
+            "accept",
+        ),
+        (
+            _row(
+                "IFF",
+                "International Flavors & Fragrances",
+                "https://s/international-flavors-and-fragrances-inc-2024",
+            ),
+            "x",
+            "accept",
+        ),
+        (
+            _row("PG", "Procter & Gamble"),
+            "Activist firm Trian cuts holdings in P&G, Mondelez",
+            "accept",
+        ),  # alias
+        (
+            _row("GOOGL", "Alphabet Inc. (Class A)"),
+            "Is Google's Prize Acquisition Cause For Alarm?",
+            "accept",
+        ),  # alias
+        (
+            _row("ICE", "Intercontinental Exchange", "https://c/immigrants-ice-report.html"),
+            "Immigrants convicted",
+            "review",
+        ),  # a word-like ticker only: judged downstream
     ],
 )
 def test_design_class(row: dict[str, str], title: str, expected: str) -> None:

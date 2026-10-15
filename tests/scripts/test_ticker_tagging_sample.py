@@ -241,3 +241,14 @@ def test_manual_apply_partial_sheet_and_relabel(tmp_path: Path) -> None:
 
 def test_default_export_path_is_not_the_committed_sheet() -> None:
     assert mod.DEFAULT_EXPORT != mod.DEFAULT_MANUAL
+
+
+def test_manual_apply_without_assistant_labels(tmp_path: Path) -> None:
+    sample = tmp_path / "s.csv"
+    _write(sample, [("d/s/both", "both", 10, "")])
+    sheet = tmp_path / "m.csv"
+    _sheet(sheet, [("0", "yes")])
+    text = mod.manual_apply(sample, sheet)
+    assert "applied 1 hand labels" in text
+    assert "no assistant labels to compare with" in text
+    assert "0%" not in text
