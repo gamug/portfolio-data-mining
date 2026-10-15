@@ -198,9 +198,12 @@ PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
 
 `--apply` refuses to run without a backup path (written through the SQLite backup API, integrity-checked, never
 overwriting a file) and the explicit `--hand-check-passed`; it migrates, re-tags in one transaction, quarantines in
-a second, and a re-run changes nothing. Outputs: `removed_articles.csv` (fetched `reject` pairs, T-131's list),
-`review_quarantine.csv` (T-132's selection with the evidence), both with `match_class` and `match_reason`
-columns, and `retag_summary.json`; `data/retag/` is git-ignored (regenerated, hundreds of thousands of rows).
+a second, then compares the database with the plan (class counts, quarantined counts per class, no `accept`
+article quarantined, nothing non-`accept` readable or pending) and exits 1 without writing the lists on a mismatch
+(summary `verified: false`); a re-run changes nothing. Outputs: `removed_articles.csv` (fetched `reject` pairs, T-131's list),
+`review_quarantine.csv` (T-132's selection with the evidence), both with `match_class`, `match_reason` and `prev_fetch_status`
+columns (`ok` = a readable body; `failed`/`thin_content` articles cannot be judged by `portfolio-nlp` T-132, so T-058 reports the
+decidable share; `retag_summary.json` has the counts per previous status), and `retag_summary.json`; `data/retag/` is git-ignored (regenerated, hundreds of thousands of rows).
 `--verdict` prints the `unsure` count per class: an `unsure` label is neither wrong nor correct, so read it
 before trusting a pass.
 

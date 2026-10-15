@@ -285,7 +285,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
       376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag
       reproduces the backup exactly, a second run changes nothing, integrity and foreign-key checks clean;
-      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. Open:
+      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. By previous status: `review` 49,645 `ok` / 1,153 `thin_content` / 497 `failed` (only the `ok` ones are decidable by T-132), `reject` 316,243 / 8,197 / 983. `--apply` verifies the result against the plan and exits 1 (no lists) on a mismatch. Open:
       `data/ticker_retag_check_manual.csv` (100 blind pairs, `ticker_validation_sample.py --final`) is to be hand-labeled,
       scored with `--verdict`, and only then the real run and the T-058 lists.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the

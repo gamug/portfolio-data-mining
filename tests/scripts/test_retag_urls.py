@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import json
 import sqlite3
 import sys
 from pathlib import Path
 
 import pytest
+
+from data_mining.db import connect
+from data_mining.quarantine import quarantine_articles
+from data_mining.schema import apply_schema, run_migrations
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(_SCRIPTS))
@@ -172,3 +177,126 @@ def test_lists_carry_the_class(db_file: Path, tmp_path: Path) -> None:
     _run(db_file, tmp_path)
     rows = list(csv.DictReader((tmp_path / "out/removed_articles.csv").open()))
     assert rows and {r["match_class"] for r in rows} == {"reject"} and rows[0]["match_reason"]
+
+
+def _mixed_db(path: Path) -> None:
+    """A schema-3 database: a legacy row, a row already classed by the T-056c strategies, a quarantined article."""
+    db = connect(str(path))
+    apply_schema(db)
+    run_migrations(db)
+    rows = [  # id, url, ticker, company, reason, class, status, article status
+        (
+            1,
+            "https://x.com/apple-earnings-beat.html",
+            "AAPL",
+            "Apple Inc.",
+            None,
+            "accept",
+            "fetched",
+            "ok",
+        ),
+        (
+            2,
+            "https://x.com/some-story.html",
+            "MSFT",
+            "Microsoft",
+            "weak_ticker",
+            "review",
+            "fetched",
+            "ok",
+        ),
+        (
+            3,
+            "https://x.com/other-story.html",
+            "GOOG",
+            "Alphabet",
+            "weak_ticker",
+            "review",
+            "fetched",
+            "thin_content",
+        ),
+    ]
+    for i, url, ticker, company, reason, cls, status, art in rows:
+        db.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, discovered_at,"
+            " status, match_class, match_reason) VALUES (?, ?, 'x.com', ?, ?, 'ddg', 'now', ?, ?, ?)",
+            (i, url, company, ticker, status, cls, reason),
+        )
+        db.execute("INSERT INTO articles (id, fetch_status) VALUES (?, ?)", (i, art))
+    db.commit()
+    quarantine_articles(db, 3)  # already quarantined before the run
+    db.close()
+
+
+def test_apply_on_a_database_that_already_holds_classed_rows(tmp_path: Path) -> None:
+    path = tmp_path / "mixed.db"
+    _mixed_db(path)
+
+    assert (
+        _run(path, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+        == 0
+    )
+
+    with sqlite3.connect(path) as c:
+        d = {
+            r[0]: r[1:]
+            for r in c.execute("SELECT id, match_class, match_reason FROM discovered_urls")
+        }
+        a = {
+            r[0]: r[1:]
+            for r in c.execute("SELECT id, fetch_status, prev_fetch_status FROM articles")
+        }
+    assert (
+        d[1][0] == "accept" and d[1][1] is not None
+    )  # the legacy row was re-tagged (it had no reason)
+    assert d[2] == ("review", "weak_ticker") and d[3] == (
+        "review",
+        "weak_ticker",
+    )  # classed rows kept
+    assert a[1] == ("ok", None)
+    assert a[2] == ("quarantined", "ok")
+    assert a[3] == ("quarantined", "thin_content")  # the original previous status survives
+
+
+def test_lists_and_summary_carry_the_previous_status(db_file: Path, tmp_path: Path) -> None:
+    _run(db_file, tmp_path)  # dry run
+    rows = list(csv.DictReader((tmp_path / "out/removed_articles.csv").open()))
+    assert rows[0]["prev_fetch_status"] == "ok"
+    summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
+    assert summary["articles_to_quarantine_by_prev_status"]["reject"] == {"ok": 1}
+
+
+def test_apply_lists_carry_the_previous_status_too(db_file: Path, tmp_path: Path) -> None:
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+    rows = list(csv.DictReader((tmp_path / "out/removed_articles.csv").open()))
+    assert [r["prev_fetch_status"] for r in rows] == ["ok"]
+
+
+def test_apply_fails_loudly_when_the_result_does_not_match_the_plan(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        retag, "quarantine_articles", lambda db: 0
+    )  # the quarantine silently does nothing
+
+    code = _run(
+        db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed"
+    )
+
+    assert code == 1
+    assert "VERIFICATION FAILED" in capsys.readouterr().err
+    summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
+    assert summary["verified"] is False and summary["problems"]
+    assert not (tmp_path / "out/removed_articles.csv").exists()  # no hand-off lists from a bad run
+
+
+def test_verify_flags_a_quarantined_accept_article(db_file: Path, tmp_path: Path) -> None:
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+    summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
+    assert retag.verify(db_file, summary) == []
+    with sqlite3.connect(db_file) as c:
+        c.execute("UPDATE articles SET fetch_status = 'quarantined' WHERE id = 1")
+    assert any("accept article" in p for p in retag.verify(db_file, summary))

@@ -291,6 +291,8 @@ class URLQueue:
             self._conn.commit()
         # A fetched pair whose article was quarantined (T-057) reads `ok` again once promoted:
         # nothing re-fetches it, so nothing else would release it. A no-op for unfetched rows.
+        # One statement and commit per promoted id: promotions are a small share of a batch (the
+        # UPDATE loop above is per row too). Batch with in_clause() if a rediscovery ever promotes thousands.
         for url_id in raised_ids:
             release_articles(self._conn, url_id)
         if promoted:

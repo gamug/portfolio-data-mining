@@ -20,7 +20,9 @@ Two modes, on the database named by `--db`:
   never overwritten) and `--hand-check-passed` (the fresh 60 `accept` / 40 `reject` check of
   T-057 passed; otherwise the work goes back to T-055). Migrates the schema, re-tags (one
   transaction), quarantines (a second; both idempotent, so a re-run finishes an interrupted one), then
-  writes the same lists.
+  then compares the database with the dry-run plan (class counts, quarantined counts, no `accept`
+  article quarantined, nothing non-`accept` left readable or pending): on a mismatch it writes no lists,
+  marks the summary `verified: false` and exits 1. Otherwise it writes the same lists.
 
 Always run it on a copy first. Usage:
     PYTHONPATH=src uv run python scripts/retag_urls.py --db COPY.db [--out DIR]
@@ -53,7 +55,15 @@ from data_mining.schema import apply_schema, run_migrations
 FEED_REASON = "feed"
 CLASSES = ("accept", "review", "reject")
 DEFAULT_OUT = Path("data/retag")
-_LIST_HEADER = ("article_id", "ticker", "company", "url", "match_class", "match_reason")
+_LIST_HEADER = (
+    "article_id",
+    "ticker",
+    "company",
+    "url",
+    "match_class",
+    "match_reason",
+    "prev_fetch_status",  # `ok` = a readable body; `failed`/`thin_content` rows cannot be judged
+)
 
 
 def _has_column(con: sqlite3.Connection, table: str, column: str) -> bool:
@@ -131,8 +141,21 @@ def summarize(con: sqlite3.Connection, plan: list[tuple[int, str, str, str | Non
     out["articles_to_quarantine"] = {
         c: sum(1 for i in fetched if after.get(i) == c) for c in ("review", "reject")
     }
+    out["articles_to_quarantine_by_prev_status"] = _by_prev_status(con, after)
     out["pending_rejects_to_skip"] = sum(1 for p in plan if p[3])
     return out
+
+
+def _by_prev_status(con: sqlite3.Connection, after: dict[int, str]) -> dict[str, dict[str, int]]:
+    """Fetched `review`/`reject` articles per status they had before the quarantine."""
+    if not _has_table(con, "articles"):
+        return {}
+    prev = "prev_fetch_status" if _has_column(con, "articles", "prev_fetch_status") else "NULL"
+    counts: dict[str, Counter[str]] = {"review": Counter(), "reject": Counter()}
+    for aid, status, was in con.execute(f"SELECT id, fetch_status, {prev} FROM articles"):  # noqa: S608
+        if after.get(aid) in counts:
+            counts[after[aid]][str(was if status == "quarantined" else status)] += 1
+    return {c: dict(sorted(n.items())) for c, n in counts.items()}
 
 
 def _has_table(con: sqlite3.Connection, name: str) -> bool:
@@ -149,7 +172,8 @@ def write_lists(con: sqlite3.Connection, out: Path) -> dict[str, int]:
     counts = {}
     for name, cls in (("removed_articles.csv", "reject"), ("review_quarantine.csv", "review")):
         rows = con.execute(
-            "SELECT a.id, d.ticker, d.company, d.url, d.match_class, d.match_reason FROM articles a"
+            "SELECT a.id, d.ticker, d.company, d.url, d.match_class, d.match_reason,"
+            " a.prev_fetch_status FROM articles a"
             " JOIN discovered_urls d ON d.id = a.id"
             " WHERE a.fetch_status = 'quarantined' AND d.match_class = ? ORDER BY a.id",
             (cls,),
@@ -177,12 +201,16 @@ def plan_lists(
     }
     counts = {}
     rows_by_cls: dict[str, list[tuple]] = {"reject": [], "review": []}
-    for aid, ticker, company, url in con.execute(
-        "SELECT a.id, d.ticker, d.company, d.url FROM articles a JOIN discovered_urls d ON d.id = a.id ORDER BY a.id"
+    prev = "a.prev_fetch_status" if _has_column(con, "articles", "prev_fetch_status") else "NULL"
+    for aid, ticker, company, url, status, was in con.execute(
+        f"SELECT a.id, d.ticker, d.company, d.url, a.fetch_status, {prev} FROM articles a"  # noqa: S608
+        " JOIN discovered_urls d ON d.id = a.id ORDER BY a.id"
     ):
         cls, reason = new.get(aid, stored[aid])
-        if cls in rows_by_cls:
-            rows_by_cls[cls].append((aid, ticker, company, url, cls, reason))
+        if cls in rows_by_cls:  # what the article will have been before the quarantine
+            rows_by_cls[cls].append(
+                (aid, ticker, company, url, cls, reason, was if status == "quarantined" else status)
+            )
     for name, cls in (("removed_articles.csv", "reject"), ("review_quarantine.csv", "review")):
         with (out / name).open("w", newline="") as f:
             w = csv.writer(f)
@@ -223,6 +251,43 @@ def apply(db_path: Path, plan: list[tuple[int, str, str, str | None]]) -> int:
         db.close()
 
 
+def verify(db_path: Path, summary: dict) -> list[str]:
+    """Compare the database after `--apply` with the plan the dry-run scan produced; return the
+    mismatches (empty when it agrees). Read-only."""
+    problems: list[str] = []
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as con:
+        got = dict(con.execute("SELECT match_class, COUNT(*) FROM discovered_urls GROUP BY 1"))
+        want = summary["by_class"]["all"]["after"]
+        for c in CLASSES:
+            if got.get(c, 0) != want[c]:
+                problems.append(f"class {c}: {got.get(c, 0)} rows, plan said {want[c]}")
+        quarantined = con.execute(
+            "SELECT d.match_class, COUNT(*) FROM articles a JOIN discovered_urls d ON d.id = a.id"
+            " WHERE a.fetch_status = 'quarantined' GROUP BY 1"
+        ).fetchall()
+        quarantined_by = dict(quarantined)
+        for c in ("review", "reject"):
+            planned = summary["articles_to_quarantine"][c]
+            if quarantined_by.get(c, 0) != planned:
+                problems.append(
+                    f"{c} articles quarantined: {quarantined_by.get(c, 0)}, plan said {planned}"
+                )
+        if quarantined_by.get("accept"):
+            problems.append(f"{quarantined_by['accept']} accept article(s) are quarantined")
+        loose = con.execute(
+            "SELECT COUNT(*) FROM articles a JOIN discovered_urls d ON d.id = a.id"
+            " WHERE d.match_class != 'accept' AND a.fetch_status != 'quarantined'"
+        ).fetchone()[0]
+        if loose:
+            problems.append(f"{loose} non-accept article(s) are not quarantined")
+        pending = con.execute(
+            "SELECT COUNT(*) FROM discovered_urls WHERE match_class = 'reject' AND status = 'pending'"
+        ).fetchone()[0]
+        if pending:
+            problems.append(f"{pending} rejected row(s) are still pending")
+    return problems
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--db", default=resolve_db_path())
@@ -245,8 +310,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.apply:
         backup(db_path, args.backup)
         summary["quarantined_now"] = apply(db_path, plan)
-        with closing(sqlite3.connect(db_path)) as con:
-            summary["lists"] = write_lists(con, args.out)
+        summary["problems"] = verify(db_path, summary)
+        summary["verified"] = not summary["problems"]
+        if summary["verified"]:
+            with closing(sqlite3.connect(db_path)) as con:
+                summary["lists"] = write_lists(con, args.out)
     summary["mode"] = "apply" if args.apply else "dry-run"
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "retag_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
@@ -257,6 +325,13 @@ def main(argv: list[str] | None = None) -> int:
             sort_keys=True,
         )
     )
+    if args.apply and not summary["verified"]:
+        print(
+            "VERIFICATION FAILED: the database does not match the plan; no lists were written."
+            f" Restore {args.backup} or investigate: {summary['problems']}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
