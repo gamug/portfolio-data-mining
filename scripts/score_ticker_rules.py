@@ -18,7 +18,7 @@ list (slow; read-only).
 
 Usage:
     PYTHONPATH=src uv run python scripts/score_ticker_rules.py [--db PATH]
-        [--sample PATH] [--exclude-ids ID ...] [--diff]
+        [--sample PATH] [--exclude-ids ID ...] [--diff] [--sizes] [--names]
 """
 
 from __future__ import annotations
@@ -155,6 +155,37 @@ def corpus_sizes(db_path: Path, discovery: bool = False) -> Counter[tuple[str, s
             seen = "" if discovery and source == "sitemap" else title
             sizes[(design_class(row, seen), source)] += 1
     return sizes
+
+
+def single_word_name_hits(db_path: Path) -> Counter[tuple[str, str]]:
+    """Rows accepted on the company name alone, for one-word names, per ``(ticker, name)``.
+
+    One-word names (Visa, Apple, Block) are the ones most likely to be ordinary
+    words; the counts show which companies lean on that signal. Read-only.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    hits: Counter[tuple[str, str]] = Counter()
+    with closing(connect(uri, uri=True)) as con:
+        cur = con.execute(
+            "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
+            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
+        )
+        for url, ticker, company, title in cur:
+            name = matching.full_name(company)
+            if " " in name:
+                continue
+            found = matching.classify(url, title, company, ticker)
+            if found.cls == "accept" and found.reason == "name":
+                hits[(ticker, name)] += 1
+    return hits
+
+
+def render_name_hits(hits: Counter[tuple[str, str]], top: int = 25) -> str:
+    """Format ``single_word_name_hits`` output (largest first)."""
+    total = sum(hits.values())
+    lines = [f"== accept on a one-word name alone: {total:,} rows, {len(hits)} companies =="]
+    lines += [f"  {t:6} {n:<14} {c:>8,}" for (t, n), c in hits.most_common(top)]
+    return "\n".join(lines)
 
 
 def render_sizes(label: str, sizes: Counter[tuple[str, str]]) -> str:
@@ -318,6 +349,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="scan the whole corpus (slow) for rows moved by the host fix and the abbreviation list",
     )
+    parser.add_argument(
+        "--names",
+        action="store_true",
+        help="scan the whole corpus (slow) for rows accepted on a one-word company name alone",
+    )
     args = parser.parse_args(argv)
     db = Path(args.db or resolve_db_path())
     sample = Path(args.sample)
@@ -334,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.sizes:
         print(render_sizes("re-tag (fetched title)", corpus_sizes(db)))
         print(render_sizes("discovery (sitemap URL only)", corpus_sizes(db, discovery=True)))
+    if args.names:
+        print(render_name_hits(single_word_name_hits(db)))
     if args.diff:
         for label, kw in (
             ("matching the host (old)", {"with_host": True}),

@@ -192,3 +192,21 @@ def test_the_rule_is_monotone_more_title_never_lowers_the_class() -> None:
             short = " ".join(words)
             longer = " ".join([*words, rng.choice(pieces), rng.choice(pieces)])
             assert rank[cls(url, longer, company, ticker)] >= rank[cls(url, short, company, ticker)]
+
+
+@pytest.mark.parametrize(
+    ("title", "company", "ticker", "expected"),
+    [
+        ("Options (A) and (B) explained", "Agilent Technologies", "A", "reject"),
+        ("Switch (ON) the lights", "ON Semiconductor", "ON", "reject"),
+        ("Plan B (C) results", "Citigroup", "C", "reject"),
+        ("Fed (PM) says", "Philip Morris International", "PM", "review"),
+        ("Agilent (NYSE: A) rises", "Agilent Technologies", "A", "accept"),
+        ("Agilent (NYSE American: A) rises", "Agilent Technologies", "A", "accept"),
+        ("Rally in $ON today", "ON Semiconductor", "ON", "accept"),
+    ],
+)
+def test_bare_parenthesised_ticker_is_not_explicit(
+    title: str, company: str, ticker: str, expected: str
+) -> None:
+    assert cls("https://x.com/news/story", title, company, ticker) == expected

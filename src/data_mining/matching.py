@@ -117,10 +117,15 @@ def word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
 
 
 def explicit_ticker(ticker: str, *texts: str) -> bool:
-    """An explicit ticker form (``$X``, ``(NYSE: X)``, ``NASDAQ: X``) in any of ``texts``."""
+    """An explicit ticker form (``$X``, ``(NYSE: X)``, ``NASDAQ: X``) in any of ``texts``.
+
+    The exchange is mandatory: a bare ``(X)`` is not explicit (``(A)``, ``(ON)``,
+    ``(PM)`` are list markers and abbreviations). ``$X`` is a deliberate cashtag
+    and is trusted even for ordinary-word tickers.
+    """
     t = re.escape(ticker)
     pattern = re.compile(
-        rf"(\((?:NYSE|NASDAQ|NYSEARCA|Nasdaq|NYSE American)?:?\s*{t}\)"
+        rf"(\((?:NYSE American|NYSEARCA|NYSE|NASDAQ|Nasdaq)\s*:\s*{t}\)"
         rf"|(?:NYSE|NASDAQ)\s*:\s*{t}\b|\${t}\b)"
     )
     return any(pattern.search(text) for text in texts)

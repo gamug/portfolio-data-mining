@@ -876,9 +876,15 @@ share of `sitemap` rows drops (their titles are unknown) and the difference move
 to `review`, not to `reject`**, which is the cost the maintainer asked us to take
 instead of excluding. **Exact class sizes of the current rule over the whole corpus**
 (`score_ticker_rules.py --sizes`, 481,332 rows, read-only). Re-tag mode (fetched
-title): `accept` 104,627 (21.7%; `ddg` 16,272, `sitemap` 88,355), `review` 51,289
-(10.7%), `reject` 325,416 (67.6%). Discovery mode (no title for `sitemap` rows):
-`accept` 86,993 (18.1%), `review` 63,158 (13.1%), `reject` 331,181 (68.8%).
+title): `accept` 104,614 (21.7%; `ddg` 16,264, `sitemap` 88,350), `review` 51,295
+(10.7%), `reject` 325,423 (67.6%). Discovery mode (no title for `sitemap` rows):
+`accept` 86,985 (18.1%), `review` 63,162 (13.1%), `reject` 331,185 (68.8%).
+(Requiring an exchange in the parenthesised ticker form moved 13 rows, from `accept` to `review`/`reject`.)
+**Known limitation, measured** (`--names`): 59,956 `accept` rows (57% of re-tag `accept`) rest on a
+one-word company name alone, across 186 companies, led by Apple 9,890, Amazon 6,390, Microsoft 3,179,
+Nvidia 2,800 and Boeing 2,408. Most are distinctive brands; the ordinary-word ones (Apple, Oracle) are the
+dominant sense in finance news. A name like `visa-bulletin` for Visa is accepted wrongly. The rule is not
+changed without data; the T-057 fresh check decides.
 `review` is the volume handed to `portfolio-nlp` T-132: about 51,000 pairs on the
 existing corpus (63,000 if the rule ran on bare URLs). The first draft had
 117,900 / 52,088 / 311,344. The `reject` class was 28 of 30 wrong, so "do not exclude"
@@ -908,8 +914,8 @@ fresh check.
 the title for `ddg`) and **re-evaluated after the fetch** with the stored title.
 The rule is monotone, since more text can only add evidence, so re-evaluation can
 only promote and two code paths cannot disagree by demoting. It applies to fetched
-(`accept`/`review`) rows: this is why 63,158 discovery-time `review` pairs fall to
-51,289 in the existing corpus, where every row was fetched. Going forward a
+(`accept`/`review`) rows: this is why 63,162 discovery-time `review` pairs fall to
+51,295 in the existing corpus, where every row was fetched. Going forward a
 `reject` row is written `status = 'skipped'` (with `match_class = 'reject'`) and never fetched, so a `sitemap`
 `reject` row stays `reject` unless a feed title came with it; about 5,800 pairs
 that would improve with a title are therefore not fetched (accepted: 0.0% of

@@ -27,7 +27,9 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
   substring, the host is never matched, and an ordinary-word ticker, a generic first word or an abbreviation
   alone is never `accept`. Until `T-056b`/`c` store the class, `review` pairs are kept like `accept` ones;
-  only `reject` pairs are dropped at discovery. Design and evidence: `PLAN.md` Work item 10.
+  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made in that window to
+  `portfolio-nlp`**: its `review` rows (about 63k) are stored unflagged and would enter the default
+  selection like `accept` rows. Design and evidence: `PLAN.md` Work item 10.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
@@ -107,7 +109,7 @@ assistant's labels; it reads the committed sheet by default, so apply a new one 
 `data/ticker_tagging_manual.csv` is the **filled** sheet (the maintainer's labels and notes, with the
 excerpt column removed). `scripts/score_ticker_rules.py` scores the prototype matching rules on the
 labeled sample (`--exclude-ids` to leave rows out). `scripts/ticker_validation_sample.py` draws a fresh
-validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format (`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv` reproduces the first-draft out-of-sample result, since the CSV's `match_mode` is the class the first draft assigned when it was drawn; `score_ticker_rules.py --sample` scores the current rule (`--sizes` prints its exact class sizes over the whole corpus, `--diff` the rows moved by the host fix, the abbreviation list and the alias map; both are slow, read-only scans); the committed `data/ticker_validation_manual.csv` is the filled sheet without excerpts).
+validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format (`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv` reproduces the first-draft out-of-sample result, since the CSV's `match_mode` is the class the first draft assigned when it was drawn; `score_ticker_rules.py --sample` scores the current rule (`--sizes` prints its exact class sizes over the whole corpus, `--diff` the rows moved by the host fix, the abbreviation list and the alias map, `--names` the rows accepted on a one-word company name alone; both are slow, read-only scans); the committed `data/ticker_validation_manual.csv` is the filled sheet without excerpts).
 
 ## Testing
 

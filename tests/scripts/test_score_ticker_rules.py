@@ -231,3 +231,25 @@ def test_corpus_sizes_and_render(tmp_path: Path) -> None:
     text = mod.render_sizes("x", mod.corpus_sizes(db))
     assert "2 rows" in text
     assert "accept " in text
+
+
+def test_single_word_name_hits_counts_only_one_word_name_accepts(tmp_path: Path) -> None:
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
+            " company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        rows = [
+            (1, "https://c/visa-bulletin.html", "", "Visa Inc.", "V"),
+            (2, "https://c/visa-fees.html", "", "Visa Inc.", "V"),
+            (3, "https://c/other.html", "Oil rises", "Visa Inc.", "V"),
+            (4, "https://c/procter-and-gamble.html", "", "Procter & Gamble", "PG"),
+        ]
+        con.executemany("INSERT INTO discovered_urls VALUES (?, ?, ?, ?, ?, 'ddg')", rows)
+    hits = mod.single_word_name_hits(db)
+    assert hits == {("V", "visa"): 2}
+    text = mod.render_name_hits(hits)
+    assert "2 rows, 1 companies" in text
+    assert "visa" in text
