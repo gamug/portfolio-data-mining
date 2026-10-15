@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is in PR #61, the real run waits for the hand-labeled check.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited

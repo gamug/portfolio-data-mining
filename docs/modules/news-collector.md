@@ -189,7 +189,7 @@ PYTHONPATH=src uv run python scripts/retag_urls.py --db COPY.db --out data/retag
 PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --final
 PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-export \
     --sample data/ticker_retag_check_sample.csv --out data/ticker_retag_check_manual.csv   # blind sheet
-#    ...label the `label` column (yes / no / unsure) of the blind sheet, then merge it into the NEW sample.
+#    ...label the `label` column (yes / no / unclear) of the blind sheet, then merge it into the NEW sample.
 #    Both paths are explicit: `manual-apply` defaults `--sample` to data/ticker_tagging_sample.csv, the
 #    first committed sample, which must not receive these labels.
 PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-apply \
@@ -215,7 +215,7 @@ article quarantined, nothing non-`accept` readable or pending) and exits 1 witho
 `review_quarantine.csv` (T-132's selection with the evidence), both with `match_class`, `match_reason` and `prev_fetch_status`
 columns (`ok` = a readable body; `failed`/`thin_content` articles cannot be judged by `portfolio-nlp` T-132, so T-058 reports the
 decidable share; `retag_summary.json` has the counts per previous status), and `retag_summary.json`; `data/retag/` is git-ignored (regenerated, hundreds of thousands of rows).
-`--verdict` prints the `unsure` count per class: an `unsure` label is neither wrong nor correct, so read it
+`--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
 
 ## Testing

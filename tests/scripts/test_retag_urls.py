@@ -189,12 +189,12 @@ def test_verdict_fails_on_unlabeled_rows(tmp_path: Path) -> None:
     assert validation.final_verdict(path)[0] is False
 
 
-def test_verdict_line_reports_unsure_per_class(tmp_path: Path) -> None:
+def test_verdict_line_reports_unclear_per_class(tmp_path: Path) -> None:
     path = _sheet(tmp_path, 0, 0)
-    path.write_text(path.read_text().replace(",accept,yes", ",accept,unsure", 3))
+    path.write_text(path.read_text().replace(",accept,yes", ",accept,unclear", 3))
     ok, text = validation.final_verdict(path)
-    assert ok is True  # unsure is neither wrong nor correct ...
-    assert "3 unsure" in text  # ... so it is reported
+    assert ok is True  # unclear is neither wrong nor correct ...
+    assert "3 unclear" in text  # ... so it is reported
 
 
 def test_lists_carry_the_class(db_file: Path, tmp_path: Path) -> None:

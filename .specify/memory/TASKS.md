@@ -256,7 +256,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (save, status, re-evaluation of a page that was read) is the one post-fetch step used by the
       crawler CLI and both API endpoints; `POST /extract/{id}` answers 409 for a `reject` row.
       `scripts/score_ticker_rules.py --check` exits 0 ("figures match PLAN"; no matcher change since T-056a). Test counts live in the PR description.
-- [ ] **T-057** *(tooling done and dry-run on a corpus copy; the hand-label check and the real run are open)* Re-tag `urls.db`: dry run on a copy (before/after counts per
+- [x] **T-057** *(done 2026-10-15: PR #61 tooling, real run on `urls.db` after the hand check passed)* Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
       (quarantine over delete) that `portfolio-nlp`'s pending queries
@@ -285,9 +285,10 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
       376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag
       reproduces the backup exactly, a second run changes nothing, integrity and foreign-key checks clean;
-      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. By previous status: `review` 49,645 `ok` / 1,153 `thin_content` / 497 `failed` (only the `ok` ones are decidable by T-132), `reject` 316,243 / 8,197 / 983. `--apply` verifies the result against the plan and exits 1 (no lists) on a mismatch. Open:
-      `data/ticker_retag_check_manual.csv` (100 blind pairs, `ticker_validation_sample.py --final`) is to be hand-labeled,
-      scored with `--verdict`, and only then the real run and the T-058 lists.
+      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. By previous status: `review` 49,645 `ok` / 1,153 `thin_content` / 497 `failed` (only the `ok` ones are decidable by T-132), `reject` 316,243 / 8,197 / 983. `--apply` verifies the result against the plan and exits 1 (no lists) on a mismatch. **Real run (2026-10-15):** hand check PASS (60 `accept`: 1 wrong, max 5; 40 `reject`: 1 correct, max 1; 1 `unclear`), sheets
+      committed (`data/ticker_retag_check_*.csv`). `--apply` on `/workspaces/thesis/data/urls.db`, backup `urls.pre-retag.db`: `verified: true`,
+      481,332 rows re-tagged (accept 104,614 / review 51,295 / reject 325,423), 376,718 articles quarantined, lists in
+      `data/retag/` (git-ignored: `removed_articles.csv` 325,423, `review_quarantine.csv` 51,295, `retag_summary.json`). Label vocabulary is `yes`/`no`/`unclear`.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
