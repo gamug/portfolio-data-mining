@@ -29,7 +29,7 @@ def _load(name: str):  # type: ignore[no-untyped-def]
 
 
 retag = _load("retag_urls")
-validation = _load("ticker_validation_sample")
+validation = importlib.import_module("ticker_validation_sample")  # the module retag imports
 
 _V1_DISCOVERED = """
 CREATE TABLE discovered_urls (
@@ -71,9 +71,28 @@ def db_file(tmp_path: Path) -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _small_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fixtures hold ids 1-3, not 100 pairs: shrink the required shape (1 accept, 2 reject) and
+    forget the committed earlier samples, whose ids would otherwise collide with these tiny ids."""
+    monkeypatch.setattr(validation, "FINAL_COUNTS", {"accept": 1, "reject": 2})
+    monkeypatch.setattr(validation, "EARLIER_SAMPLES", ())
+
+
+def _real_sheet(tmp_path: Path, rows: list[tuple[str, str, str]] | None = None) -> Path:
+    """A labeled T-057 sheet for ids 1-3 of the fixtures (apple is accept; the other two reject)."""
+    rows = rows or [("1", "accept", "yes"), ("2", "reject", "no"), ("3", "reject", "no")]
+    path = tmp_path / "handcheck.csv"
+    with path.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["id", "match_mode", "label"])
+        w.writerows(rows)
+    return path
+
+
 def _hc(tmp_path: Path) -> list[str]:
-    """`--hand-check` with a labeled sheet that passes (0 wrong accept, 0 correct reject)."""
-    return ["--hand-check", str(_sheet(tmp_path, 0, 0))]
+    """`--hand-check` with a sheet that is the T-057 one and passes."""
+    return ["--hand-check", str(_real_sheet(tmp_path))]
 
 
 def _run(db: Path, tmp_path: Path, *extra: str) -> int:
@@ -333,7 +352,7 @@ def test_an_unlabeled_hand_check_stops_apply(db_file: Path, tmp_path: Path) -> N
 def test_apply_records_the_hand_check_verdict(db_file: Path, tmp_path: Path) -> None:
     assert _apply(db_file, tmp_path) == 0
     summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
-    assert summary["hand_check"]["sheet"].endswith("sheet.csv")
+    assert summary["hand_check"]["sheet"].endswith("handcheck.csv")
     assert "PASS" in summary["hand_check"]["verdict"]
 
 
@@ -357,3 +376,67 @@ def test_apply_aborts_before_writing_when_the_corpus_moved(
 
     with sqlite3.connect(db_file) as c:  # nothing was migrated or re-tagged
         assert "match_class" not in {r[1] for r in c.execute("PRAGMA table_info(discovered_urls)")}
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([("1", "accept", "yes"), ("2", "reject", "no")], "needs exactly 2"),  # one reject missing
+        ([("1", "accept", "yes"), ("2", "reject", "no"), ("2", "reject", "no")], "duplicated ids"),
+        (
+            [("1", "accept", "yes"), ("2", "reject", "no"), ("9", "reject", "no")],
+            "not in the database",
+        ),
+        ([("1", "reject", "no"), ("2", "reject", "no"), ("3", "reject", "no")], "needs exactly 1"),
+        (
+            [
+                ("1", "accept", "yes"),
+                ("2", "accept", "yes"),
+                ("3", "reject", "no"),
+                ("4", "reject", "no"),
+            ],
+            "needs exactly",
+        ),
+    ],
+)
+def test_a_sheet_that_is_not_the_t057_check_stops_apply(
+    db_file: Path, tmp_path: Path, rows: list[tuple[str, str, str]], message: str
+) -> None:
+    before = db_file.read_bytes()
+
+    with pytest.raises(SystemExit, match=message):
+        _apply(db_file, tmp_path, _real_sheet(tmp_path, rows))
+
+    assert db_file.read_bytes() == before
+    assert not (tmp_path / "pre.db").exists()
+
+
+def test_a_sheet_with_a_stale_class_is_refused(db_file: Path, tmp_path: Path) -> None:
+    """Row 2 is reject today; a sheet that says accept was drawn under another rule."""
+    rows = [("1", "accept", "yes"), ("3", "reject", "no"), ("2", "accept", "no")]
+    with pytest.raises(SystemExit, match="not what the current matcher gives"):
+        _apply(db_file, tmp_path, _real_sheet(tmp_path, rows))
+
+
+def test_a_sheet_reusing_an_earlier_sample_is_refused(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    earlier = tmp_path / "earlier.csv"
+    earlier.write_text("id\n3\n")
+    monkeypatch.setattr(validation, "EARLIER_SAMPLES", (earlier,))
+    with pytest.raises(SystemExit, match="not fresh"):
+        _apply(db_file, tmp_path)
+
+
+def test_the_committed_samples_are_what_the_check_excludes() -> None:
+    importlib.reload(validation)  # undo the autouse shrink: the real defaults
+    names = {p.name for p in validation.EARLIER_SAMPLES}
+    assert names == {"ticker_tagging_sample.csv", "ticker_validation_sample.csv"}
+    assert validation.FINAL_COUNTS == {"accept": 60, "reject": 40}
+
+
+def test_verdict_with_a_db_also_checks_the_sheet(db_file: Path, tmp_path: Path) -> None:
+    good = _real_sheet(tmp_path)
+    assert validation.main(["--verdict", str(good), "--db", str(db_file)]) == 0
+    bad = _real_sheet(tmp_path, [("1", "accept", "yes"), ("2", "reject", "no")])
+    assert validation.main(["--verdict", str(bad), "--db", str(db_file)]) == 1

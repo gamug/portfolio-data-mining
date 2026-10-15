@@ -114,6 +114,12 @@ def draw(
     return out
 
 
+# The T-057 check is exactly this shape; `check_sheet` refuses any other sheet.
+FINAL_COUNTS = {"accept": 60, "reject": 40}
+EARLIER_SAMPLES = (
+    Path(__file__).resolve().parents[1] / DEFAULT_SAMPLE,
+    Path(__file__).resolve().parents[1] / DEFAULT_OUT,
+)
 MAX_ACCEPT_WRONG = 5
 MAX_REJECT_CORRECT = 1
 
@@ -146,6 +152,57 @@ def final_verdict(sample_path: Path) -> tuple[bool, str]:
     return ok, text
 
 
+def _read_ids(path: Path) -> list[str]:
+    with path.open(newline="", encoding="utf-8") as fh:
+        return [r["id"] for r in csv.DictReader(fh)]
+
+
+def _db_problems(rows: list[dict[str, str]], db_path: Path) -> list[str]:
+    """Unknown ids and rows whose class ``classify`` no longer gives (read-only)."""
+    stale = missing = 0
+    with closing(connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
+        for r in rows:
+            found = con.execute(
+                "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
+                " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id WHERE d.id = ?",
+                (r["id"],),
+            ).fetchone()
+            if found is None:
+                missing += 1
+            elif classify(found[0], found[3], found[2], found[1]).cls != r["match_mode"]:
+                stale += 1
+    out = [f"{missing} id(s) not in the database"] if missing else []
+    if stale:
+        out.append(
+            f"{stale} row(s) whose class is not what the current matcher gives (sheet drawn "
+            "before a matcher change; draw it again with --final)"
+        )
+    return out
+
+
+def check_sheet(sheet_path: Path, db_path: Path) -> list[str]:
+    """Problems that make a labeled sheet *not* the T-057 check (empty when it is): the row counts
+    per class, duplicated or unknown ids, a class that ``classify`` no longer gives the pair (the
+    sheet was drawn before a matcher change), and ids already used by an earlier sample (the pairs
+    must be fresh). Read-only; the title rule is the one the re-tag and ``draw`` use."""
+    with sheet_path.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    problems = [
+        f"{got} {cls} rows, the check needs exactly {want}"
+        for cls, want in FINAL_COUNTS.items()
+        if (got := sum(1 for r in rows if r["match_mode"] == cls)) != want
+    ]
+    ids = [r["id"] for r in rows]
+    if dupes := sorted({i for i in ids if ids.count(i) > 1}):
+        problems.append(f"duplicated ids: {dupes[:5]}")
+    earlier = {i for path in EARLIER_SAMPLES if path.is_file() for i in _read_ids(path)}
+    if reused := sorted(set(ids) & earlier):
+        problems.append(
+            f"{len(reused)} id(s) already in an earlier sample, not fresh: {reused[:5]}"
+        )
+    return problems + _db_problems(rows, db_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -156,11 +213,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--final", action="store_true", help="the T-057 60/40 acceptance check")
-    parser.add_argument("--verdict", metavar="LABELED_CSV", help="score a labeled --final sample")
+    parser.add_argument(
+        "--verdict",
+        metavar="LABELED_CSV",
+        help="score a labeled --final sample (with --db also check it is the T-057 sheet)",
+    )
     args = parser.parse_args(argv)
     if args.verdict:
         ok, text = final_verdict(Path(args.verdict))
         print(text)
+        if args.db:  # also check the sheet is the T-057 one, against that database
+            problems = check_sheet(Path(args.verdict), Path(args.db))
+            for problem in problems:
+                print(f"sheet: {problem}")
+            ok = ok and not problems
         return 0 if ok else 1
     db = Path(args.db or resolve_db_path())
     existing = Path(args.existing)

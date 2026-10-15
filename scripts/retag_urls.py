@@ -19,7 +19,9 @@ Two modes, on the database named by `--db`:
 * `--apply`: needs `--backup PATH` (a consistent copy is written first; an existing file is
   never overwritten) and `--hand-check PATH` (the labeled sheet of the fresh 60 `accept` / 40 `reject`
   check, `data/ticker_retag_check_sample.csv`): it is scored with
-  `ticker_validation_sample.final_verdict` before anything is read or written, a FAIL refuses the run (back
+  `ticker_validation_sample.final_verdict` and validated with `check_sheet` (exactly 60 `accept` and 40
+  `reject` rows, unique ids that exist, classes equal to what the current matcher gives, no id from an earlier
+  sample) before anything is written, a FAIL refuses the run (back
   to T-055), and the verdict line and sheet path are stored in the summary for the T-058 hand-off. Stop the
   collector and the crawler first: the run aborts, before writing, if the row counts moved since the plan
   was computed. Migrates the schema, re-tags (one transaction), quarantines (a second; both idempotent, so a
@@ -50,7 +52,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from ticker_validation_sample import final_verdict
+from ticker_validation_sample import check_sheet, final_verdict
 
 from data_mining.db import connect, resolve_db_path
 from data_mining.matching import classify
@@ -313,6 +315,19 @@ def verify(db_path: Path, summary: dict) -> list[str]:
     return problems
 
 
+def _hand_check_gate(sheet: Path, db_path: Path) -> dict[str, Any]:
+    """The T-057 gate, run before the database is read for the plan or written: the labeled sheet
+    must exist, pass the verdict and be the T-057 sheet. Raises SystemExit otherwise."""
+    if not sheet.is_file():
+        raise SystemExit(f"--hand-check sheet {sheet} not found")
+    passed, verdict = final_verdict(sheet)
+    if not passed:
+        raise SystemExit(f"the T-057 hand check failed, back to T-055: {verdict}")
+    if problems := check_sheet(sheet, db_path):
+        raise SystemExit(f"--hand-check is not the T-057 sheet: {'; '.join(problems)}")
+    return {"sheet": str(sheet), "verdict": verdict}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--db", default=resolve_db_path())
@@ -326,15 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{db_path} does not exist")
     if args.apply and not (args.backup and args.hand_check):
         raise SystemExit("--apply needs --backup PATH and --hand-check SHEET (T-057)")
-    hand_check: dict[str, Any] = {}
-    if args.apply:
-        # the gate comes first: a failing or unlabeled sheet must not even read the database
-        if not args.hand_check.is_file():
-            raise SystemExit(f"--hand-check sheet {args.hand_check} not found")
-        passed, verdict = final_verdict(args.hand_check)
-        if not passed:
-            raise SystemExit(f"the T-057 hand check failed, back to T-055: {verdict}")
-        hand_check = {"sheet": str(args.hand_check), "verdict": verdict}
+    hand_check = _hand_check_gate(args.hand_check, db_path) if args.apply else {}
 
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as con:
         plan = retag_plan(con)

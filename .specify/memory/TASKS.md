@@ -281,7 +281,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       recorded in `portfolio-nlp` PR #102 T-132/T-128); `data_mining/quarantine.py`; `record_fetch` quarantines/
       releases after every fetch (a fetched `review` pair would otherwise read `ok`) and a rediscovery promotion
       releases the article too; `scripts/retag_urls.py`
-      (dry run by default; `--apply` needs `--backup` and `--hand-check SHEET`, which it scores with the verdict and records, and aborts before writing if the corpus moved since the plan). Dry run and apply on a copy of
+      (dry run by default; `--apply` needs `--backup` and `--hand-check SHEET`, which it scores with the verdict, validates as the 60/40 fresh sheet drawn under the current rule and records, and aborts before writing if the corpus moved since the plan). Dry run and apply on a copy of
       the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
       376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag
       reproduces the backup exactly, a second run changes nothing, integrity and foreign-key checks clean;
