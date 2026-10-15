@@ -96,7 +96,8 @@ assistant's labels; it reads the committed sheet by default, so apply a new one 
 `ticker_tagging_sample.py manual-apply --manual data/ticker_tagging_manual_new.csv`. The committed
 `data/ticker_tagging_manual.csv` is the **filled** sheet (the maintainer's labels and notes, with the
 excerpt column removed). `scripts/score_ticker_rules.py` scores the prototype matching rules on the
-labeled sample (`--exclude-ids` to leave rows out).
+labeled sample (`--exclude-ids` to leave rows out). `scripts/ticker_validation_sample.py` draws a fresh
+validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format.
 
 ## Testing
 

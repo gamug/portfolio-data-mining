@@ -839,6 +839,28 @@ chosen after reading the errors on this same sample (in-sample), the
 sitemap strata are 8-15 rows each, and the intervals are wide; the targets
 below leave a margin and are re-measured on a fresh sample (below).**
 
+**Approved 2026-10-15 (maintainer), with one instruction: take care not to
+exclude correct pairs.** Consequences kept in the design: nothing is deleted
+(`reject` is quarantined with a reason, reversible); doubtful pairs go to
+`review`, not `reject`; `portfolio-nlp` keeps any pair it cannot decide
+(`undecided`, its `T-132`); and the fresh sample below contains 30 `reject`
+pairs on purpose, to measure how many correct pairs the rule would hide.
+**Quarantine** means the pair stays in `urls.db`, is flagged with its class
+and reason, and is left out of the default `articles` selection that
+`portfolio-nlp` reads (`fetch_status = 'ok'`, non-empty `body_text`); undoing
+it is clearing the flag. Exact class sizes over the whole corpus
+(`scripts/ticker_validation_sample.py`): `accept` 117,900 rows (24.5%), `review`
+52,088 (10.8%), `reject` 311,344 (64.7%); the sample-weighted estimates above
+(28.7% / 12.0% / 59.2%) are close.
+
+**Validation sample (in progress):** `data/ticker_validation_sample.csv`, 100
+new pairs not in the first sample, strata `(class, source)` with their
+population sizes (`accept` sitemap 25 / ddg 15, `review` 20 / 10, `reject`
+15 / 15), labeled by the maintainer with the same sheet workflow
+(`ticker_tagging_sample.py manual-export` / `manual-apply` / `report` work on it
+unchanged; the class is not shown on the sheet and the order is shuffled).
+Results replace the in-sample figures and fix the final targets.
+
 What happens to each class (the cross-repo shape is agreed in `T-058`
 before the re-tag runs): `accept` rows stay as they are; `review` rows are
 **quarantined** (kept in `urls.db`, flagged, not selected by the default

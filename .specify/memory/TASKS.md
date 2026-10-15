@@ -127,7 +127,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`
       FR-014 and the `PLAN.md` acceptance criteria before any code is written.
-      **Proposed 2026-10-15, awaiting approval (no code):** three-class rule
+      **Design approved 2026-10-15 (maintainer; "take care not to exclude"); targets
+      confirmed after the validation sample is labeled (`data/ticker_validation_sample.csv`,
+      100 fresh pairs, `scripts/ticker_validation_sample.py`):** three-class rule
       `accept`/`review`/`reject` from URL+title, quarantine for `review` and
       `reject`, `ddg` query provenance, once-per-article attribution for
       `sitemap`; targets: wrong rate among `accept` at most 15%, correct pairs
@@ -156,10 +158,12 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (quarantine over delete) that `portfolio-nlp`'s pending queries
       (`fetch_status = 'ok'`, non-empty `body_text`) will actually exclude —
       agree the shape with that repo first. The run also writes the list of
-      removed `(url, ticker)` / article ids, which T-058 hands over. → step 4.
+      removed `(url, ticker)` / article ids and the `review` quarantine list
+      (class and triggering evidence), which T-058 hands over. → step 4.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
-      and `sector_summary` — its T-131)
+      and `sector_summary` — its T-131) and the quarantined `review` pairs
+      (its `T-132` decides them; nothing is excluded on doubt there)
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
 - [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot
