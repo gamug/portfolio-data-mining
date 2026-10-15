@@ -354,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--top", type=int, default=25, help="companies listed by --names")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be at least 1")
     db = Path(args.db or resolve_db_path())
     sample = Path(args.sample)
     if not db.is_file() or not sample.is_file():

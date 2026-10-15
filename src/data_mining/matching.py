@@ -118,6 +118,7 @@ def word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
     return re.search(pattern, text, flags) is not None
 
 
+_EXCHANGE = r"(?:NYSE American|NYSE MKT|NYSEARCA|NYSE|NASDAQ|Nasdaq)"
 _END = r"(?![A-Za-z0-9&-])"  # same right edge as `word`, plus no hyphen ("NYSE: A-list")
 
 
@@ -131,8 +132,8 @@ def explicit_ticker(ticker: str, *texts: str, cashtag: bool = True) -> bool:
     """
     t = re.escape(ticker)
     forms = [
-        rf"\((?:NYSE American|NYSEARCA|NYSE|NASDAQ|Nasdaq)\s*:\s*{t}\)",
-        rf"(?:NYSE|NASDAQ)\s*:\s*{t}{_END}",
+        rf"\({_EXCHANGE}\s*:\s*{t}\)",
+        rf"{_EXCHANGE}\s*:\s*{t}{_END}",
     ]
     if cashtag:
         forms.append(rf"\${t}{_END}")

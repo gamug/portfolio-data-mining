@@ -225,6 +225,11 @@ def test_bare_parenthesised_ticker_is_not_explicit(
         ("Rally in $A today", "Agilent Technologies", "A", "review"),
         ("Price is $ALL in", "Allstate", "ALL", "review"),
         ("Shares (NYSE: ON) rally", "ON Semiconductor", "ON", "accept"),
+        ("Shares Nasdaq: ON rise", "ON Semiconductor", "ON", "accept"),
+        ("Agilent NYSE American: A rises", "Agilent Technologies", "A", "accept"),
+        ("Fund NYSEARCA: PM", "Philip Morris International", "PM", "accept"),
+        ("Fund NYSE MKT: PM", "Philip Morris International", "PM", "accept"),
+        ("Agilent (NYSE MKT: A) rises", "Agilent Technologies", "A", "accept"),
     ],
 )
 def test_explicit_forms_edges_and_cashtags_of_common_tickers(

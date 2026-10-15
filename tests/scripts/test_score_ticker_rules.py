@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import csv
 import importlib.util
+import os
 import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -254,3 +256,41 @@ def test_single_word_name_hits_counts_only_one_word_name_accepts(tmp_path: Path)
     assert "2 rows, 1 companies" in text
     assert "re-tag mode" in text
     assert "visa" in text
+
+
+def test_render_name_hits_lists_only_the_top_entries() -> None:
+    text = mod.render_name_hits(Counter({("V", "visa"): 5, ("A", "agilent"): 2}), top=1)
+    assert "top 1" in text
+    assert "visa" in text
+    assert "agilent" not in text
+
+
+def test_top_below_one_is_rejected(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        mod.main(["--names", "--top", "0"])
+    assert "--top must be at least 1" in capsys.readouterr().err
+
+
+# Re-tag-mode, in-sample figures (the rule was tuned on both samples): a tripwire so a rule edit
+# cannot move the numbers PLAN reports without someone updating them. The titles
+# come from the local corpus, so this skips where `urls.db` is absent.
+_SAMPLE_FIGURES = {
+    "ticker_tagging_sample.csv": (
+        "accept   share  28.8%  wrong in class  10.9%",
+        "known-correct (labeled yes) classed accept: 17/17",
+    ),
+    "ticker_validation_sample.csv": (
+        "accept   share  20.2%  wrong in class   0.0%",
+        "known-correct (labeled yes) classed accept: 0/0",
+    ),
+}
+
+
+@pytest.mark.parametrize("sample", sorted(_SAMPLE_FIGURES))
+def test_committed_samples_reproduce_the_plan_figures(sample: str) -> None:
+    db = Path(os.environ.get("URLS_DB_FOR_TESTS", "/workspaces/thesis/data/urls.db"))
+    if not db.is_file():
+        pytest.skip("urls.db not available")
+    data = mod.load(db, Path("data") / sample)
+    text = mod.design_report(data)
+    assert all(line in text for line in _SAMPLE_FIGURES[sample])
