@@ -104,7 +104,9 @@ async def cmd_discover(args: argparse.Namespace) -> None:
     # Print summary
     print("\n=== Discovery Summary ===")
     print(f"Total discovered : {stats.total_discovered}")
-    print(f"Inserted (new)   : {stats.total_inserted}")
+    print(
+        f"Inserted (new)   : {stats.total_inserted} (matcher-rejected, never fetched: {stats.total_rejected})"
+    )
     print(f"Duplicates       : {stats.duplicate_count}")
     print(f"DDG results      : {stats.ddg_count}")
     print(f"Sitemap/API      : {stats.sitemap_count}")

@@ -74,6 +74,8 @@ class URLQueue:
         self._conn: Database | None = None
         # Read by the caller right after `enqueue_batch` (it has no await in it).
         self.last_promotion = Promotion()
+        # Newly inserted matcher-rejected rows of the last `enqueue_batch` call.
+        self.last_inserted_rejected = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -123,18 +125,22 @@ class URLQueue:
             ValueError: a `match_class` is not `accept`/`review`/`reject` (nothing is written).
 
         After the call `last_promotion` says how many stored rows were promoted and how
-        many of those were lifted from `skipped` to `pending`.
+        many of those were lifted from `skipped` to `pending`, and
+        `last_inserted_rejected` how many of the newly inserted rows are matcher-rejected
+        (part of the returned count, never fetched).
 
         Returns:
             Number of newly inserted rows.
         """
         assert self._conn is not None, "Call initialize() first"
         self.last_promotion = Promotion()
+        self.last_inserted_rejected = 0
         if not urls:
             return 0
         for u in urls:
             if u.match_class not in CLASS_RANK:
                 raise ValueError(f"invalid match_class {u.match_class!r} for {u.url}")
+        new_rejected = self._count_new_rejected(urls)
 
         rows = [
             (
@@ -182,6 +188,7 @@ class URLQueue:
         # statement executed), so it correctly counts total rows inserted.
         inserted = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
         log.debug("enqueue_batch: inserted=%d / submitted=%d", inserted, len(urls))
+        self.last_inserted_rejected = min(new_rejected, inserted)
 
         # Look ids back up by (url, ticker) rather than relying on lastrowid —
         # executemany + INSERT OR IGNORE means lastrowid only reflects the final
@@ -204,6 +211,21 @@ class URLQueue:
             u.id = row["id"] if row else None
         self.last_promotion = self._promote_duplicates(urls, stored)
         return inserted
+
+    def _count_new_rejected(self, urls: Sequence[DiscoveredURL]) -> int:
+        """Matcher-rejected pairs of the batch that are not stored yet (read before the
+        insert, since `INSERT OR IGNORE` does not say which rows it skipped)."""
+        assert self._conn is not None
+        rejected = {(u.url, u.ticker) for u in urls if u.match_class == "reject"}
+        if not rejected:
+            return 0
+        placeholders = ",".join(in_clause(pair) for pair in rejected)
+        # S608: `placeholders` is a run of in_clause()-built "(?,?)" groups; values are bound.
+        rows = self._conn.execute(
+            f"SELECT url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
+            [v for pair in rejected for v in pair],
+        ).fetchall()
+        return len(rejected) - len(rows)
 
     def _promote_duplicates(
         self, urls: Sequence[DiscoveredURL], stored: dict[tuple[str, str], dict]

@@ -122,6 +122,7 @@ class RunAllResponse(BaseModel):
 
     total_discovered: int
     total_inserted: int
+    total_rejected: int = 0
     duplicate_count: int
     ddg_count: int
     sitemap_count: int

@@ -34,8 +34,7 @@ from extractor.db import (
     get_match_class_counts,
     get_status_counts,
     get_urls_by_status,
-    mark_status,
-    save_article,
+    record_fetch,
 )
 from extractor.pipeline import process_one
 from extractor.reference import load_gics_map
@@ -119,8 +118,7 @@ async def run(args: argparse.Namespace) -> dict:
         progress = tqdm(total=len(tasks), unit="url", desc="Extracting")
         for coro in asyncio.as_completed(tasks):
             article = await coro
-            save_article(conn, article)
-            mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
+            record_fetch(conn, article)
             counts[article["fetch_status"]] = counts.get(article["fetch_status"], 0) + 1
             progress.set_postfix(counts, refresh=False)
             progress.update(1)
@@ -136,7 +134,7 @@ def main() -> None:
         counts = asyncio.run(run(args))
     except KeyboardInterrupt:
         # Every completed URL is committed to the DB as it finishes (see
-        # extractor.db.save_article/mark_status), so nothing done so far is
+        # extractor.db.record_fetch), so nothing done so far is
         # lost -- whatever was still in flight just stays 'pending' and
         # gets retried automatically next run. No separate resume step.
         print("\nInterrupted. Progress so far is saved -- re-run the same command to continue.")

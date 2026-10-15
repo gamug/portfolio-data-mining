@@ -26,11 +26,26 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   in the title), `review` (only weaker evidence, such as a distinctive first word, never excluded) or
   `reject`. `url_matches_company` is `classify_match != "reject"`. A ticker never matches as a raw URL
   substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
-  alone is never `accept`. The class is stored on `discovered_urls` (`T-056b`, below), but the
-  strategies do not set it until `T-056c`: until then `review` pairs are kept like `accept` ones and
-  only `reject` pairs are dropped at discovery. **Do not feed a discovery run made before `T-056c` to
-  `portfolio-nlp`**: its `review` rows (about 63k) are stored as `accept` and would enter the default
-  selection. Design and evidence: `PLAN.md` Work item 10.
+  alone is never `accept`. The class is stored on `discovered_urls` (`T-056b`, below) and the strategies set it (`T-056c`):
+`ddg` and `sitemap`/`rss` no longer drop a pair, they keep `accept`, `review` and `reject` with the class,
+the reason and (for `ddg`) the search `query`. `accept` and `review` rows stay `pending` (a `review` pair
+needs its body for `portfolio-nlp`'s decision); a `reject` row is stored `skipped` (never fetched).
+**Fetch policy:** the class is computed at discovery from the URL and the title (the `ddg` hit title or an
+RSS entry title; a plain sitemap entry has none), then **re-evaluated after the fetch** by the extractor
+(`extractor.db.reevaluate_match`, called by `extractor.db.record_fetch` in the crawler CLI and API) with the stored
+and the fetched title. It is promote-only (`review`→`accept`), guarded in SQL on the class that was read,
+and never touches a `reject` row. A sitemap `reject` row without a title stays `reject` (about 5,800
+pairs would be `review`/`accept` with a title and are never fetched; the T-057 check measures it).
+Rows from the `api` feeds (`stocktwits`, `yahoo_finance`) are `accept` with `match_reason = 'feed'`. The
+orchestrator's merge of the strategies keeps the higher class of a pair found twice (and its `query`). The
+discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` (`total_rejected`) and the CLI summary report
+`rejected=`: the **newly inserted** rows that are matcher-rejected (`URLQueue.last_inserted_rejected`). They are
+part of `inserted` but never fetched, so `inserted - rejected` sizes the new fetch queue (a re-run inserts
+0 and reports 0). The run's `by_domain` and `by_company` (and the CLI summary tables) count **inserted** rows, matcher-rejected ones
+included, like `queue.stats()['by_domain']`; use `by_match_class` or `total_rejected` to tell how many of them will be fetched.
+`multi_company` is derived, not stored: a URL with two or more `accept` pairs. **Rows discovered before
+`T-056c` carry no class** (stored `accept`): do not feed such a run to `portfolio-nlp` until the T-057
+re-tag. Design and evidence: `PLAN.md` Work item 10.
 
 **Matching columns on `discovered_urls`** (schema version 2, `data_mining/schema.py`; constitution AI
 behavior #10 confirmed 2026-10-15): `match_class` (`accept`/`review`/`reject`, `NOT NULL DEFAULT

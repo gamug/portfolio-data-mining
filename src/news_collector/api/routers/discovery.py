@@ -62,6 +62,7 @@ async def run_all(
     return RunAllResponse(
         total_discovered=stats.total_discovered,
         total_inserted=stats.total_inserted,
+        total_rejected=stats.total_rejected,
         duplicate_count=stats.duplicate_count,
         ddg_count=stats.ddg_count,
         sitemap_count=stats.sitemap_count,

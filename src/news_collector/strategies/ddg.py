@@ -46,7 +46,9 @@ class DDGStrategy:
         Preconditions:
         - company and ticker are non-empty strings
         Postconditions:
-        - All returned URLs pass is_article_url and url_matches_company filters
+        - All returned URLs pass is_article_url; company matching no longer drops a URL:
+          `review` and `reject` pairs are returned with their class, reason and the
+          query (the queue stores a `reject` pair as skipped, T-056c)
         - source field is "ddg" on all returned items
         Loop Invariants:
         - seen set grows monotonically; no duplicate URL emitted within this call
@@ -78,8 +80,7 @@ class DDGStrategy:
                 if not self._connector.is_article_url(url):
                     continue
                 title = hit.get("title") or ""
-                if not self._connector.url_matches_company(url, title, company, ticker):
-                    continue
+                match = self._connector.explain_match(url, title, company, ticker)
                 seen.add(url)
                 results.append(
                     DiscoveredURL(
@@ -90,6 +91,9 @@ class DDGStrategy:
                         source="ddg",
                         discovered_at=datetime.utcnow(),
                         title=title or None,
+                        match_class=match.cls,
+                        match_reason=match.reason,
+                        query=query,
                     )
                 )
 

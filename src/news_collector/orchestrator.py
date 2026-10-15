@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import httpx
 
+from data_mining.matching import CLASS_RANK
 from news_collector.config import default_end_date, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.connectors.cnbc import CNBCConnector
@@ -208,8 +209,9 @@ class DiscoveryOrchestrator:
 
         stats.elapsed_seconds = time.monotonic() - t0
         log.info(
-            "Discovery complete: inserted=%d, duplicates=%d, promoted=%d, elapsed=%.1fs",
+            "Discovery complete: inserted=%d (of which rejected=%d, never fetched), duplicates=%d, promoted=%d, elapsed=%.1fs",
             stats.total_inserted,
+            stats.total_rejected,
             stats.duplicate_count,
             stats.total_promoted,
             stats.elapsed_seconds,
@@ -297,14 +299,16 @@ class DiscoveryOrchestrator:
         partial.inserted_count = inserted
         partial.duplicate_count = duplicate_count
         partial.promoted_count = self._queue.last_promotion.promoted
+        partial.rejected_count = self._queue.last_inserted_rejected
 
         log.info(
-            "%s / %s: ddg=%d sitemap/api=%d inserted=%d dupes=%d promoted=%d",
+            "%s / %s: ddg=%d sitemap/api=%d inserted=%d (of which rejected=%d) dupes=%d promoted=%d",
             company.ticker,
             domain,
             partial.ddg_count,
             partial.sitemap_count,
             inserted,
+            partial.rejected_count,
             duplicate_count,
             partial.promoted_count,
         )
@@ -346,12 +350,18 @@ class DiscoveryOrchestrator:
         api_urls: list[DiscoveredURL],
     ) -> tuple[list[DiscoveredURL], int]:
         """Merge results from all strategies and dedupe by normalized URL.
-        Returns (deduped urls, duplicate count)."""
+        The same pair found twice keeps the higher `match_class` (with the reason that
+        decided it) and any `query` either copy carried, so the order of the strategies
+        cannot demote it. Returns (deduped urls, duplicate count)."""
         all_urls = ddg_urls + sitemap_urls + api_urls
-        seen: set[str] = set()
-        deduped: list[DiscoveredURL] = []
+        kept: dict[str, DiscoveredURL] = {}
         for u in all_urls:
-            if u.url not in seen:
-                seen.add(u.url)
-                deduped.append(u)
-        return deduped, len(all_urls) - len(deduped)
+            first = kept.get(u.url)
+            if first is None:
+                kept[u.url] = u
+                continue
+            if CLASS_RANK[u.match_class] > CLASS_RANK[first.match_class]:
+                first.match_class, first.match_reason = u.match_class, u.match_reason
+            first.query = first.query or u.query
+            first.title = first.title or u.title
+        return list(kept.values()), len(all_urls) - len(kept)
