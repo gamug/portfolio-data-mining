@@ -36,6 +36,10 @@ RSS entry title; a plain sitemap entry has none), then **re-evaluated after the 
 and the fetched title. It is promote-only (`review`→`accept`), guarded in SQL on the class that was read,
 and never touches a `reject` row. A sitemap `reject` row without a title stays `reject` (about 5,800
 pairs would be `review`/`accept` with a title and are never fetched; the T-057 check measures it).
+Rows from the `api` feeds (`stocktwits`, `yahoo_finance`) are `accept` with `match_reason = 'feed'`. The
+orchestrator's merge of the strategies keeps the higher class of a pair found twice (and its `query`). The
+discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` and the CLI summary report `rejected=`: those
+rows are part of `inserted` but are never fetched, so subtract them to size the fetch queue.
 `multi_company` is derived, not stored: a URL with two or more `accept` pairs. **Rows discovered before
 `T-056c` carry no class** (stored `accept`): do not feed such a run to `portfolio-nlp` until the T-057
 re-tag. Design and evidence: `PLAN.md` Work item 10.

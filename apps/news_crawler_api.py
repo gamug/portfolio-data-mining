@@ -45,8 +45,7 @@ from extractor.db import (
     get_status_counts,
     get_urls_by_status,
     mark_status,
-    reevaluate_match,
-    save_article,
+    record_fetch,
 )
 from extractor.parse import (
     extract_body_text,
@@ -351,9 +350,7 @@ async def extract_run(
                 gics_sub_industry=gics_map.get(row["ticker"], {}).get("sub_industry"),
                 fetched_at=datetime.now(UTC).isoformat(),
             )
-            save_article(conn, article)
-            mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
-            reevaluate_match(conn, article["id"], article.get("title"))
+            record_fetch(conn, article)
             counts[article["fetch_status"]] = counts.get(article["fetch_status"], 0) + 1
 
     return BatchExtractResult(requested=len(rows), processed=sum(counts.values()), counts=counts)
@@ -366,15 +363,22 @@ async def extract_one(
     gics_map: dict = Depends(get_gics_map),
 ) -> Article:
     """Run the full fetch -> parse -> classify -> save pipeline for exactly
-    one discovered_urls row, regardless of its current status. The single
+    one discovered_urls row, regardless of its current status (a matcher-rejected pair answers 409). The single
     most useful endpoint for testing a code change against a real page
     without running the whole batch CLI."""
     row = conn.execute(
-        "SELECT id, url, domain, company, ticker, source, title FROM discovered_urls WHERE id = ?",
+        "SELECT id, url, domain, company, ticker, source, title, match_class "
+        "FROM discovered_urls WHERE id = ?",
         (url_id,),
     ).fetchone()
     if row is None:
         raise HTTPException(404, f"discovered_urls id={url_id} not found")
+    if row["match_class"] == "reject":
+        raise HTTPException(
+            409,
+            f"discovered_urls id={url_id} is a matcher-rejected pair (match_class=reject): "
+            "it is never fetched, so its article cannot enter the default selection",
+        )
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         article = await process_one(
@@ -385,9 +389,7 @@ async def extract_one(
             gics_sub_industry=gics_map.get(row["ticker"], {}).get("sub_industry"),
             fetched_at=datetime.now(UTC).isoformat(),
         )
-    save_article(conn, article)
-    mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
-    reevaluate_match(conn, article["id"], article.get("title"))
+    record_fetch(conn, article)
     return Article(**article)
 
 

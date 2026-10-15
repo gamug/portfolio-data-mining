@@ -56,6 +56,8 @@ means across every service in this repo.
 
 - `get_urls_by_status()` and `get_pending_urls()` never return a `reject` row, **whatever status is
   asked for**: `POST /extract/run?status=skipped` returns paywall skips, not rejected pairs.
+- `POST /extract/{id}` answers **409** for a rejected row too (it runs "regardless of status", but a
+  rejected pair must never get an `articles` row: that is what `portfolio-nlp` reads).
 - `POST /discovered/{id}/reset` answers **409** for a rejected row (it is promoted by rediscovery or
   by the re-tag decision, not reset); `review` and `accept` rows reset as before.
 - `GET /discovered` and `GET /discovered/{id}` return `match_class` and `match_reason`, and the list
@@ -66,10 +68,18 @@ means across every service in this repo.
 - The CLI start-up line counts only non-rejected rows as "Already processed" and prints
   "Matcher-rejected, not fetched: N" separately when N is above zero.
 
+## Post-fetch re-evaluation
+
+After every fetch the CLI and both extract endpoints call `extractor.db.record_fetch`: save the article,
+set the row's status, and, when the page was read (`fetch_status = 'ok'`), `reevaluate_match` re-classes
+the pair with `data_mining.matching` using the stored and the fetched title. It only promotes
+(`review`→`accept`), is guarded in SQL on the class that was read, skips `reject` rows, and commits once
+per promoted row on purpose (the collector writes the same table).
+
 ## Testing
 
 ```bash
 .venv\Scripts\python.exe -m pytest tests/extractor -q
 ```
 
-42 pass at the time of writing (2026-10-15), no known issues.
+54 pass at the time of writing (2026-10-15), no known issues.

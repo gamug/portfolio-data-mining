@@ -95,6 +95,7 @@ class YahooFinanceConnector(BaseConnector):
                     discovered_at=datetime.utcnow(),
                     pub_date=pub_date,
                     title=item.get("title"),
+                    match_reason="feed",
                 )
             )
         return results

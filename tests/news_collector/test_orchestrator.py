@@ -93,3 +93,58 @@ async def test_resume_does_not_skip_a_different_date_range(queue: URLQueue) -> N
 
     assert ("AAPL", "cnbc.com") in seen  # different range => not a match, must run again
     assert stats.skipped_pairs == 0
+
+
+async def test_run_one_counts_rejected_rows_and_dedupe_keeps_the_higher_class(
+    queue: URLQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime  # noqa: PLC0415
+
+    from news_collector.models import DiscoveredURL  # noqa: PLC0415
+    from news_collector.strategies.ddg import DDGStrategy  # noqa: PLC0415
+    from news_collector.strategies.sitemap import SitemapRSSStrategy  # noqa: PLC0415
+
+    def row(url: str, cls: str, source: str, query: str | None = None) -> DiscoveredURL:
+        return DiscoveredURL(
+            url=url,
+            domain="cnbc.com",
+            company="Apple",
+            ticker="AAPL",
+            source=source,  # type: ignore[arg-type]
+            discovered_at=datetime(2026, 8, 10),
+            match_class=cls,  # type: ignore[arg-type]
+            match_reason=cls,
+            query=query,
+        )
+
+    async def ddg(self, company, ticker, date_range):  # type: ignore[no-untyped-def]
+        return [
+            row("https://cnbc.com/a", "reject", "ddg", "q1"),
+            row("https://cnbc.com/b", "reject", "ddg", "q1"),
+        ]
+
+    async def sitemap(self, company, ticker, date_range):  # type: ignore[no-untyped-def]
+        return [row("https://cnbc.com/a", "accept", "rss")]
+
+    monkeypatch.setattr(DDGStrategy, "discover", ddg)
+    monkeypatch.setattr(SitemapRSSStrategy, "discover", sitemap)
+
+    class _Conn:
+        _client = None
+
+    orch = DiscoveryOrchestrator(connectors={"cnbc.com": _Conn()}, queue=queue, concurrency=1)  # type: ignore[arg-type]
+    partial = await orch._run_one(
+        Company(ticker="AAPL", name="Apple"),
+        "cnbc.com",
+        DateRange(start=date(2024, 1, 1), end=date(2024, 1, 31)),
+    )
+
+    assert (partial.inserted_count, partial.rejected_count, partial.duplicate_count) == (2, 1, 1)
+    stored = {
+        r["url"]: (r["match_class"], r["status"], r["query"])
+        for r in queue._conn.execute("SELECT url, match_class, status, query FROM discovered_urls")  # type: ignore[union-attr]
+    }
+    assert stored == {
+        "https://cnbc.com/a": ("accept", "pending", "q1"),
+        "https://cnbc.com/b": ("reject", "skipped", "q1"),
+    }

@@ -145,6 +145,7 @@ class StockTwitsConnector(BaseConnector):
                     discovered_at=datetime.utcnow(),
                     pub_date=pub_date,
                     title=msg.get("body", "")[:200] or None,
+                    match_reason="feed",
                 )
             )
         return results, False

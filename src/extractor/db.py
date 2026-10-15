@@ -32,6 +32,7 @@ __all__ = [
     "get_status_counts",
     "get_urls_by_status",
     "mark_status",
+    "record_fetch",
     "reevaluate_match",
     "save_article",
 ]
@@ -172,5 +173,17 @@ def reevaluate_match(db: Database, url_id: int, fetched_title: str | None = None
         "WHERE id = ? AND match_class = ?",
         (match.cls, match.reason, url_id, row["match_class"]),
     )
+    # One commit per promoted row, deliberately: batching it would hold a write lock across
+    # the fetch loop and the collector writes this table concurrently.
     db.commit()
     return cur.rowcount == 1
+
+
+def record_fetch(db: Database, article: dict) -> None:
+    """Persist one fetch result: the article, the row's status, and (for a page that was
+    read) the post-fetch re-evaluation of its match class. The three steps live here so
+    the CLI and both API endpoints cannot drift apart."""
+    save_article(db, article)
+    mark_status(db, article["id"], article["fetch_status"], article["http_status_code"])
+    if article["fetch_status"] == "ok":
+        reevaluate_match(db, article["id"], article.get("title"))

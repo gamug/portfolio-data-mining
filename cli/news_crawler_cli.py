@@ -34,9 +34,7 @@ from extractor.db import (
     get_match_class_counts,
     get_status_counts,
     get_urls_by_status,
-    mark_status,
-    reevaluate_match,
-    save_article,
+    record_fetch,
 )
 from extractor.pipeline import process_one
 from extractor.reference import load_gics_map
@@ -120,9 +118,7 @@ async def run(args: argparse.Namespace) -> dict:
         progress = tqdm(total=len(tasks), unit="url", desc="Extracting")
         for coro in asyncio.as_completed(tasks):
             article = await coro
-            save_article(conn, article)
-            mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
-            reevaluate_match(conn, article["id"], article.get("title"))
+            record_fetch(conn, article)
             counts[article["fetch_status"]] = counts.get(article["fetch_status"], 0) + 1
             progress.set_postfix(counts, refresh=False)
             progress.update(1)

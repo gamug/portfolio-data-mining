@@ -143,7 +143,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `multi_company` is derived (T-056c). All figures reproduce with
       `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
       details in `PLAN.md` Work item 10. → step 2.
-- [ ] **T-056** *(split into `T-056a`, `T-056b`, `T-056c` so each piece is
+- [x] **T-056** *(done 2026-10-15: `a`, `b`, `c`; split into `T-056a`, `T-056b`, `T-056c` so each piece is
       reviewable and shippable; the IDs stay sub-numbered because `portfolio-nlp`
       cites only `T-053`–`T-059`. Order: `a` (no schema) → `b` (constitution #10
       confirmed 2026-10-15, starts after PR #58 is reviewed) → `c`; T-057 starts after all three.)* Implement the approved
@@ -249,6 +249,13 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       URLs carry several tickers); the pair stays one row per `(url, ticker)`. Tests: the
       strategies keep `review`/`reject` rows with their class and `query`; the extractor
       promotes a fetched `review` row and never demotes. **Done when:** the four gates clean, `scripts/score_ticker_rules.py --check` exits 0 (or PLAN table and `EXPECTED_FIGURES` are updated together), the strategy and extractor tests pass, `docs/modules/news-collector.md` and the architecture artifacts describe the fetch policy (AI behavior #11, never renamed). → step 3.
+      **Results (T-056c, PR #60):** the strategies keep every class with `match_reason` and, for `ddg`,
+      the `query`; `api` feed rows (`stocktwits`, `yahoo_finance`) carry `match_reason = 'feed'`; the
+      orchestrator's merge keeps the higher class of a pair found twice (and any `query`); discovery
+      counters report `rejected=` (part of `inserted=`, never fetched). `extractor.db.record_fetch`
+      (save, status, re-evaluation of a page that was read) is the one post-fetch step used by the
+      crawler CLI and both API endpoints; `POST /extract/{id}` answers 409 for a `reject` row.
+      `pytest` 636 passed; `scripts/score_ticker_rules.py --check` exits 0.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation

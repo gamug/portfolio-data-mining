@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056a`, `T-056b` and `T-056c` done (T-056c: PR pending); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes (constitution #10) on 2026-10-15.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes (constitution #10) on 2026-10-15.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
