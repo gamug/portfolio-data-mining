@@ -289,7 +289,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       committed (`data/ticker_retag_check_*.csv`). `--apply` on `/workspaces/thesis/data/urls.db`, backup `urls.pre-retag.db`: `verified: true`,
       481,332 rows re-tagged (accept 104,614 / review 51,295 / reject 325,423), 376,718 articles quarantined, lists in
       `data/retag/` (git-ignored: `removed_articles.csv` 325,423, `review_quarantine.csv` 51,295, `retag_summary.json`). Label vocabulary is `yes`/`no`/`unclear`.
-- [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
+- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
       (its `T-132` decides them; nothing is excluded on doubt there). **One agreed
