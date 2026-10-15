@@ -10,6 +10,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from data_mining.quarantine import quarantine_articles
 from news_collector.models import DiscoveredURL
 from news_collector.storage.queue import URLQueue
 
@@ -298,6 +299,39 @@ def test_rediscovery_with_a_higher_class_promotes_and_resets_status(queue: URLQu
     )
     assert again.id == first.id
     assert [u.url for u in queue.get_pending()] == ["https://x.com/a"]
+
+
+def test_rediscovery_promotion_releases_a_quarantined_article(queue: URLQueue) -> None:
+    review = _classed("https://x.com/a", "review", match_reason="weak")
+    queue.enqueue_batch([review])
+    conn = queue._conn
+    assert conn is not None
+    conn.execute("UPDATE discovered_urls SET status='fetched'")
+    conn.execute("INSERT INTO articles (id, fetch_status) VALUES (?, 'ok')", (review.id,))
+    quarantine_articles(conn)  # what the fetch of a review pair does
+    assert conn.execute("SELECT fetch_status FROM articles").fetchone()[0] == "quarantined"
+
+    queue.enqueue_batch([_classed("https://x.com/a", "accept", match_reason="name")])
+
+    row = conn.execute("SELECT fetch_status, prev_fetch_status FROM articles").fetchone()
+    assert tuple(row) == (
+        "ok",
+        None,
+    )  # nothing re-fetches a fetched row, so the promotion releases it
+    assert _stored(queue, "/a").status == "fetched"
+
+
+def test_rediscovery_without_a_class_rise_keeps_the_article_quarantined(queue: URLQueue) -> None:
+    review = _classed("https://x.com/a", "review", match_reason="weak")
+    queue.enqueue_batch([review])
+    conn = queue._conn
+    assert conn is not None
+    conn.execute("INSERT INTO articles (id, fetch_status) VALUES (?, 'ok')", (review.id,))
+    quarantine_articles(conn)
+
+    queue.enqueue_batch([_classed("https://x.com/a", "review", match_reason="weak")])
+
+    assert conn.execute("SELECT fetch_status FROM articles").fetchone()[0] == "quarantined"
 
 
 def test_rediscovery_promotes_to_review_and_lifts_the_skip(queue: URLQueue) -> None:

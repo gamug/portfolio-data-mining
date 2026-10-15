@@ -13,7 +13,7 @@ structured dataset of full article text + metadata: reads `discovered_urls` rows
 `status='pending'` (never a matcher-rejected pair, see below) from the shared `data/urls.db` (override with `$DATABASE_URL`, see
 root `.env.example`), fetches each with `httpx`, extracts
 title/author/pub_date/body via JSON-LD + `trafilatura`, classifies the result
-(`ok` / `paywalled` / `thin_content` / `failed`), and writes a matching row to `articles`
+(`ok` / `paywalled` / `thin_content` / `failed`; a `review`/`reject` pair is then set to `quarantined`, see below), and writes a matching row to `articles`
 (same `id` as the source `discovered_urls` row, enforced as a `FOREIGN KEY`).
 
 `cnbc.com` is ~86% of the discovered corpus and gets its own concurrency budget
@@ -67,6 +67,15 @@ means across every service in this repo.
   `get_match_class_counts()` gives the same numbers.
 - The CLI start-up line counts only non-rejected rows as "Already processed" and prints
   "Matcher-rejected, not fetched: N" separately when N is above zero.
+
+## Quarantined articles
+
+An article whose pair is not `accept` has `fetch_status = 'quarantined'` (`data_mining.quarantine`, T-057), with
+its previous status kept in `articles.prev_fetch_status`; `record_fetch` applies it after every fetch, and a
+promotion to `accept` restores it. So `GET /articles?fetch_status=quarantined` and `GET /articles/{id}` return
+these rows (the body is kept, nothing is deleted), while `/extract/run` counts and the `/extract/{id}` response report the extractor's own verdict
+(`ok`, ...) because the quarantine is applied after it. `prev_fetch_status` is restore bookkeeping and is
+deliberately **not** in the `Article` response model.
 
 ## Post-fetch re-evaluation
 

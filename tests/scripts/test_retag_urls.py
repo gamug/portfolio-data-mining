@@ -158,3 +158,17 @@ def test_verdict_fails_on_unlabeled_rows(tmp_path: Path) -> None:
     path = _sheet(tmp_path, 0, 0)
     path.write_text(path.read_text().replace(",accept,yes", ",accept,", 1))
     assert validation.final_verdict(path)[0] is False
+
+
+def test_verdict_line_reports_unsure_per_class(tmp_path: Path) -> None:
+    path = _sheet(tmp_path, 0, 0)
+    path.write_text(path.read_text().replace(",accept,yes", ",accept,unsure", 3))
+    ok, text = validation.final_verdict(path)
+    assert ok is True  # unsure is neither wrong nor correct ...
+    assert "3 unsure" in text  # ... so it is reported
+
+
+def test_lists_carry_the_class(db_file: Path, tmp_path: Path) -> None:
+    _run(db_file, tmp_path)
+    rows = list(csv.DictReader((tmp_path / "out/removed_articles.csv").open()))
+    assert rows and {r["match_class"] for r in rows} == {"reject"} and rows[0]["match_reason"]

@@ -279,7 +279,8 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (FR-014, `PLAN.md`). → step 4.
       **Progress (T-057):** `articles.prev_fetch_status` added (schema version 3, confirmed 2026-10-15,
       recorded in `portfolio-nlp` PR #102 T-132/T-128); `data_mining/quarantine.py`; `record_fetch` quarantines/
-      releases after every fetch (a fetched `review` pair would otherwise read `ok`); `scripts/retag_urls.py`
+      releases after every fetch (a fetched `review` pair would otherwise read `ok`) and a rediscovery promotion
+      releases the article too; `scripts/retag_urls.py`
       (dry run by default; `--apply` needs `--backup` and `--hand-check-passed`). Dry run and apply on a copy of
       the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
       376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag

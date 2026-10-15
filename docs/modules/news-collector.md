@@ -47,7 +47,7 @@ included, like `queue.stats()['by_domain']`; use `by_match_class` or `total_reje
 `T-056c` carry no class** (stored `accept`): do not feed such a run to `portfolio-nlp` until the T-057
 re-tag. Design and evidence: `PLAN.md` Work item 10.
 
-**Matching columns on `discovered_urls`** (schema version 2, `data_mining/schema.py`; constitution AI
+**Matching columns on `discovered_urls`** (schema version 2, `data_mining/schema.py`; the current version is 3, which adds `articles.prev_fetch_status`, see "Re-tag and quarantine"; constitution AI
 behavior #10 confirmed 2026-10-15): `match_class` (`accept`/`review`/`reject`, `NOT NULL DEFAULT
 'accept'`, indexed by `idx_match_class`), `match_reason` (the deciding signal) and `query` (the `ddg`
 search query that returned the row; provenance only, it never changes the class). A matcher-rejected
@@ -82,8 +82,9 @@ print(before, q._conn.execute(
     " WHERE name='idx_match_class'), (SELECT * FROM pragma_user_version) FROM discovered_urls").fetchone()[:])
 PY
 ```
-Expect the same row count before and after, every row `accept`, the index present and user_version 2
-(the 481,332-row corpus gave exactly that on 2026-10-15).
+Expect the same row count before and after, every row `accept`, the index present and user_version 3
+(the 481,332-row corpus gave that on 2026-10-15, when the version was 2; `initialize()` now also adds
+`articles.prev_fetch_status` and stamps 3).
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
@@ -175,7 +176,8 @@ out `reject` to `skipped`, then quarantines every fetched `review`/`reject` arti
 nullable `articles.prev_fetch_status` (schema version 3; constitution AI behavior #10 confirmed 2026-10-15,
 recorded in `portfolio-nlp` PR #102 T-132/T-128): `portfolio-nlp` reads `fetch_status = 'ok'`, so it never sees
 these rows; `release_articles` restores a promoted row exactly; nothing is deleted and `discovered_urls` is never
-touched by it. `extractor.db.record_fetch` runs `sync_quarantine` after every fetch, so a `review` pair fetched
+touched by it. A rediscovery that promotes a fetched pair to `accept` (`URLQueue._promote_duplicates`) releases its
+article too, since nothing re-fetches a fetched row. `extractor.db.record_fetch` runs `sync_quarantine` after every fetch, so a `review` pair fetched
 from now on is quarantined too, and a promotion releases it. `prev_fetch_status` is not in `ARTICLE_COLUMNS`,
 so a re-fetch's upsert never resets it.
 
@@ -197,7 +199,10 @@ PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
 `--apply` refuses to run without a backup path (written through the SQLite backup API, integrity-checked, never
 overwriting a file) and the explicit `--hand-check-passed`; it migrates, re-tags in one transaction, quarantines in
 a second, and a re-run changes nothing. Outputs: `removed_articles.csv` (fetched `reject` pairs, T-131's list),
-`review_quarantine.csv` (T-132's selection with the evidence) and `retag_summary.json`.
+`review_quarantine.csv` (T-132's selection with the evidence), both with `match_class` and `match_reason`
+columns, and `retag_summary.json`; `data/retag/` is git-ignored (regenerated, hundreds of thousands of rows).
+`--verdict` prints the `unsure` count per class: an `unsure` label is neither wrong nor correct, so read it
+before trusting a pass.
 
 ## Testing
 

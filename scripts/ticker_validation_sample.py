@@ -120,7 +120,9 @@ MAX_REJECT_CORRECT = 1
 
 def final_verdict(sample_path: Path) -> tuple[bool, str]:
     """Score the labeled T-057 check (``label`` is ``yes`` / ``no`` / ``unsure``): pass when at most
-    5 ``accept`` pairs are ``no`` and at most 1 ``reject`` pair is ``yes``. Unlabeled rows fail it."""
+    5 ``accept`` pairs are ``no`` and at most 1 ``reject`` pair is ``yes``, and every row is labeled.
+    ``unsure`` counts as neither wrong nor correct (the task defines the pass on those two only), so the
+    verdict line reports how many there are per class; read it before trusting a pass."""
     with sample_path.open(newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     by_class = {
@@ -132,11 +134,14 @@ def final_verdict(sample_path: Path) -> tuple[bool, str]:
     )
     wrong = by_class["accept"].count("no")
     correct = by_class["reject"].count("yes")
+    unsure = {c: labels.count("unsure") for c, labels in by_class.items()}
     ok = not unlabeled and wrong <= MAX_ACCEPT_WRONG and correct <= MAX_REJECT_CORRECT
     text = (
-        f"accept: {len(by_class['accept'])} pairs, {wrong} wrong (max {MAX_ACCEPT_WRONG}); "
-        f"reject: {len(by_class['reject'])} pairs, {correct} correct (max {MAX_REJECT_CORRECT}); "
-        f"unlabeled: {unlabeled} -> {'PASS' if ok else 'FAIL (back to T-055)'}"
+        f"accept: {len(by_class['accept'])} pairs, {wrong} wrong (max {MAX_ACCEPT_WRONG}), "
+        f"{unsure['accept']} unsure; "
+        f"reject: {len(by_class['reject'])} pairs, {correct} correct (max {MAX_REJECT_CORRECT}), "
+        f"{unsure['reject']} unsure; unlabeled: {unlabeled} -> "
+        f"{'PASS' if ok else 'FAIL (back to T-055)'}"
     )
     return ok, text
 

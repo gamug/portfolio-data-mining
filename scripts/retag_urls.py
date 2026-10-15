@@ -28,7 +28,7 @@ Always run it on a copy first. Usage:
         --backup urls.pre-retag.db --hand-check-passed [--out DIR]
 
 Outputs in `--out` (default `data/retag`): `removed_articles.csv` (fetched `reject` pairs: article
-id, ticker, url, reason), `review_quarantine.csv` (fetched `review` pairs, the T-058 selection
+id, ticker, company, url, class, reason), `review_quarantine.csv` (fetched `review` pairs, the T-058 selection
 plus class evidence) and `retag_summary.json`.
 """
 
@@ -53,7 +53,7 @@ from data_mining.schema import apply_schema, run_migrations
 FEED_REASON = "feed"
 CLASSES = ("accept", "review", "reject")
 DEFAULT_OUT = Path("data/retag")
-_REMOVED_HEADER = ("article_id", "ticker", "company", "url", "match_reason")
+_LIST_HEADER = ("article_id", "ticker", "company", "url", "match_class", "match_reason")
 
 
 def _has_column(con: sqlite3.Connection, table: str, column: str) -> bool:
@@ -89,10 +89,6 @@ def retag_plan(con: sqlite3.Connection) -> list[tuple[int, str, str, str | None]
         skip = "skipped" if cls == "reject" and r["status"] == "pending" else None
         plan.append((r["id"], cls, reason, skip))
     return plan
-
-
-def _count(con: sqlite3.Connection, sql: str) -> Counter[tuple[Any, ...]]:
-    return Counter({tuple(r[:-1]): r[-1] for r in con.execute(sql)})
 
 
 def summarize(con: sqlite3.Connection, plan: list[tuple[int, str, str, str | None]]) -> dict:
@@ -153,14 +149,14 @@ def write_lists(con: sqlite3.Connection, out: Path) -> dict[str, int]:
     counts = {}
     for name, cls in (("removed_articles.csv", "reject"), ("review_quarantine.csv", "review")):
         rows = con.execute(
-            "SELECT a.id, d.ticker, d.company, d.url, d.match_reason FROM articles a"
+            "SELECT a.id, d.ticker, d.company, d.url, d.match_class, d.match_reason FROM articles a"
             " JOIN discovered_urls d ON d.id = a.id"
             " WHERE a.fetch_status = 'quarantined' AND d.match_class = ? ORDER BY a.id",
             (cls,),
         ).fetchall()
         with (out / name).open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(_REMOVED_HEADER)
+            w.writerow(_LIST_HEADER)
             w.writerows(rows)
         counts[name] = len(rows)
     return counts
@@ -186,11 +182,11 @@ def plan_lists(
     ):
         cls, reason = new.get(aid, stored[aid])
         if cls in rows_by_cls:
-            rows_by_cls[cls].append((aid, ticker, company, url, reason))
+            rows_by_cls[cls].append((aid, ticker, company, url, cls, reason))
     for name, cls in (("removed_articles.csv", "reject"), ("review_quarantine.csv", "review")):
         with (out / name).open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(_REMOVED_HEADER)
+            w.writerow(_LIST_HEADER)
             w.writerows(rows_by_cls[cls])
         counts[name] = len(rows_by_cls[cls])
     return counts
