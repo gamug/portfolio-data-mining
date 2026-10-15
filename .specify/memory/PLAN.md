@@ -910,7 +910,7 @@ The rule is monotone, since more text can only add evidence, so re-evaluation ca
 only promote and two code paths cannot disagree by demoting. It applies to fetched
 (`accept`/`review`) rows: this is why 63,158 discovery-time `review` pairs fall to
 51,289 in the existing corpus, where every row was fetched. Going forward a
-`reject` row is written with `status = 'skipped'` and never fetched, so a `sitemap`
+`reject` row is written `status = 'skipped'` (with `match_class = 'reject'`) and never fetched, so a `sitemap`
 `reject` row stays `reject` unless a feed title came with it; about 5,800 pairs
 that would improve with a title are therefore not fetched (accepted: 0.0% of
 correct pairs hidden in discovery mode on both samples, re-measured in T-057).
@@ -966,7 +966,8 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
    - Recall matters too: the rule must keep what was correctly tagged. Report
      the retained share on a hand-labeled set of known-correct pairs.
 3. **Implement** the approved three-class rule once, in a shared pure module
-   exposed by one new concrete `BaseConnector.classify_match` returning
+   in `data_mining/matching.py` (shared by both stages, which never import each
+   other), exposed by one new concrete `BaseConnector.classify_match` returning
    `accept`/`review`/`reject`; the seven overriding connectors' abstract
    `url_matches_company` keeps its signature and returns `class != "reject"`, the
    substring shortcut in `nasdaq`, `seeking_alpha`, `stocktwits` and
@@ -976,8 +977,15 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
    `run_migrations` step with `ensure_columns`, an index on `match_class`), the
    `ddg` and `sitemap` strategies keep `review`/`reject` rows with their class
    instead of dropping them (so new crawls have the quarantine), `reject` rows
-   are written `status = 'skipped'` so the fetcher and queue, which select by
-   `status`, never fetch them, and `accept`/`review` rows stay `pending`. The class is computed at
+   are written `status = 'skipped' AND match_class = 'reject'` (the existing
+   `skipped` meaning, paywall/irrelevant after inspection, is kept distinct by
+   `match_class`; `mark_skipped` is not used and `title` is preserved) so the
+   fetcher and queue, which select by `status`, never fetch them, and
+   `accept`/`review` rows stay `pending`; `/discovered` exposes `match_class`.
+   The extractor re-evaluates a fetched row's class through its existing
+   `discovered_urls` update (promote only). This is a shared-schema change under
+   constitution AI behavior #10: the maintainer confirms the exact columns and the
+   `skipped`+`reject` convention before T-056 starts. The class is computed at
    discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
    with the stored title; the rule is monotone, so re-evaluation only promotes.
    `multi_company` is derived (a URL with 2+ `accept` pairs), not stored.

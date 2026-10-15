@@ -143,10 +143,13 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `scripts/score_ticker_rules.py` and `ticker_tagging_sample.py report`;
       details in `PLAN.md` Work item 10. → step 2.
 - [ ] **T-056** Implement the approved three-class rule once, in a shared
-      pure module (`news_collector/matching.py`: the logic of
+      pure module in the **shared library** (`data_mining/matching.py`; both
+      `news_collector` and `extractor` already import `data_mining.db`/`schema`, so
+      the direction stays stages → `data_mining` and the two stages still import
+      nothing from each other: the logic of
       `scripts/score_ticker_rules.py` `design_class`, with the alias map, the
       ordinary-word-name rule, `&`→`and`, the abbreviation list, path-only URL
-      matching and no new dependency), exposed through one new **concrete**
+      matching and no new dependency), exposed to the connectors through one new **concrete**
       `BaseConnector.classify_match(url, title, company, ticker) -> "accept" |
       "review" | "reject"`. The abstract `url_matches_company` keeps its
       signature; in each of the **seven** connectors that override it
@@ -169,19 +172,35 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`)
       now call `classify_match` and keep `review` and `reject` rows with their
       class instead of `continue`, so the quarantine exists for new crawls. **Skipping
-      `reject` rows is by status:** a `reject` row is written with
-      `status = 'skipped'` (not the default `'pending'`), because the extractor
+      `reject` rows is by status, kept distinct from the existing `skipped`
+      meaning:** `URLStatus` already has `skipped` (paywall / irrelevant after
+      inspection; `URLQueue.mark_skipped`/`mark_skipped_by_id` set it and write their
+      reason into `title`). A matcher-rejected pair is therefore defined as
+      **`status = 'skipped' AND match_class = 'reject'`**, so it is always identified by
+      `match_class`; it is written at insert time (`DiscoveredURL` gains
+      `match_class`/`match_reason`/`query`, and the queue's insert path writes
+      `status = 'skipped'` for `match_class == 'reject'` and never touches `title`);
+      `mark_skipped` keeps its meaning and is never used for rejects. It is not the
+      default `'pending'` because the extractor
       (`extractor/db.py` `get_urls_by_status` / `get_pending_urls`) and the queue
       (`news_collector/storage/queue.py` `get_pending`, and the per-ticker counts that
       filter `status='pending'`) select by `status` only; `accept` and `review` rows
       stay `pending` (a `review` pair needs its body for `portfolio-nlp`'s decision).
-      A test proves a `reject` row is never returned by `get_pending_urls` or
-      `get_pending`, and that an `accept` row is.
+      Tests: a `reject` row is never returned by `get_pending_urls` or `get_pending`
+      and an `accept` row is; the insert keeps a `reject` row's `title`;
+      `mark_skipped` leaves `match_class` alone. **API:** `/discovered` responses
+      include `match_class` and `match_reason`, the list gains a `match_class`
+      filter, and the `status` filter description says `skipped` includes
+      matcher-rejected rows; an API test covers the listing and the filter.
       **Discovery vs fetch:** the class is computed at discovery from the URL (and
       the title for `ddg`), then **re-evaluated after the fetch** with the stored
       title; the rule is monotone (more text can only add evidence), so
       re-evaluation can only promote, never demote, and a test locks that property.
-      It applies to **fetched** rows, i.e. `accept`/`review` ones (`review`→`accept`
+      **Who re-evaluates:** the extractor, through its existing post-fetch update of
+      `discovered_urls` (`extractor/db.py`), calling `data_mining.matching` (no
+      import of `news_collector`) and writing only `match_class`/`match_reason`,
+      guarded in SQL so it can only promote. It applies to **fetched** rows, i.e.
+      `accept`/`review` ones (`review`→`accept`
       when the title supplies the evidence). A `reject` row is never fetched, so a
       `sitemap` `reject` row (no title at discovery) stays `reject` unless a feed
       title was supplied with it (`entry.title` of an RSS entry). Accepted cost:
@@ -197,7 +216,12 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       strategies keeping `review`/`reject` rows with their class and `query`. Only
       `test_cnbc.py` covers `url_matches_company` today (and asserts the permissive
       rule): update it deliberately and add the six missing files. No
-      `BaseConnector` abstract-signature change. → step 3.
+      `BaseConnector` abstract-signature change. **Constitution AI behavior #10:**
+      new `discovered_urls` columns, a `status` convention and an extractor update
+      are a shared-schema change touching the two-package DB contract, so the
+      maintainer confirms them before this task starts (the design, quarantine and a
+      `query` column were approved on 2026-10-15; the exact columns and the
+      `skipped`+`reject` convention are listed here for that confirmation). → step 3.
 - [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
@@ -209,7 +233,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       keeping the previous status in a new `articles.prev_fetch_status` column (the class
       and reason stay on `discovered_urls` as `match_class`/`match_reason`, joined on
       `id`) so clearing the flag restores the row exactly; the `accept` rows are
-      untouched, and `reject` rows that were never fetched have no `articles` row (their
+      untouched, `discovered_urls.status` of already-fetched rows is **left as it is**
+      (`fetched`/`failed`; the class is read from `match_class`, and `/discovered`
+      now exposes it), and `reject` rows that were never fetched have no `articles` row (their
       `discovered_urls.status` is already `skipped`). The run also writes the list of
       removed `(url, ticker)` / article ids and the `review` quarantine list
       (class and triggering evidence), which T-058 hands over. Before the real
