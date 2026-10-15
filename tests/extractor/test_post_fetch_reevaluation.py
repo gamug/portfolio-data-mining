@@ -62,12 +62,15 @@ def _state(db_path: str, url: str) -> tuple[str, str, int]:
     return cls, status, n
 
 
-def _article(url_id: int, fetch_status: str = "ok", title: str | None = _FETCHED_TITLE) -> dict:
+_state_title = {"title": _FETCHED_TITLE}  # what the fake fetch "reads"; a test overrides it
+
+
+def _article(url_id: int, fetch_status: str = "ok", title: str | None = None) -> dict:
     return {
         "id": url_id,
         "ticker": "AAPL",
         "company": "Apple Inc.",
-        "title": title,
+        "title": title if title is not None else _state_title["title"],
         "body_text": "body",
         "fetch_status": fetch_status,
         "http_status_code": 200,
@@ -170,3 +173,82 @@ def test_record_fetch_reevaluates_a_paywalled_page_that_was_read(db_path: str) -
     conn.close()
 
     assert _state(db_path, _URL) == ("accept", "paywalled", 1)
+
+
+def _article_status(db_path: str, url_id: int) -> tuple[str, str | None]:
+    with sqlite3.connect(db_path) as c:
+        row = c.execute(
+            "SELECT fetch_status, prev_fetch_status FROM articles WHERE id = ?", (url_id,)
+        ).fetchone()
+    return row[0], row[1]
+
+
+def test_record_fetch_quarantines_a_review_article_and_releases_it_on_promotion(
+    db_path: str,
+) -> None:
+    uid = _id(db_path, _URL)
+    db = connect(db_path)
+    ensure_articles_table(db)
+    try:
+        # the fetched title carries no new evidence: the pair stays review, so it is quarantined
+        record_fetch(db, _article(uid, title="A headline"))
+        assert _article_status(db_path, uid) == ("quarantined", "ok")
+        # a re-fetch rewrites fetch_status to 'ok' (the upsert); the pair is still review
+        record_fetch(db, _article(uid, title="A headline"))
+        assert _article_status(db_path, uid) == ("quarantined", "ok")
+        # the fetched title now names the company: promoted to accept, so it reads as ok again
+        record_fetch(db, _article(uid))
+        assert _article_status(db_path, uid) == ("ok", None)
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def no_new_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fetched title says nothing about the company: a `review` pair stays `review`."""
+    monkeypatch.setitem(_state_title, "title", "A headline")
+
+
+def test_api_extract_one_quarantines_an_unpromoted_review_article(
+    crawler: TestClient, db_path: str, no_new_evidence: None
+) -> None:
+    uid = _id(db_path, _URL)
+    resp = crawler.post(f"/extract/{uid}")
+
+    assert resp.status_code == 200
+    assert resp.json()["fetch_status"] == "ok"  # the extractor's verdict
+    assert _article_status(db_path, uid) == ("quarantined", "ok")
+
+
+def test_api_batch_extract_quarantines_an_unpromoted_review_article(
+    crawler: TestClient, db_path: str, no_new_evidence: None
+) -> None:
+    assert crawler.post("/extract/run", params={"limit": 5}).json()["counts"] == {"ok": 1}
+    assert _article_status(db_path, _id(db_path, _URL)) == ("quarantined", "ok")
+
+
+def test_cli_run_quarantines_an_unpromoted_review_article(
+    db_path: str, monkeypatch: pytest.MonkeyPatch, no_new_evidence: None
+) -> None:
+    async def fake_process_one(client, scheduler, row, **kwargs):  # type: ignore[no-untyped-def]
+        return _article(row["id"])
+
+    async def fake_gics(client) -> dict:  # type: ignore[no-untyped-def]
+        return {}
+
+    monkeypatch.setattr(news_crawler_cli, "process_one", fake_process_one)
+    monkeypatch.setattr(news_crawler_cli, "load_gics_map", fake_gics)
+    args = argparse.Namespace(
+        db=db_path, limit=None, retry_failed=False, default_concurrency=2, cnbc_concurrency=4
+    )
+
+    asyncio.run(news_crawler_cli.run(args))
+
+    assert _article_status(db_path, _id(db_path, _URL)) == ("quarantined", "ok")
+
+
+def test_an_accept_article_stays_ok_through_the_api(crawler: TestClient, db_path: str) -> None:
+    """The default fetched title promotes the review pair, so it is never quarantined."""
+    uid = _id(db_path, _URL)
+    crawler.post(f"/extract/{uid}")
+    assert _article_status(db_path, uid) == ("ok", None)

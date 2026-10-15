@@ -14,6 +14,7 @@ from portfolio_common.db import Allowlist, Database, Row, in_clause
 
 from data_mining.db import connect
 from data_mining.matching import CLASS_RANK
+from data_mining.quarantine import release_articles
 from data_mining.schema import apply_schema, run_migrations
 from news_collector.models import DiscoveredURL
 
@@ -240,11 +241,13 @@ class URLQueue:
         database), never copied from the read, and the write is skipped when the stored
         class is no longer the one that was read (a concurrent promotion wins). The counts
         returned are of writes that happened (`rowcount == 1`), and a row counts as lifted
-        only if its status really is `pending` afterwards.
+        only if its status really is `pending` afterwards. A promoted row's article, if it has
+        one and was quarantined, is released (`data_mining.quarantine`).
         """
         assert self._conn is not None
         wrote = False
         promoted = lifted = 0
+        raised_ids: list[int] = []
         for u in urls:
             row = stored.get((u.url, u.ticker))
             if row is None:
@@ -275,6 +278,8 @@ class URLQueue:
                 continue
             wrote = True
             promoted += raised
+            if raised:
+                raised_ids.append(row["id"])
             row.update(match_class=match_class, match_reason=reason, query=query)
             if lift:
                 now = self._conn.execute(
@@ -284,6 +289,12 @@ class URLQueue:
                 lifted += now["status"] == "pending"
         if wrote:
             self._conn.commit()
+        # A fetched pair whose article was quarantined (T-057) reads `ok` again once promoted:
+        # nothing re-fetches it, so nothing else would release it. A no-op for unfetched rows.
+        # One statement and commit per promoted id: promotions are a small share of a batch (the
+        # UPDATE loop above is per row too). Batch with in_clause() if a rediscovery ever promotes thousands.
+        for url_id in raised_ids:
+            release_articles(self._conn, url_id)
         if promoted:
             log.info("enqueue_batch: promoted=%d (lifted from skipped=%d)", promoted, lifted)
         return Promotion(promoted, lifted)
