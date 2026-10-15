@@ -435,3 +435,25 @@ def test_last_promotion_counts_promoted_and_lifted_rows(queue: URLQueue) -> None
     assert queue.last_promotion == (3, 2)
     queue.enqueue_batch([_classed("https://x.com/1", "accept")])
     assert queue.last_promotion == (0, 0)
+
+
+def test_last_promotion_is_zero_when_the_guard_skipped_the_write(queue: URLQueue) -> None:
+    queue.enqueue_batch([_classed("https://x.com/a", "reject")])
+    stale = {("https://x.com/a", "AAPL"): _snapshot(queue, "https://x.com/a")}  # reject
+    queue.enqueue_batch([_classed("https://x.com/a", "accept", match_reason="name")])  # wins
+
+    result = queue._promote_duplicates([_classed("https://x.com/a", "review")], stale)
+
+    assert result == (0, 0)
+
+
+def test_promoted_but_not_lifted_when_the_status_already_moved_on(queue: URLQueue) -> None:
+    first = _classed("https://x.com/a", "reject")
+    queue.enqueue_batch([first])
+    stale = {("https://x.com/a", "AAPL"): _snapshot(queue, "https://x.com/a")}  # skipped, reject
+    queue.mark_fetched_by_id(first.id or 0, 200)  # e.g. fetched by hand meanwhile
+
+    result = queue._promote_duplicates([_classed("https://x.com/a", "accept")], stale)
+
+    assert result == (1, 0)
+    assert _stored(queue, "/a").status == "fetched"

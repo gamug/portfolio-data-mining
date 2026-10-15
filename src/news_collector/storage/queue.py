@@ -216,10 +216,12 @@ class URLQueue:
         `mark_status`) may have changed the row since the read: `status` is written
         only to lift a matcher-rejected row (still `skipped` and `reject` in the
         database), never copied from the read, and the write is skipped when the stored
-        class is no longer the one that was read (a concurrent promotion wins).
+        class is no longer the one that was read (a concurrent promotion wins). The counts
+        returned are of writes that happened (`rowcount == 1`), and a row counts as lifted
+        only if its status really is `pending` afterwards.
         """
         assert self._conn is not None
-        updates: list[tuple] = []
+        wrote = False
         promoted = lifted = 0
         for u in urls:
             row = stored.get((u.url, u.ticker))
@@ -238,20 +240,27 @@ class URLQueue:
                 row["query"],
             ):
                 continue
-            updates.append((match_class, reason, query, int(lift), row["id"], row["match_class"]))
-            promoted += raised
-            lifted += lift
-            row.update(match_class=match_class, match_reason=reason, query=query)
-            if lift:
-                row["status"] = "pending"
-        if updates:
-            self._conn.executemany(
+            # One UPDATE per changed row (a small share of a batch) so the counts report
+            # only writes that happened: the guard may have skipped this one.
+            cursor = self._conn.execute(
                 "UPDATE discovered_urls SET match_class=?, match_reason=?, query=?,"
                 " status=CASE WHEN ?=1 AND status='skipped' AND match_class='reject'"
                 " THEN 'pending' ELSE status END"
                 " WHERE id=? AND match_class=?",
-                updates,
+                (match_class, reason, query, int(lift), row["id"], row["match_class"]),
             )
+            if cursor.rowcount != 1:
+                continue
+            wrote = True
+            promoted += raised
+            row.update(match_class=match_class, match_reason=reason, query=query)
+            if lift:
+                now = self._conn.execute(
+                    "SELECT status FROM discovered_urls WHERE id=?", (row["id"],)
+                ).fetchone()
+                row["status"] = now["status"]
+                lifted += now["status"] == "pending"
+        if wrote:
             self._conn.commit()
         if promoted:
             log.info("enqueue_batch: promoted=%d (lifted from skipped=%d)", promoted, lifted)
