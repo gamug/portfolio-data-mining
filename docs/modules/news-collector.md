@@ -165,6 +165,40 @@ excerpt column removed). `scripts/score_ticker_rules.py` scores the prototype ma
 labeled sample (`--exclude-ids` to leave rows out). `scripts/ticker_validation_sample.py` draws a fresh
 validation sample (strata `accept`/`review`/`reject` by source, excluding already-labeled pairs) in the same CSV format (`ticker_tagging_sample.py report --sample data/ticker_validation_sample.csv` reproduces the first-draft out-of-sample result, since the CSV's `match_mode` is the class the first draft assigned when it was drawn; `score_ticker_rules.py --sample` scores the current rule (`--sizes` prints its exact class sizes over the whole corpus, `--diff` the rows moved by the host fix, the abbreviation list and the alias map, `--check` the figures of both committed samples in both modes against the PLAN table (exit 1 on a difference; needs the local corpus, not run by pytest), `--names [--top N]` the rows accepted on a one-word company name alone (the `N` largest companies, default 25); both are slow, read-only scans); the committed `data/ticker_validation_manual.csv` is the filled sheet without excerpts).
 
+## Re-tag and quarantine (T-057)
+
+`scripts/retag_urls.py` classes every legacy `discovered_urls` row (`match_reason IS NULL`) with
+`data_mining.matching.classify` from the URL and the best known title (discovery title, else the fetched
+article's), keeps rows that already carry a reason (T-056c strategies, `feed`), sets a `pending` pair that comes
+out `reject` to `skipped`, then quarantines every fetched `review`/`reject` article. Quarantine
+(`data_mining/quarantine.py`) is `articles.fetch_status = 'quarantined'` with the previous status in the new
+nullable `articles.prev_fetch_status` (schema version 3; constitution AI behavior #10 confirmed 2026-10-15,
+recorded in `portfolio-nlp` PR #102 T-132/T-128): `portfolio-nlp` reads `fetch_status = 'ok'`, so it never sees
+these rows; `release_articles` restores a promoted row exactly; nothing is deleted and `discovered_urls` is never
+touched by it. `extractor.db.record_fetch` runs `sync_quarantine` after every fetch, so a `review` pair fetched
+from now on is quarantined too, and a promotion releases it. `prev_fetch_status` is not in `ARTICLE_COLUMNS`,
+so a re-fetch's upsert never resets it.
+
+```bash
+# 1. dry run on a COPY: read-only, prints before/after counts per class, source and ticker,
+#    the review/reject URLs also accepted for another ticker, and writes the hand-off lists
+PYTHONPATH=src uv run python scripts/retag_urls.py --db COPY.db --out data/retag
+# 2. the fresh acceptance check (rule frozen; excludes both earlier samples): 60 accept + 40 reject
+PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --final
+PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-export \
+    --sample data/ticker_retag_check_sample.csv --out data/ticker_retag_check_manual.csv   # blind sheet
+#    ...label, then merge with manual-apply and score:
+PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --verdict data/ticker_retag_check_sample.csv
+# 3. only if the verdict passes (at most 5 of 60 accept wrong, at most 1 of 40 reject correct)
+PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
+    --backup urls.pre-retag.db --hand-check-passed
+```
+
+`--apply` refuses to run without a backup path (written through the SQLite backup API, integrity-checked, never
+overwriting a file) and the explicit `--hand-check-passed`; it migrates, re-tags in one transaction, quarantines in
+a second, and a re-run changes nothing. Outputs: `removed_articles.csv` (fetched `reject` pairs, T-131's list),
+`review_quarantine.csv` (T-132's selection with the evidence) and `retag_summary.json`.
+
 ## Testing
 
 ```bash

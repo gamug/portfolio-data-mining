@@ -170,3 +170,31 @@ def test_record_fetch_reevaluates_a_paywalled_page_that_was_read(db_path: str) -
     conn.close()
 
     assert _state(db_path, _URL) == ("accept", "paywalled", 1)
+
+
+def _article_status(db_path: str, url_id: int) -> tuple[str, str | None]:
+    with sqlite3.connect(db_path) as c:
+        row = c.execute(
+            "SELECT fetch_status, prev_fetch_status FROM articles WHERE id = ?", (url_id,)
+        ).fetchone()
+    return row[0], row[1]
+
+
+def test_record_fetch_quarantines_a_review_article_and_releases_it_on_promotion(
+    db_path: str,
+) -> None:
+    uid = _id(db_path, _URL)
+    db = connect(db_path)
+    ensure_articles_table(db)
+    try:
+        # the fetched title carries no new evidence: the pair stays review, so it is quarantined
+        record_fetch(db, _article(uid, title="A headline"))
+        assert _article_status(db_path, uid) == ("quarantined", "ok")
+        # a re-fetch rewrites fetch_status to 'ok' (the upsert); the pair is still review
+        record_fetch(db, _article(uid, title="A headline"))
+        assert _article_status(db_path, uid) == ("quarantined", "ok")
+        # the fetched title now names the company: promoted to accept, so it reads as ok again
+        record_fetch(db, _article(uid))
+        assert _article_status(db_path, uid) == ("ok", None)
+    finally:
+        db.close()

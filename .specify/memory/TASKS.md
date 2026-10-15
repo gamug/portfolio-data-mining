@@ -256,7 +256,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (save, status, re-evaluation of a page that was read) is the one post-fetch step used by the
       crawler CLI and both API endpoints; `POST /extract/{id}` answers 409 for a `reject` row.
       `scripts/score_ticker_rules.py --check` exits 0 ("figures match PLAN"; no matcher change since T-056a). Test counts live in the PR description.
-- [ ] **T-057** Re-tag `urls.db`: dry run on a copy (before/after counts per
+- [ ] **T-057** *(tooling done and dry-run on a corpus copy; the hand-label check and the real run are open)* Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
       (quarantine over delete) that `portfolio-nlp`'s pending queries
@@ -277,6 +277,16 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `reject` pairs**, drawn after the rule is frozen; pass = at most 5 of the 60
       `accept` wrong and at most 1 of the 40 `reject` correct, otherwise back to T-055
       (FR-014, `PLAN.md`). → step 4.
+      **Progress (T-057):** `articles.prev_fetch_status` added (schema version 3, confirmed 2026-10-15,
+      recorded in `portfolio-nlp` PR #102 T-132/T-128); `data_mining/quarantine.py`; `record_fetch` quarantines/
+      releases after every fetch (a fetched `review` pair would otherwise read `ok`); `scripts/retag_urls.py`
+      (dry run by default; `--apply` needs `--backup` and `--hand-check-passed`). Dry run and apply on a copy of
+      the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
+      376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag
+      reproduces the backup exactly, a second run changes nothing, integrity and foreign-key checks clean;
+      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. Open:
+      `data/ticker_retag_check_manual.csv` (100 blind pairs, `ticker_validation_sample.py --final`) is to be hand-labeled,
+      scored with `--verdict`, and only then the real run and the T-058 lists.
 - [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs

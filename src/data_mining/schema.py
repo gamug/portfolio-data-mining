@@ -7,7 +7,7 @@ instead of a copy in each module's connection code, plus forward-only,
 idempotent migrations for databases created by an older version.
 
 Version history: 1 the original tables; 2 `discovered_urls.match_class`/`match_reason`/`query`
-(PLAN Work item 10, T-056b).
+(PLAN Work item 10, T-056b); 3 `articles.prev_fetch_status` (T-057).
 
 Bump `SCHEMA_VERSION` in lockstep with any DDL change and add a matching
 step to `run_migrations()`.
@@ -19,7 +19,7 @@ Query functions (the only SQL text for this database's schema lives here):
 
 from portfolio_common.db import Database
 
-SCHEMA_VERSION = 2  # 2: discovered_urls.match_class/match_reason/query (T-056b)
+SCHEMA_VERSION = 3  # 2: discovered_urls match_class/match_reason/query (T-056b); 3: articles.prev_fetch_status (T-057)
 
 # `{autoincrement_pk}` is filled in from the engine's dialect by
 # `apply_schema` (str.replace); everything else is standard SQL.
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS articles (
     fetch_status       TEXT,
     http_status_code   INTEGER,
     fetched_at         TEXT,
+    prev_fetch_status  TEXT,  -- set only by data_mining.quarantine (T-057)
     FOREIGN KEY (id) REFERENCES discovered_urls (id)
 );
 """
@@ -104,6 +105,9 @@ ARTICLE_COLUMNS = (
     "fetched_at",
 )
 
+# `prev_fetch_status` is deliberately not listed above: the `save_article` upsert writes
+# exactly these columns, so a re-fetch never touches it; only `data_mining.quarantine` does.
+
 # Backward-compatible alias for the pre-consolidation name.
 ARTICLES_SCHEMA = _ARTICLES_DDL
 
@@ -126,6 +130,7 @@ def run_migrations(db: Database) -> None:
     """
     _migrate_legacy_sector_column(db)
     _migrate_match_columns(db)
+    _migrate_prev_fetch_status(db)
 
 
 # `discovered_urls.status` and `match_class` together: a matcher-rejected pair is
@@ -164,3 +169,11 @@ def _migrate_legacy_sector_column(db: Database) -> None:
         # SQLite >= 3.35 DROP COLUMN; a one-time destructive step a non-SQLite
         # migration path would express differently.
         db.execute("ALTER TABLE articles DROP COLUMN sector")
+
+
+def _migrate_prev_fetch_status(db: Database) -> None:
+    """`articles` predating the quarantine (schema version < 3) has no
+    `prev_fetch_status`. Add it, empty. No-op on a current table."""
+    if not db.table_columns("articles"):
+        return  # table doesn't exist yet -- nothing to migrate
+    db.ensure_columns("articles", {"prev_fetch_status": "TEXT"})

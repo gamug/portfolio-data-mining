@@ -14,6 +14,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from data_mining.db import connect as _connect
 from data_mining.matching import CLASS_RANK, classify
+from data_mining.quarantine import sync_quarantine
 from data_mining.schema import (
     ARTICLE_COLUMNS,
     ARTICLES_SCHEMA,
@@ -188,3 +189,5 @@ def record_fetch(db: Database, article: dict) -> None:
     mark_status(db, article["id"], article["fetch_status"], article["http_status_code"])
     if article["fetch_status"] != "failed":
         reevaluate_match(db, article["id"], article.get("title"))
+    # A `review` pair is fetched like any other; its article must not read as `ok` downstream.
+    sync_quarantine(db, article["id"])

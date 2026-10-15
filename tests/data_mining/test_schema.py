@@ -8,7 +8,7 @@ from collections.abc import Iterator
 import pytest
 from portfolio_common.db import Database
 
-from data_mining.schema import SCHEMA_VERSION, apply_schema, run_migrations
+from data_mining.schema import ARTICLE_COLUMNS, SCHEMA_VERSION, apply_schema, run_migrations
 
 LEGACY_ARTICLES_SCHEMA = """
 CREATE TABLE articles (
@@ -139,8 +139,8 @@ def _index_names(db: Database) -> set[str]:
     }
 
 
-def test_schema_version_is_2() -> None:
-    assert SCHEMA_VERSION == 2
+def test_schema_version_is_3() -> None:
+    assert SCHEMA_VERSION == 3
 
 
 def test_fresh_schema_has_match_columns_and_index(db: Database) -> None:
@@ -207,3 +207,28 @@ def test_match_class_check_constraint_on_a_migrated_schema(db: Database) -> None
     run_migrations(db)
     with pytest.raises(sqlite3.IntegrityError):
         db.execute(_BAD_INSERT)
+
+
+def test_run_migrations_adds_prev_fetch_status_to_a_version_2_articles(db: Database) -> None:
+    db.execute(
+        LEGACY_ARTICLES_SCHEMA.replace(
+            "sector             TEXT,", "gics_sector TEXT, gics_sub_industry TEXT,"
+        )
+    )
+    db.execute("INSERT INTO articles (id, fetch_status) VALUES (1, 'ok')")
+    db.commit()
+
+    run_migrations(db)
+    run_migrations(db)  # idempotent
+
+    assert "prev_fetch_status" in db.table_columns("articles")
+    assert tuple(db.execute("SELECT fetch_status, prev_fetch_status FROM articles").fetchone()) == (
+        "ok",
+        None,
+    )
+
+
+def test_fresh_schema_has_prev_fetch_status_outside_the_upsert_columns(db: Database) -> None:
+    apply_schema(db)
+    assert "prev_fetch_status" in db.table_columns("articles")
+    assert "prev_fetch_status" not in ARTICLE_COLUMNS  # a re-fetch must never reset it
