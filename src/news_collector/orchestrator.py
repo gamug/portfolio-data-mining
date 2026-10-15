@@ -208,9 +208,10 @@ class DiscoveryOrchestrator:
 
         stats.elapsed_seconds = time.monotonic() - t0
         log.info(
-            "Discovery complete: inserted=%d, duplicates=%d, elapsed=%.1fs",
+            "Discovery complete: inserted=%d, duplicates=%d, promoted=%d, elapsed=%.1fs",
             stats.total_inserted,
             stats.duplicate_count,
+            stats.total_promoted,
             stats.elapsed_seconds,
         )
         return stats
@@ -295,15 +296,17 @@ class DiscoveryOrchestrator:
         partial.sitemap_count = len(sitemap_urls) + len(api_urls)
         partial.inserted_count = inserted
         partial.duplicate_count = duplicate_count
+        partial.promoted_count = self._queue.last_promotion.promoted
 
         log.info(
-            "%s / %s: ddg=%d sitemap/api=%d inserted=%d dupes=%d",
+            "%s / %s: ddg=%d sitemap/api=%d inserted=%d dupes=%d promoted=%d",
             company.ticker,
             domain,
             partial.ddg_count,
             partial.sitemap_count,
             inserted,
             duplicate_count,
+            partial.promoted_count,
         )
         return partial
 

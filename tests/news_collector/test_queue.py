@@ -381,3 +381,57 @@ def test_stats_counts_rows_by_match_class(queue: URLQueue) -> None:
     stats = queue.stats()
     assert stats["by_match_class"] == {"accept": 1, "review": 1, "reject": 2}
     assert stats["by_status"] == {"pending": 1, "skipped": 3}
+
+
+def _snapshot(queue: URLQueue, url: str) -> dict:
+    assert queue._conn is not None
+    row = queue._conn.execute("SELECT * FROM discovered_urls WHERE url=?", (url,)).fetchone()
+    return dict(row)
+
+
+def test_promotion_never_writes_back_a_status_the_extractor_changed(queue: URLQueue) -> None:
+    first = _classed("https://x.com/a", "review")
+    queue.enqueue_batch([first])
+    stale = {("https://x.com/a", "AAPL"): _snapshot(queue, "https://x.com/a")}  # status pending
+    queue.mark_fetched_by_id(first.id or 0, 200)  # the extractor gets there first
+
+    again = _classed("https://x.com/a", "accept", match_reason="name", query="q")
+    queue._promote_duplicates([again], stale)
+
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.match_reason, row.query) == ("accept", "name", "q")
+    assert row.status == "fetched"
+
+
+def test_a_stale_read_cannot_demote_a_concurrent_promotion(queue: URLQueue) -> None:
+    first = _classed("https://x.com/a", "reject")
+    queue.enqueue_batch([first])
+    stale = {("https://x.com/a", "AAPL"): _snapshot(queue, "https://x.com/a")}  # reject
+    queue.enqueue_batch([_classed("https://x.com/a", "accept", match_reason="name")])  # wins
+
+    queue._promote_duplicates([_classed("https://x.com/a", "review", match_reason="weak")], stale)
+
+    row = _stored(queue, "/a")
+    assert (row.match_class, row.match_reason, row.status) == ("accept", "name", "pending")
+
+
+def test_last_promotion_counts_promoted_and_lifted_rows(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [
+            _classed("https://x.com/1", "reject"),
+            _classed("https://x.com/2", "reject"),
+            _classed("https://x.com/3", "review"),
+        ]
+    )
+    assert queue.last_promotion == (0, 0)
+    queue.mark_skipped("https://x.com/3", "paywall")
+    queue.enqueue_batch(
+        [
+            _classed("https://x.com/1", "accept"),
+            _classed("https://x.com/2", "review"),
+            _classed("https://x.com/3", "accept"),  # promoted but a paywall skip stays
+        ]
+    )
+    assert queue.last_promotion == (3, 2)
+    queue.enqueue_batch([_classed("https://x.com/1", "accept")])
+    assert queue.last_promotion == (0, 0)

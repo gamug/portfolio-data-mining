@@ -7,6 +7,7 @@ from portfolio_common.db import Database
 from extractor.db import (
     enable_foreign_keys,
     ensure_articles_table,
+    get_match_class_counts,
     get_pending_urls,
     get_status_counts,
     get_urls_by_status,
@@ -267,3 +268,19 @@ def test_get_urls_by_status_never_returns_rejected_rows_even_when_asked_for_skip
     urls = [row["url"] for row in get_urls_by_status(conn, ["skipped"])]
 
     assert urls == ["https://cnbc.com/paywall"]
+
+
+def test_status_counts_leave_out_rejected_rows_and_class_counts_include_them(
+    conn: Database,
+) -> None:
+    conn.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at,"
+        " status, match_class) VALUES ('https://cnbc.com/rej', 'cnbc.com', '3M', 'MMM', 'sitemap',"
+        " '2026-08-10T00:00:00', 'skipped', 'reject'),"
+        " ('https://cnbc.com/rev', 'cnbc.com', '3M', 'MMM', 'sitemap',"
+        " '2026-08-10T00:00:00', 'pending', 'review')"
+    )
+    conn.commit()
+
+    assert get_status_counts(conn) == {"pending": 3}
+    assert get_match_class_counts(conn) == {"accept": 2, "reject": 1, "review": 1}

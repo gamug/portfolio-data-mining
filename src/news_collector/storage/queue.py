@@ -8,7 +8,7 @@ import logging
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 from portfolio_common.db import Allowlist, Database, Row, in_clause
 
@@ -16,6 +16,14 @@ from data_mining.db import connect
 from data_mining.matching import CLASS_RANK
 from data_mining.schema import apply_schema, run_migrations
 from news_collector.models import DiscoveredURL
+
+
+class Promotion(NamedTuple):
+    """What one `enqueue_batch` call promoted: rows whose class rose, and how many of
+    those were matcher-rejected rows put back to `pending`."""
+
+    promoted: int = 0
+    lifted: int = 0
 
 
 class QueueStats(TypedDict):
@@ -64,6 +72,8 @@ class URLQueue:
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
         self._conn: Database | None = None
+        # Read by the caller right after `enqueue_batch` (it has no await in it).
+        self.last_promotion = Promotion()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -112,10 +122,14 @@ class URLQueue:
         Raises:
             ValueError: a `match_class` is not `accept`/`review`/`reject` (nothing is written).
 
+        After the call `last_promotion` says how many stored rows were promoted and how
+        many of those were lifted from `skipped` to `pending`.
+
         Returns:
             Number of newly inserted rows.
         """
         assert self._conn is not None, "Call initialize() first"
+        self.last_promotion = Promotion()
         if not urls:
             return 0
         for u in urls:
@@ -188,19 +202,25 @@ class URLQueue:
         for u in urls:
             row = stored.get((u.url, u.ticker))
             u.id = row["id"] if row else None
-        self._promote_duplicates(urls, stored)
+        self.last_promotion = self._promote_duplicates(urls, stored)
         return inserted
 
     def _promote_duplicates(
         self, urls: Sequence[DiscoveredURL], stored: dict[tuple[str, str], dict]
-    ) -> None:
+    ) -> Promotion:
         """Promote stored rows from the batch's evidence (see `enqueue_batch`).
 
-        `stored` holds each pair's row as it is after the insert; it is updated as
-        the batch is walked, so two entries for one pair in one batch compose.
+        `stored` holds each pair's row as it was read after the insert; it is updated
+        as the batch is walked, so two entries for one pair in one batch compose. The
+        UPDATE is conditional in SQL, because another process (the extractor's
+        `mark_status`) may have changed the row since the read: `status` is written
+        only to lift a matcher-rejected row (still `skipped` and `reject` in the
+        database), never copied from the read, and the write is skipped when the stored
+        class is no longer the one that was read (a concurrent promotion wins).
         """
         assert self._conn is not None
         updates: list[tuple] = []
+        promoted = lifted = 0
         for u in urls:
             row = stored.get((u.url, u.ticker))
             if row is None:
@@ -211,24 +231,31 @@ class URLQueue:
             query = row["query"] or u.query
             # only a matcher-rejected row goes back to pending; a row skipped for
             # another reason (paywall) keeps its status
-            lifted = raised and row["match_class"] == "reject" and row["status"] == "skipped"
-            status = "pending" if lifted else row["status"]
-            changed = (match_class, reason, query, status) != (
+            lift = raised and row["match_class"] == "reject" and row["status"] == "skipped"
+            if (match_class, reason, query) == (
                 row["match_class"],
                 row["match_reason"],
                 row["query"],
-                row["status"],
-            )
-            if changed:
-                updates.append((match_class, reason, query, status, row["id"]))
-                row.update(match_class=match_class, match_reason=reason, query=query, status=status)
+            ):
+                continue
+            updates.append((match_class, reason, query, int(lift), row["id"], row["match_class"]))
+            promoted += raised
+            lifted += lift
+            row.update(match_class=match_class, match_reason=reason, query=query)
+            if lift:
+                row["status"] = "pending"
         if updates:
             self._conn.executemany(
-                "UPDATE discovered_urls SET match_class=?, match_reason=?, query=?, status=?"
-                " WHERE id=?",
+                "UPDATE discovered_urls SET match_class=?, match_reason=?, query=?,"
+                " status=CASE WHEN ?=1 AND status='skipped' AND match_class='reject'"
+                " THEN 'pending' ELSE status END"
+                " WHERE id=? AND match_class=?",
                 updates,
             )
             self._conn.commit()
+        if promoted:
+            log.info("enqueue_batch: promoted=%d (lifted from skipped=%d)", promoted, lifted)
+        return Promotion(promoted, lifted)
 
     def mark_fetched(self, url: str, status_code: int) -> None:
         """

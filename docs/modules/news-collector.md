@@ -42,13 +42,14 @@ irrelevant after inspection) keeps its meaning and leaves `match_class` alone. `
 just ignores a duplicate `(url, ticker)`: a rediscovery **promotes** the stored row (it keeps the higher
 class `reject` < `review` < `accept`, takes the new `match_reason` with a higher class, fills a null
 `match_reason`/`query`, and a row stored `reject` goes back to `pending` when its class rises). It never
-demotes. Existing databases are upgraded by `run_migrations` (their rows default to `accept`; the
+demotes. The promotion UPDATE is conditional in SQL because the extractor writes `status` concurrently: `status` is written only to lift a row that is still `skipped` and `reject` in the database (never copied from the earlier read), and a write is skipped when the stored class is no longer the one that was read. `URLQueue.last_promotion` (and `promoted=` in the discovery log lines, `DiscoveryStats.total_promoted`) report how many rows were promoted and lifted per call. Existing databases are upgraded by `run_migrations` (their rows default to `accept`; the
 `T-057` re-tag reclassifies them). Both read APIs expose the class: the collector's
 `/discovery/query` and `/discovery/pending` return `match_class`/`match_reason` and `/discovery/query`
 filters on `match_class`; the crawler's `/discovered` does the same. The `status` filter's `skipped`
 includes matcher-rejected rows, so use `by_match_class` (in `queue.stats()`, the collector's
 `/discovery/stats` and the CLI `stats`) to tell them from paywall skips. `match_class` has a `CHECK`
 constraint and `enqueue_batch` raises `ValueError` before writing for any other value. The extractor's
+`get_status_counts` and the crawler's `/status` leave rejected rows out (`/status` adds `by_match_class`; the CLI start-up line prints the rejected count separately). The extractor's
 `get_urls_by_status` never returns a `reject` row, whatever status is asked for, and the crawler's
 `POST /discovered/{id}/reset` answers 409 for one.
 

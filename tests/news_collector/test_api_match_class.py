@@ -131,3 +131,12 @@ def test_crawler_reset_refuses_a_rejected_pair_and_resets_others(crawler: TestCl
     ok = crawler.post(f"/discovered/{rows['https://cnbc.com/rev']}/reset")
     assert ok.status_code == 200
     assert ok.json() == {"id": rows["https://cnbc.com/rev"], "status": "pending"}
+
+
+def test_crawler_status_leaves_out_rejected_rows_and_reports_the_classes(
+    crawler: TestClient,
+) -> None:
+    got = crawler.get("/status").json()
+    assert got["counts"] == {"pending": 2}
+    assert got["total"] == 2
+    assert got["by_match_class"] == {"accept": 1, "review": 1, "reject": 1}

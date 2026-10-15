@@ -152,6 +152,7 @@ class PartialStats:
     sitemap_count: int = 0
     inserted_count: int = 0
     duplicate_count: int = 0
+    promoted_count: int = 0  # stored rows whose match class rose (rediscovery)
     error: str | None = None
 
 
@@ -162,6 +163,7 @@ class DiscoveryStats:
     total_discovered: int = 0
     total_inserted: int = 0
     duplicate_count: int = 0
+    total_promoted: int = 0
     ddg_count: int = 0
     sitemap_count: int = 0
     by_domain: dict[str, int] = field(default_factory=dict)
@@ -175,6 +177,7 @@ class DiscoveryStats:
         self.total_discovered += discovered
         self.total_inserted += partial.inserted_count
         self.duplicate_count += partial.duplicate_count
+        self.total_promoted += partial.promoted_count
         self.ddg_count += partial.ddg_count
         self.sitemap_count += partial.sitemap_count
         self.by_domain[partial.domain] = (

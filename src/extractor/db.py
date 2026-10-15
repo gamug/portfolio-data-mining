@@ -26,6 +26,7 @@ __all__ = [
     "connect",
     "enable_foreign_keys",
     "ensure_articles_table",
+    "get_match_class_counts",
     "get_pending_urls",
     "get_status_counts",
     "get_urls_by_status",
@@ -95,8 +96,20 @@ def get_pending_urls(db: Database, limit: int | None = None) -> list[Row]:
 
 
 def get_status_counts(db: Database) -> dict[str, int]:
+    """Rows per status, leaving out matcher-rejected pairs (`match_class = 'reject'`):
+    they were never work for the extractor, so they must not read as processed
+    (`skipped`). See `get_match_class_counts` for them."""
     rows = db.execute(
-        "SELECT status, COUNT(*) AS c FROM discovered_urls GROUP BY status"
+        "SELECT status, COUNT(*) AS c FROM discovered_urls WHERE match_class != 'reject' "
+        "GROUP BY status"
+    ).fetchall()
+    return {row[0]: row[1] for row in rows}
+
+
+def get_match_class_counts(db: Database) -> dict[str, int]:
+    """Rows per company-matching class (`accept` / `review` / `reject`)."""
+    rows = db.execute(
+        "SELECT match_class, COUNT(*) AS c FROM discovered_urls GROUP BY match_class"
     ).fetchall()
     return {row[0]: row[1] for row in rows}
 

@@ -41,6 +41,7 @@ from pydantic import BaseModel
 from extractor.db import (
     connect,
     ensure_articles_table,
+    get_match_class_counts,
     get_status_counts,
     get_urls_by_status,
     mark_status,
@@ -123,8 +124,9 @@ async def get_gics_map() -> dict[str, dict[str, str]]:
 
 
 class StatusCounts(BaseModel):
-    counts: dict[str, int]
+    counts: dict[str, int]  # per status, matcher-rejected pairs left out
     total: int
+    by_match_class: dict[str, int] = {}  # accept / review / reject, all rows
 
 
 class DiscoveredURL(BaseModel):
@@ -201,7 +203,11 @@ def status(conn: Database = Depends(get_conn)) -> StatusCounts:
     """Same numbers run_extraction.py prints at startup: discovered_urls
     grouped by status."""
     counts = get_status_counts(conn)
-    return StatusCounts(counts=counts, total=sum(counts.values()))
+    return StatusCounts(
+        counts=counts,
+        total=sum(counts.values()),
+        by_match_class=get_match_class_counts(conn),
+    )
 
 
 @app.get("/discovered", response_model=list[DiscoveredURL])
