@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053` done; `T-054` built, two labels awaiting the maintainer; `T-055`–`T-060` pending.**
+**Status: open. `T-053` done; `T-054` done; `T-055`–`T-060` pending; `T-055` next.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -717,9 +717,10 @@ findings that shape `T-055`:
   rows.
 - Known-correct candidates retained 17 of 20 (85%). The misses were `News`
   (a lone generic word), a `Deere` mention that is a person's name in the
-  hand-label note, and an `MGM` pair whose note and label disagree; two
-  hand labels (`MGM` id 317362 and `DE` id 180987) are queued for the
-  maintainer to confirm, and if both flip to `yes` retention is 19 of 20.
+  hand-label note, and an `MGM` pair whose note and label disagree. The maintainer
+  reviewed and approved both labels as they stand (`MGM` id 317362 and `DE`
+  id 180987, 2026-10-15), so 17 of 20 is the figure of record; had both flipped
+  to `yes` it would be 19 of 20.
 - The sample is small (8 per small stratum) and the intervals are wide; use the
   rates as the evidence for choosing a rule, and re-measure on the same pairs
   after `T-056`.
@@ -744,14 +745,14 @@ the `yes` pairs):
 | `above, or name twice in body` | 126 | 5 | 96% | 73% |
 | `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
 
-With the two unconfirmed labels (`MGM` 317362, `DE` 180987) left out
-(`--exclude-ids 317362 180987`) the same rules keep the same correct pairs and
-the last one keeps 4 (not 6) wrong pairs, precision 98%; if both flip to `yes`
-they become two more kept-correct pairs and kept-wrong is 4 as well. On the
+The two disputed-looking labels (`MGM` 317362, `DE` 180987) were approved as
+labeled `no`; for sensitivity, leaving them out (`--exclude-ids 317362 180987`)
+the last rule keeps 4 (not 6) wrong pairs, precision 98%, and flipping both to
+`yes` would give the same 4. On the
 `ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
 and 5 of 61 wrong pairs. Missed or kept wrongly: the remaining wrong ones are a
 phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and the
-unconfirmed `MGM` and `DE` labels. This shows the current rule's problem is the lack of
+`MGM` and `DE` pairs approved as `no`. This shows the current rule's problem is the lack of
 any evidence beyond a word match, not an inherently hard task: a handful of
 deterministic checks on the title and body recover most of it.
 

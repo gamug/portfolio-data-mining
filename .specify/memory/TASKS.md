@@ -91,7 +91,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `(ticker, company, domain, source)` cells, so the word-ticker and
       generic-word tables are split per connector/source); results in
       `PLAN.md` Work item 10.
-- [ ] **T-054** Measure each failure mode's real error rate. Build **one**
+- [x] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker
       substring shortcut / name-token-only / both) and including
@@ -110,12 +110,9 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       sheet with the maintainer's notes, excerpts removed) and
       `scripts/score_ticker_rules.py` (reproduces the prototype-rule table);
       results and the duplicate/quality analysis are in `PLAN.md` Work item 10.
-      **Left open (tick when done):** the maintainer confirms two labels in the
-      known-correct stratum, `MGM` id 317362 (article is MGM Resorts, note says
-      "about MGM not GM", label `no`) and `DE` id 180987 (John Deere CEO
-      interview, label `no`, note says Deere is a person's name here). Known-correct
-      retention is 17/20 as labeled and 19/20 if both flip; the prototype table is
-      given both ways in `PLAN.md`. Then re-run `manual-apply` and `report`.
+      The maintainer reviewed the two labels that looked inconsistent with
+      their notes, `MGM` id 317362 and `DE` id 180987, and approved them as
+      `no` (2026-10-15); known-correct retention of record is 17/20.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
