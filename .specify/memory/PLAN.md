@@ -591,9 +591,9 @@ and paces serial requests (Technological stock #6).
   sha1 stays `fddbdccb71ab4243a0fb76b3027774474d352b99`.
 - `uv run ruff check .` / `ruff format --check .` / `mypy` / `pytest` clean.
 
-## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-059)
+## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053` done; `T-054`–`T-059` pending; `T-054` first.**
+**Status: open. `T-053` done; `T-054` done; `T-055`–`T-060` pending; `T-055` next.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -631,16 +631,17 @@ significant company name token is sufficient"). Three failure modes follow:
    `Dollar General`/`Dollar Tree` → `Dollar` (~8,550 rows each; audited: DG
    8,554 and DLTR 8,564 name-only), `Best Buy` → `Best`, `Global Payments` → `Global`, `News Corp` → `News`. Name-token
    matches are not all wrong (`Apple`, `Amazon` are legitimate), so this
-   mode's error rate is **unmeasured** — measuring it is T-054.
+   mode's error rate was measured by T-054: **52% wrong** (see the T-054
+   results below).
 3. **Raw substring shortcut in four connectors.** `nasdaq`, `seeking_alpha`,
    `stocktwits` and `yahoo_finance` first run
    `if ticker.lower() in url.lower(): return True` — no word boundary at all.
    Ticker `A` matches any URL containing the letter "a"; `ON` matches
    "season" or "reason". This is looser than mode 1 and a change to
    `_company_pattern` alone does not touch it. Its share of the corpus is
-   **unmeasured**; the sizing figures above were reproduced with the
-   word-boundary regex only, so T-053 recomputes every figure per connector
-   (and counts the rows only the shortcut accepts) before they are relied on.
+   small in what is stored (T-053: 823 rows, all `ddg`) and it is wrong 89% of
+   the time (T-054, 19 of 20 sampled); its reach on a sitemap run of the other
+   connectors is unmeasured.
 
 **T-053 audit results** (`scripts/audit_ticker_tagging.py`, read-only, reproduces
 every figure below from `urls.db`; 481,332 `discovered_urls` rows, 0 rejected by
@@ -671,6 +672,104 @@ token alone in over 90% of rows are listed by the script (`Dollar`, `American`,
 (`Apple`, `Amazon`, `Microsoft`, `Netflix`) also appear there, so that list is
 a candidate set for T-054, not a verdict.
 
+**T-054 measured error rates** (`data/ticker_tagging_sample.csv`, 263 pairs,
+labeled by hand by the maintainer; `scripts/ticker_tagging_sample.py report`).
+Seeded stratified sample over `(domain, source, match mode)`, with `ticker_only`
+split into English-word and other tickers, plus 20 known-correct candidates
+(company's full normalized name in the URL or title). A pair is `yes` when the
+tagged company is a subject of the article (named and discussed; a roundup
+section counts; an acronym counts), `no` when it is another company, a homonym
+or a passing mention. Labeling is done in this repo and does not depend on
+`portfolio-nlp`. An AI assistant's first-pass labels (kept in
+`assistant_label`) agreed with the hand labels on 240 of 263 pairs (91%); the
+hand labels are authoritative. For `ft.com` rows the body is a bot-challenge
+page, so those were labeled from the title.
+
+| match mode | n | wrong | wrong rate (95%) |
+|---|---:|---:|---:|
+| both | 56 | 1 | 0.1% (0–10%) |
+| name token only | 63 | 8 | 52% (28–76%) |
+| ticker only | 104 | 60 | 94% (85–100%) |
+| substring shortcut only | 20 | 19 | 89% (66–100%) |
+| whole corpus | 243 | 88 | **70% (58–82%)** |
+
+By connector: `cnbc.com` 72% (60–85%), `nasdaq.com` 14%, `seekingalpha.com` 8%,
+`ft.com` 7%, `investing.com` 3%, `finance.yahoo.com` 2% (the small ones have
+intervals reaching 0%). **By discovery path** (the maintainer's observation that
+`ddg` searches by the company, so the query is already evidence): `ddg` rows
+(4% of the corpus) are wrong **7%** of the time (1–13%), `sitemap` rows (96%)
+**73%** (60–85%). The `sitemap` strategy downloads every article URL of the
+site regardless of company and then tests each of the ~500 companies against
+each URL, so it has no query to lean on and the ticker-or-first-word filter is
+the only evidence; `cnbc` is 98.9% of the 459,112 `fetch_status = 'ok'` rows
+`portfolio-nlp` reads, so that path is almost all of what it sees. Inside `ddg`
+the company-name queries are reliable (name-only 0 wrong of 48, both 1 of 48)
+but queries by a bare English-word ticker are not (`site:cnbc.com A 2024`: 30
+of 33 wrong), and the same loose filter is applied on top of the search
+results. `urls.db` records `source` but not which query found a row. Other
+findings that shape `T-055`:
+
+- A ticker-only match is wrong 94% of the time, and 45 of the 48 English-word
+  ticker pairs were wrong: a bare ticker should never be sufficient.
+- A name-token-only match is right about half the time, all of it in the
+  `cnbc` sitemap path (8 wrong of 15); every `ddg` name-only group was clean.
+- The substring shortcut is wrong 89% of the time but covers only 823 stored
+  rows.
+- Known-correct candidates retained 17 of 20 (85%). The misses were `News`
+  (a lone generic word), a `Deere` mention that is a person's name in the
+  hand-label note, and an `MGM` pair whose note and label disagree. The maintainer
+  reviewed and approved both labels as they stand (`MGM` id 317362 and `DE`
+  id 180987, 2026-10-15), so 17 of 20 is the figure of record; had both flipped
+  to `yes` it would be 19 of 20.
+- The sample is small (8 per small stratum) and the intervals are wide; use the
+  rates as the evidence for choosing a rule, and re-measure on the same pairs
+  after `T-056`.
+
+**Hand-label policy decisions** (from the maintainer's notes): an acronym
+(`UPS`, `IBM`) counts as the company; a "stocks making the biggest moves"
+roundup counts as `yes` for each company with its own section, so one URL may
+legitimately carry several tickers (to be marked `multi_company` for
+`portfolio-nlp`, which weights sentiment by entity); an interview or transcript
+counts if the company is its subject even if it is not financial news.
+
+**Prototype evidence for `T-055`** (explorative, in-sample, rules written after
+reading the errors, so optimistic; not a measurement of `T-056`; reproduce with
+`scripts/score_ticker_rules.py`, committed with a test). Scoring a
+rule on the 263 hand labels (kept-correct / kept-wrong / precision / recall of
+the `yes` pairs):
+
+| rule | kept-correct | kept-wrong | precision | recall |
+|---|---:|---:|---:|---:|
+| `current (accepts all)` | 172 | 91 | 65% | 100% |
+| `name in URL/title, or explicit ticker`: full normalized name in URL/title, or explicit ticker form (`(NYSE: X)`, `$X`) | 121 | 5 | 96% | 70% |
+| `above, or name twice in body` | 126 | 5 | 96% | 73% |
+| `above, or ticker/first word in title`: an upper-case ticker (3+ letters, not a common word) in the title, or a distinctive capitalized first word in the title | 163 | 6 | 96% | 95% |
+
+The two disputed-looking labels (`MGM` 317362, `DE` 180987) were approved as
+labeled `no`; for sensitivity, leaving them out (`--exclude-ids 317362 180987`)
+the last rule keeps 4 (not 6) wrong pairs, precision 98%, and flipping both to
+`yes` would give the same 4. On the
+`ok`-only rows `portfolio-nlp` sees, the last rule keeps 78 of 80 correct
+and 5 of 61 wrong pairs. Missed or kept wrongly: the remaining wrong ones are a
+phrase ("the next Amazon"), a surname (`Deere`), a word (`news`, `Royal`) and the
+`MGM` and `DE` pairs approved as `no`. This shows the current rule's problem is the lack of
+any evidence beyond a word match, not an inherently hard task: a handful of
+deterministic checks on the title and body recover most of it.
+
+**Duplicate analysis and quality state** (checked 2026-10-15, read-only): the
+481,332 `discovered_urls` rows are only **320,763 distinct URLs** (212,450 URLs
+carry one ticker, 108,313 carry two or more, up to 8); the 459,112 `ok` articles
+hold only **302,512 distinct bodies**, so about a third of what `portfolio-nlp`
+processed is the same article analysed once per tagged ticker. The login-wall,
+bot-challenge and empty bodies seen in the labeling sheet are all rows with
+`fetch_status` `failed` (11,114) or `thin_content` (11,106): none of the 11
+`ok` rows that match wall phrases in their first 500 characters is a real wall
+(manual check), and `nlp.db` holds exactly the 459,112 `ok` articles (zero
+`failed`/`thin_content`), so no wall has propagated. The `ft.com`,
+`investing.com`, `nasdaq.com` and `stocktwits.com` rows are 100% non-`ok` (no
+article body at all). The remaining risk is a wall page that passes as `ok`
+because only the length is checked, tracked as `T-060`.
+
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
 tagged company; that is a small-sample estimate, not a measurement.
@@ -683,14 +782,35 @@ tagged company; that is a small-sample estimate, not a measurement.
    shortcut / name-token-only / both matches, and also covers the `ddg`
    strategy (18,506 rows) not broken out above. Estimate the error rate of
    each mode on **one shared labeled sample** (stratified by connector and
-   those match modes,
-   labeled with `portfolio-nlp`'s relevance judge (its T-130, built first; if it
-   slips, hand-labeled here so this item is never gated on that repo),
-   spot-checked by hand, reused
-   by that repo's own measurement and by this item's retention check), so the
-   fix is judged on evidence and nothing is labeled twice.
+   those match modes, labeled here by hand, with no dependency on
+   `portfolio-nlp`; reused by that repo's own measurement and by this item's
+   retention check), so the fix is judged on evidence and nothing is labeled
+   twice.
 2. **Design the stricter rule** (decision recorded in T-055 before coding).
-   Direction, to be confirmed against step 1's data:
+   **Decided 2026-10-14 (maintainer): split the work by what each side can
+   see.** Discovery sees only the URL (the 462k `cnbc` sitemap rows have no
+   title), so this repo applies only the cheap, deterministic strict rules below
+   (it also saves fetching bodies for obviously wrong pairs); the semantic
+   question "is the company a subject of the article" is answered by
+   `portfolio-nlp` from the body and its NER organization spans, and this repo
+   keeps the questionable pairs marked (quarantine, step 4) so that stage only
+   judges those. Rejected: fixing everything from the slug alone (precision
+   capped by a hand-kept stoplist) and moving everything to `portfolio-nlp`
+   (wrong rows stay in `urls.db`, ~450k bodies fetched for mostly wrong pairs).
+   The numeric targets are still set in T-055 from the hand labels. The
+   options below are the discovery-side parts of that split:
+   - **Provenance for `ddg`**: treat a hit returned for a *company-name* query
+     as evidence for that company (it is where the search engine did the
+     matching), stop issuing bare-ticker queries when the ticker is an ordinary
+     word, and record the query that found each row (new column, additive,
+     migrated like `gics_*`) so later steps can weight rows by how they were
+     found.
+   - **Attribute once per article for `sitemap`**: the URL set is
+     company-independent, so decide for each article which company (if any) it
+     is about, from the full normalized name, explicit ticker forms, and the
+     title/body when fetched, instead of testing every company against every
+     URL. This is where ~96% of the corpus and ~all the wrong tags are.
+   Direction for the per-company matcher, to be confirmed against step 1's data:
    - A bare ticker never counts when it is an English word or a very short
      symbol, and never counts against a lowercase URL slug at all; it counts
      only in an explicit form (`$X`, `(NYSE: X)`, `NASDAQ:X`) or as an

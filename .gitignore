@@ -49,3 +49,6 @@ CLAUDE.md
 .claude/
 .superpowers/
 docs/superpowers/
+
+# T-054: fresh blank labeling sheet from `manual-export` (the filled one is committed)
+data/ticker_tagging_manual_new.csv

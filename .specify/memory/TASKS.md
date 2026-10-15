@@ -76,7 +76,8 @@ unrelated articles. → `PLAN.md` Work item 10, `SPEC.md` §13 item 10 and FR-01
 Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` already
 cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
-after the fact; IDs are never reused, so they stay reserved.
+after the fact; IDs are never reused, so they stay reserved. `T-060` (content-quality
+gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite it.
 
 - [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
@@ -90,28 +91,38 @@ after the fact; IDs are never reused, so they stay reserved.
       `(ticker, company, domain, source)` cells, so the word-ticker and
       generic-word tables are split per connector/source); results in
       `PLAN.md` Work item 10.
-- [ ] **T-054** Measure each failure mode's real error rate. Build **one**
+- [x] **T-054** Measure each failure mode's real error rate. Build **one**
       shared labeled sample of `(url, ticker)` pairs from `urls.db`,
       stratified by connector and match mode (ticker word-boundary / ticker
       substring shortcut / name-token-only / both) and including
-      known-correct pairs; it is labeled with `portfolio-nlp`'s
-      relevance judge (its T-130; this repo has no ML/judge) and spot-checked
-      by hand on a small subset to validate that judge. Commit the sample
-      (pairs + labels) so it can be reused: `portfolio-nlp` T-117 reuses it,
-      and T-056's retention measurement is computed on the same pairs rather
-      than a second set. **Dependency:** the judge is `portfolio-nlp` T-130
-      (not built yet; portfolio-nlp PR #102), the critical-path item for both
-      repos — order: its T-130 → this T-054. **Fallback so this work item is
-      never gated on that repo:** if T-130 has not landed when T-054 is ready
-      to start, hand-label the sample here (a smaller sample, re-labeled with
-      the judge later to validate it). The committed file carries `url`,
-      `ticker`, `company`, `match_mode`, `label` (about the company: yes/no)
-      and `labeled_by` (judge/hand), which is what `portfolio-nlp` T-117
-      consumes. Report; the rule is chosen from this, not assumed. → step 1.
+      known-correct pairs, and label each pair (is the article about that
+      company: `yes`/`no`/`unclear`). **Labeling is done in this repo, by hand;
+      it does not depend on `portfolio-nlp`** (data flows from this repo to
+      that one, never back). Commit the sample (pairs + labels) so it can be
+      reused: `portfolio-nlp` T-117 reads it, and T-056's retention
+      measurement is computed on the same pairs. The committed file carries
+      `url`, `ticker`, `company`, `match_mode`, `label`, `labeled_by`
+      (`hand`/`assistant`) and the assistant's `assistant_label`. Report; the
+      rule is chosen from this, not assumed. → step 1.
+      Built: `scripts/ticker_tagging_sample.py` + `data/ticker_tagging_sample.csv`
+      (263 pairs, all hand-labeled by the maintainer; an assistant's first pass
+      agreed on 91%), `data/ticker_tagging_manual.csv` (the **filled** labeling
+      sheet with the maintainer's notes, excerpts removed) and
+      `scripts/score_ticker_rules.py` (reproduces the prototype-rule table);
+      results and the duplicate/quality analysis are in `PLAN.md` Work item 10.
+      The maintainer reviewed the two labels that looked inconsistent with
+      their notes, `MGM` id 317362 and `DE` id 180987, and approved them as
+      `no` (2026-10-15); known-correct retention of record is 17/20.
 - [ ] **T-055** Record the matching-rule design (starting direction:
       explicit ticker forms only, full normalized name + curated aliases,
       common-word stoplist for a lone first word; no new dependency) with the
-      T-054 numbers behind it, and get it approved before coding. The same
+      T-054 numbers behind it, and get it approved before coding. Division of work
+      decided (`PLAN.md` Work item 10 step 2): strict deterministic rules here,
+      semantic relevance in `portfolio-nlp`, questionable pairs quarantined. Decide, with the
+      per-path rates in `PLAN.md` (`ddg` 7% wrong, `sitemap` 73%): use the
+      company-name search query as evidence for `ddg` rows (and record the query
+      per row), and attribute each `sitemap` article once instead of testing
+      every company against every URL. The same
       decision sets the **measurable targets** — a maximum wrong-company rate
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`
@@ -145,6 +156,21 @@ after the fact; IDs are never reused, so they stay reserved.
       and `sector_summary` — its T-131)
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
+- [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot
+      challenge or empty body can never reach `portfolio-nlp`. Today the only
+      protection is the extractor's length check (`thin_content`) plus
+      `fetch_status`; checked 2026-10-15 every wall seen in the labeling sheet
+      is already `failed`/`thin_content` and `nlp.db` holds only `ok` rows, but a
+      wall long enough to pass the length check would be marked `ok`. Add a
+      detector for known wall/challenge/paywall phrases at extraction (e.g.
+      "Security Verification", "Just a moment", "unusual traffic", sign-in and
+      subscribe prompts) that leaves such rows non-`ok`, a rerunnable read-only
+      audit of `ok` rows per domain (phrases, word-count floor, duplicate
+      bodies), and tests on real excerpts including the false positives found
+      (CNBC articles that contain "just a moment" or "CAPTCHA" in normal prose).
+      Separately report the duplicate-processing finding (302,512 distinct
+      bodies among 459,112 `ok` rows) so `T-055`/`T-056` can decide to attribute
+      each URL once. → quality of what step 4 hands over.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
@@ -159,7 +185,7 @@ Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 10 (`T-053`–`T-059`, wrong-company tagging, requested by `portfolio-nlp`) is open;
+Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open;
 `portfolio-nlp` waits on it before starting its own category-stage development.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's

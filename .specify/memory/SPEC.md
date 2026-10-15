@@ -490,7 +490,8 @@ treating a related FR/NR as done:
     `seeking_alpha`, `stocktwits`, `yahoo_finance`) override
     `url_matches_company` and use it; four of them (`nasdaq`, `seeking_alpha`,
     `stocktwits`, `yahoo_finance`) first accept any URL containing the ticker
-    as a raw substring, which is looser still and unmeasured. On `urls.db`
+    as a raw substring, which is looser still (measured by `T-053`/`T-054`
+    below). On `urls.db`
     (2026-10-14), recomputed with the word-boundary regex only, 49.8% of the
     462,826 sitemap-discovered rows match through the ticker alone and 48.7%
     through the company first word alone; the eight word-like tickers account
@@ -499,12 +500,15 @@ treating a related FR/NR as done:
     the figures hold, 96.2% of rows are `cnbc.com` sitemap rows, and the raw
     substring shortcut accepts only 823 *stored* rows (all `ddg`, because the
     sitemap strategy has only run for `cnbc`; its reach on a sitemap run of the
-    other connectors is unmeasured). The
-    name-token and substring modes' error rates remain unmeasured (`T-054`).
+    other connectors is unmeasured). `T-054` then
+    measured the error rates on a hand-labeled sample
+    (`data/ticker_tagging_sample.csv`): about 70% of tagged pairs are wrong
+    overall, 94% for ticker-only matches and 52% for name-token-only matches;
+    `ddg` rows are wrong 7%, `sitemap` rows 73%.
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**
     (unlike the accepted items above, and unlike §14's permanent boundaries):
-    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-059 (requested by
+    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-060 (requested by
     `portfolio-nlp` T-128), with the requirement in FR-014.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)

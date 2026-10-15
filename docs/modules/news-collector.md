@@ -84,6 +84,20 @@ inside the engine seam (NR-002/NR-006).
 
 Background and results: `PLAN.md` Work item 10 (`T-053`).
 
+`scripts/ticker_tagging_sample.py` (`T-054`) draws the shared labeled sample of `(url, ticker)`
+pairs (`sample`) and reports wrong-company rates and known-correct retention from the labeled CSV
+(`report`). The committed sample is `data/ticker_tagging_sample.csv`, intended for reuse by
+`portfolio-nlp` (its plan cites it as `T-117`). Labels are `yes`/`no`/`unclear` with `labeled_by` =
+`hand` or `assistant`. `manual-export` writes a new blank sheet for a person to fill (title, body excerpt, empty `label`;
+default `data/ticker_tagging_manual_new.csv`, git-ignored) and refuses to overwrite an existing file
+without `--force`. `manual-apply` merges a filled sheet back and prints the agreement with the
+assistant's labels; it reads the committed sheet by default, so apply a new one explicitly:
+`ticker_tagging_sample.py manual-export` then, after labeling,
+`ticker_tagging_sample.py manual-apply --manual data/ticker_tagging_manual_new.csv`. The committed
+`data/ticker_tagging_manual.csv` is the **filled** sheet (the maintainer's labels and notes, with the
+excerpt column removed). `scripts/score_ticker_rules.py` scores the prototype matching rules on the
+labeled sample (`--exclude-ids` to leave rows out).
+
 ## Testing
 
 ```bash
