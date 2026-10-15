@@ -189,15 +189,23 @@ PYTHONPATH=src uv run python scripts/retag_urls.py --db COPY.db --out data/retag
 PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --final
 PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-export \
     --sample data/ticker_retag_check_sample.csv --out data/ticker_retag_check_manual.csv   # blind sheet
-#    ...label, then merge with manual-apply and score:
+#    ...label the `label` column (yes / no / unsure) of the blind sheet, then merge it into the NEW sample.
+#    Both paths are explicit: `manual-apply` defaults `--sample` to data/ticker_tagging_sample.csv, the
+#    first committed sample, which must not receive these labels.
+PYTHONPATH=src:scripts uv run python scripts/ticker_tagging_sample.py manual-apply \
+    --sample data/ticker_retag_check_sample.csv --manual data/ticker_retag_check_manual.csv
 PYTHONPATH=src:scripts uv run python scripts/ticker_validation_sample.py --verdict data/ticker_retag_check_sample.csv
-# 3. only if the verdict passes (at most 5 of 60 accept wrong, at most 1 of 40 reject correct)
+# 3. STOP the collector and the crawler, then (the labeled sample is what --hand-check scores again,
+#    and a FAIL refuses the run; at most 5 of 60 accept wrong, at most 1 of 40 reject correct)
 PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
-    --backup urls.pre-retag.db --hand-check-passed
+    --backup urls.pre-retag.db --hand-check data/ticker_retag_check_sample.csv
 ```
 
 `--apply` refuses to run without a backup path (written through the SQLite backup API, integrity-checked, never
-overwriting a file) and the explicit `--hand-check-passed`; it migrates, re-tags in one transaction, quarantines in
+overwriting a file) and `--hand-check SHEET`, which it scores with the same verdict before reading or writing anything (a
+failing, unlabeled or missing sheet refuses the run; the verdict line and sheet path go to `retag_summary.json` for T-058). The
+collector and the crawler must be stopped: the run aborts before writing if the row counts, largest ids or rows per status moved
+since the plan was computed (the dry run on a copy has no such need). It migrates, re-tags in one transaction, quarantines in
 a second, then compares the database with the plan (class counts, quarantined counts per class, no `accept`
 article quarantined, nothing non-`accept` readable or pending) and exits 1 without writing the lists on a mismatch
 (summary `verified: false`); a re-run changes nothing. Outputs: `removed_articles.csv` (fetched `reject` pairs, T-131's list),

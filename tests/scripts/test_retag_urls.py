@@ -71,6 +71,11 @@ def db_file(tmp_path: Path) -> Path:
     return path
 
 
+def _hc(tmp_path: Path) -> list[str]:
+    """`--hand-check` with a labeled sheet that passes (0 wrong accept, 0 correct reject)."""
+    return ["--hand-check", str(_sheet(tmp_path, 0, 0))]
+
+
 def _run(db: Path, tmp_path: Path, *extra: str) -> int:
     return retag.main(["--db", str(db), "--out", str(tmp_path / "out"), *extra])
 
@@ -92,13 +97,13 @@ def test_dry_run_changes_nothing_and_reports_the_plan(
 def test_apply_requires_a_backup_and_the_hand_check(db_file: Path, tmp_path: Path) -> None:
     with pytest.raises(SystemExit, match="--backup"):
         _run(db_file, tmp_path, "--apply")
-    with pytest.raises(SystemExit, match="--hand-check-passed"):
+    with pytest.raises(SystemExit, match="--hand-check"):
         _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "b.db"))
 
 
 def test_apply_retags_quarantines_and_is_reversible(db_file: Path, tmp_path: Path) -> None:
     backup = tmp_path / "pre.db"
-    assert _run(db_file, tmp_path, "--apply", "--backup", str(backup), "--hand-check-passed") == 0
+    assert _run(db_file, tmp_path, "--apply", "--backup", str(backup), *_hc(tmp_path)) == 0
 
     with sqlite3.connect(db_file) as c:
         classes = dict(c.execute("SELECT id, match_class FROM discovered_urls"))
@@ -121,10 +126,10 @@ def test_apply_retags_quarantines_and_is_reversible(db_file: Path, tmp_path: Pat
 
 
 def test_a_second_apply_changes_nothing(db_file: Path, tmp_path: Path) -> None:
-    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *_hc(tmp_path))
     with sqlite3.connect(db_file) as c:
         first = c.execute("SELECT * FROM articles ORDER BY id").fetchall()
-    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre2.db"), "--hand-check-passed")
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre2.db"), *_hc(tmp_path))
     with sqlite3.connect(db_file) as c:
         assert c.execute("SELECT * FROM articles ORDER BY id").fetchall() == first
 
@@ -233,8 +238,7 @@ def test_apply_on_a_database_that_already_holds_classed_rows(tmp_path: Path) -> 
     _mixed_db(path)
 
     assert (
-        _run(path, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
-        == 0
+        _run(path, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *_hc(tmp_path)) == 0
     )
 
     with sqlite3.connect(path) as c:
@@ -267,7 +271,7 @@ def test_lists_and_summary_carry_the_previous_status(db_file: Path, tmp_path: Pa
 
 
 def test_apply_lists_carry_the_previous_status_too(db_file: Path, tmp_path: Path) -> None:
-    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *_hc(tmp_path))
     rows = list(csv.DictReader((tmp_path / "out/removed_articles.csv").open()))
     assert [r["prev_fetch_status"] for r in rows] == ["ok"]
 
@@ -282,9 +286,7 @@ def test_apply_fails_loudly_when_the_result_does_not_match_the_plan(
         retag, "quarantine_articles", lambda db: 0
     )  # the quarantine silently does nothing
 
-    code = _run(
-        db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed"
-    )
+    code = _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *_hc(tmp_path))
 
     assert code == 1
     assert "VERIFICATION FAILED" in capsys.readouterr().err
@@ -294,9 +296,64 @@ def test_apply_fails_loudly_when_the_result_does_not_match_the_plan(
 
 
 def test_verify_flags_a_quarantined_accept_article(db_file: Path, tmp_path: Path) -> None:
-    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), "--hand-check-passed")
+    _run(db_file, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *_hc(tmp_path))
     summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
     assert retag.verify(db_file, summary) == []
     with sqlite3.connect(db_file) as c:
         c.execute("UPDATE articles SET fetch_status = 'quarantined' WHERE id = 1")
     assert any("accept article" in p for p in retag.verify(db_file, summary))
+
+
+def _apply(db: Path, tmp_path: Path, sheet: Path | None = None) -> int:
+    hc = ["--hand-check", str(sheet)] if sheet else _hc(tmp_path)
+    return _run(db, tmp_path, "--apply", "--backup", str(tmp_path / "pre.db"), *hc)
+
+
+def test_a_failing_hand_check_stops_apply_without_touching_the_database(
+    db_file: Path, tmp_path: Path
+) -> None:
+    before = db_file.read_bytes()
+
+    with pytest.raises(SystemExit, match="back to T-055"):
+        _apply(db_file, tmp_path, _sheet(tmp_path, 6, 0))  # 6 wrong `accept` pairs
+
+    assert db_file.read_bytes() == before
+    assert not (tmp_path / "pre.db").exists()  # not even the backup
+
+
+def test_an_unlabeled_hand_check_stops_apply(db_file: Path, tmp_path: Path) -> None:
+    sheet = _sheet(tmp_path, 0, 0)
+    sheet.write_text(sheet.read_text().replace(",accept,yes", ",accept,", 1))
+    with pytest.raises(SystemExit, match="back to T-055"):
+        _apply(db_file, tmp_path, sheet)
+    with pytest.raises(SystemExit, match="not found"):
+        _apply(db_file, tmp_path, tmp_path / "missing.csv")
+
+
+def test_apply_records_the_hand_check_verdict(db_file: Path, tmp_path: Path) -> None:
+    assert _apply(db_file, tmp_path) == 0
+    summary = json.loads((tmp_path / "out/retag_summary.json").read_text())
+    assert summary["hand_check"]["sheet"].endswith("sheet.csv")
+    assert "PASS" in summary["hand_check"]["verdict"]
+
+
+def test_apply_aborts_before_writing_when_the_corpus_moved(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_backup = retag.backup
+
+    def backup_then_a_collector_insert(src: Path, dest: Path) -> None:
+        real_backup(src, dest)
+        with sqlite3.connect(src) as c:  # the collector writes between the scan and the apply
+            c.execute(
+                "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at)"
+                " VALUES ('https://x.com/new', 'x.com', 'Apple Inc.', 'AAPL', 'ddg', 'now')"
+            )
+
+    monkeypatch.setattr(retag, "backup", backup_then_a_collector_insert)
+
+    with pytest.raises(SystemExit, match="changed since the plan"):
+        _apply(db_file, tmp_path)
+
+    with sqlite3.connect(db_file) as c:  # nothing was migrated or re-tagged
+        assert "match_class" not in {r[1] for r in c.execute("PRAGMA table_info(discovered_urls)")}

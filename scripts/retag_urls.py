@@ -17,17 +17,20 @@ Two modes, on the database named by `--db`:
   class, source and ticker and the number of rejected/review URLs that are also tagged to a
   correct ticker, and writes the hand-off lists to `--out`.
 * `--apply`: needs `--backup PATH` (a consistent copy is written first; an existing file is
-  never overwritten) and `--hand-check-passed` (the fresh 60 `accept` / 40 `reject` check of
-  T-057 passed; otherwise the work goes back to T-055). Migrates the schema, re-tags (one
-  transaction), quarantines (a second; both idempotent, so a re-run finishes an interrupted one), then
-  then compares the database with the dry-run plan (class counts, quarantined counts, no `accept`
+  never overwritten) and `--hand-check PATH` (the labeled sheet of the fresh 60 `accept` / 40 `reject`
+  check, `data/ticker_retag_check_sample.csv`): it is scored with
+  `ticker_validation_sample.final_verdict` before anything is read or written, a FAIL refuses the run (back
+  to T-055), and the verdict line and sheet path are stored in the summary for the T-058 hand-off. Stop the
+  collector and the crawler first: the run aborts, before writing, if the row counts moved since the plan
+  was computed. Migrates the schema, re-tags (one transaction), quarantines (a second; both idempotent, so a
+  re-run finishes an interrupted one), then compares the database with the dry-run plan (class counts, quarantined counts, no `accept`
   article quarantined, nothing non-`accept` left readable or pending): on a mismatch it writes no lists,
   marks the summary `verified: false` and exits 1. Otherwise it writes the same lists.
 
 Always run it on a copy first. Usage:
     PYTHONPATH=src uv run python scripts/retag_urls.py --db COPY.db [--out DIR]
     PYTHONPATH=src uv run python scripts/retag_urls.py --db urls.db --apply \
-        --backup urls.pre-retag.db --hand-check-passed [--out DIR]
+        --backup urls.pre-retag.db --hand-check data/ticker_retag_check_sample.csv [--out DIR]
 
 Outputs in `--out` (default `data/retag`): `removed_articles.csv` (fetched `reject` pairs: article
 id, ticker, company, url, class, reason), `review_quarantine.csv` (fetched `review` pairs, the T-058 selection
@@ -46,6 +49,8 @@ from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 from typing import Any
+
+from ticker_validation_sample import final_verdict
 
 from data_mining.db import connect, resolve_db_path
 from data_mining.matching import classify
@@ -232,10 +237,30 @@ def backup(src: Path, dest: Path) -> None:
         raise SystemExit(f"backup {dest} failed its integrity check: {ok}")
 
 
-def apply(db_path: Path, plan: list[tuple[int, str, str, str | None]]) -> int:
-    """Migrate, re-tag and quarantine. Returns the articles quarantined."""
+def fingerprint(con: Any) -> tuple[Any, ...]:
+    """What the plan was computed from: row counts, the largest ids and the rows per status. A
+    collector or crawler writing in between changes it (class promotions on an already-classed
+    row do not; the docs say to stop both processes)."""
+    statuses = tuple(
+        con.execute("SELECT status, COUNT(*) FROM discovered_urls GROUP BY 1 ORDER BY 1").fetchall()
+    )
+    articles = con.execute("SELECT COUNT(*), MAX(id) FROM articles").fetchone()
+    urls = con.execute("SELECT COUNT(*), MAX(id) FROM discovered_urls").fetchone()
+    return (tuple(urls), tuple(articles), tuple(tuple(r) for r in statuses))
+
+
+def apply(
+    db_path: Path, plan: list[tuple[int, str, str, str | None]], expected: tuple[Any, ...]
+) -> int:
+    """Migrate, re-tag and quarantine. Returns the articles quarantined. Aborts before any write
+    when the database is no longer what `expected` (the plan's fingerprint) describes."""
     db = connect(str(db_path), wal=True, foreign_keys=True)
     try:
+        if fingerprint(db) != expected:
+            raise SystemExit(
+                "the database changed since the plan was computed (is the collector or crawler"
+                " running?); nothing was written. Stop both and run again."
+            )
         apply_schema(db)
         run_migrations(db)
         db.commit()
@@ -294,22 +319,33 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--backup", type=Path)
-    ap.add_argument("--hand-check-passed", action="store_true")
+    ap.add_argument("--hand-check", type=Path, help="labeled T-057 sheet; must pass the verdict")
     args = ap.parse_args(argv)
     db_path = Path(args.db)
     if not db_path.exists():
         raise SystemExit(f"{db_path} does not exist")
-    if args.apply and not (args.backup and args.hand_check_passed):
-        raise SystemExit("--apply needs --backup PATH and --hand-check-passed (T-057)")
+    if args.apply and not (args.backup and args.hand_check):
+        raise SystemExit("--apply needs --backup PATH and --hand-check SHEET (T-057)")
+    hand_check: dict[str, Any] = {}
+    if args.apply:
+        # the gate comes first: a failing or unlabeled sheet must not even read the database
+        if not args.hand_check.is_file():
+            raise SystemExit(f"--hand-check sheet {args.hand_check} not found")
+        passed, verdict = final_verdict(args.hand_check)
+        if not passed:
+            raise SystemExit(f"the T-057 hand check failed, back to T-055: {verdict}")
+        hand_check = {"sheet": str(args.hand_check), "verdict": verdict}
 
     with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as con:
         plan = retag_plan(con)
+        expected = fingerprint(con)
         summary = summarize(con, plan)
+        summary["hand_check"] = hand_check
         if not args.apply:
             summary["lists"] = plan_lists(con, plan, args.out)
     if args.apply:
         backup(db_path, args.backup)
-        summary["quarantined_now"] = apply(db_path, plan)
+        summary["quarantined_now"] = apply(db_path, plan, expected)
         summary["problems"] = verify(db_path, summary)
         summary["verified"] = not summary["problems"]
         if summary["verified"]:
