@@ -991,12 +991,12 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
    `accept` by construction; `rss` entries are classified. The extractor re-evaluates
    a fetched row's class through its existing `discovered_urls` update (promote only). This is a shared-schema change under
    constitution AI behavior #10: the maintainer confirms the exact columns and the
-   `skipped`+`reject` convention before T-056 starts. The class is computed at
+   `skipped`+`reject` convention before T-056b starts. The class is computed at
    discovery from the URL (and the `ddg` title) and re-evaluated after the fetch
    with the stored title; the rule is monotone, so re-evaluation only promotes.
    `multi_company` is derived (a URL with 2+ `accept` pairs), not stored.
    Hermetic parametrized tests **per connector** for all three classes, the
-   monotone-promotion test and the migration test (details in `TASKS.md` T-056);
+   monotone-promotion test and the migration test (details in `TASKS.md` T-056a–c);
    only `test_cnbc.py` covers `url_matches_company` today and asserts the
    permissive rule, so it changes deliberately and the other six connectors get
    test files.
