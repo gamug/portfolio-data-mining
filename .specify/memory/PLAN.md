@@ -842,7 +842,8 @@ from it: a normalized name that is an ordinary word never counts alone; the
 2-letter common-abbreviation list grows (`PM`, `MS`, `MA`, `ED`, `EL`, `IP`,
 `CI`, `HD`, `PH`, `NI`, `DD`); `&` is read as `and`; the proposed `ddg`
 promotion of `review` to `accept` is **withdrawn** (5 of 10 `ddg` review rows
-were wrong, against 11 of 11 in the first sample, so it is not reliable).
+were wrong, against 11 of 11 under the first draft in the first sample (12 of 12
+after the fixes), so it is not reliable).
 Aliases are part of the rule and tested; no new dependency.
 
 **Re-scored after the changes: both samples are now in-sample** (the rule was
@@ -871,6 +872,18 @@ rule (`scripts/ticker_validation_sample.py`): `accept` 117,900 (24.5%), `review`
 `T-056`'s dry run. The `reject` class was 28 of 30 wrong, so "do not exclude"
 cost about 2 in 30 correct pairs with the first draft and 0 of 34 after the `&`
 and ordinary-word fixes (in-sample).
+
+**Corpus-wide effect of the last two changes** (`score_ticker_rules.py --diff`,
+whole `urls.db`, 481,332 rows, read-only): matching the URL host used to accept
+`Nasdaq, Inc.` on any `nasdaq.com` URL; **0 stored rows are affected** (the
+corpus has no `nasdaq.com` rows, NDAQ is stored from `cnbc`, `yahoo` and
+`seekingalpha`), so no figure above changes, but a `nasdaq.com` crawl would have
+hit it. The 2-letter abbreviation list moves **1,239 rows from `accept` to
+`review` and none to `reject`** (`PM` 879, `HD` 109, `MS` 67, `IP` 60, `DD` 42,
+`CI` 25, `EL` 21, `MA` 17, `ED` 10, `NI` 8, `PH` 1): an upper-case abbreviation
+in the title is `review`, judged downstream, never excluded. Entries without a
+labeled error (all but `PM`) are kept for that reason: the cost of a wrong entry
+is a `review` pair, not a hidden one.
 
 **Quarantine** means the pair stays in `urls.db`, is flagged with its class and
 reason, and is left out of the default `articles` selection that

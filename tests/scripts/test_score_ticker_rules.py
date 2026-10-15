@@ -131,7 +131,7 @@ def _row(ticker: str, company: str, url: str = "https://x/a.html") -> dict[str, 
         (
             _row("PM", "Philip Morris International"),
             "UPDATE 2-Egypt PM says IMF talks resume",
-            "reject",
+            "review",
         ),
         (
             _row("SPGI", "S&P Global", "https://s/s-and-p-global-inc-2022-q1-results"),
@@ -173,3 +173,28 @@ def test_design_report_weights_by_stratum(tmp_path: Path) -> None:
     text = mod.design_report(mod.load(db, sample))
     assert "design v1" in text
     assert "known-correct (labeled yes) classed accept: 0/0" in text
+
+
+def test_with_host_reproduces_the_old_leak_and_diff_counts_it(tmp_path: Path) -> None:
+    row = _row("NDAQ", "Nasdaq, Inc.", "https://www.nasdaq.com/articles/apple-beats-estimates")
+    assert mod.design_class(row, "Apple beats", with_host=True) == "accept"
+    assert mod.design_class(row, "Apple beats") == "reject"
+    db = tmp_path / "urls.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, company TEXT, ticker TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (1, ?, 'Apple beats', 'Nasdaq, Inc.', 'NDAQ')",
+            (row["url"],),
+        )
+        con.execute(
+            "INSERT INTO discovered_urls VALUES (2, 'https://c/x.html', 'Egypt PM says', 'Philip Morris International', 'PM')"
+        )
+    moves, by_ticker = mod.class_diff(db, with_host=True)
+    assert moves == {("accept", "reject"): 1}
+    assert by_ticker == {"NDAQ": 1}
+    moves, by_ticker = mod.class_diff(db, abbreviations=mod.BASELINE_ABBREVIATIONS)
+    assert moves == {("accept", "review"): 1}
+    assert "class changes vs x: 1 rows" in mod.render_diff("x", moves, by_ticker)

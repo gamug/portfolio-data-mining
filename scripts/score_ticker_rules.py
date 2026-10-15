@@ -1,21 +1,24 @@
-"""Score prototype matching rules on the hand-labeled sample (T-054 evidence for T-055).
+"""Score the T-055 matching rules on the hand-labeled samples.
 
-Explorative and in-sample: the rules were written after reading the errors in
-``data/ticker_tagging_sample.csv``, so the figures are optimistic and are not a
-measurement of the T-056 implementation. This script makes the table in
-``PLAN.md`` Work item 10 reproducible; T-055 replaces the rules with the
-approved design and re-runs it.
+Two parts. (1) The first prototype rules (``RULES``) written after reading the
+errors in ``data/ticker_tagging_sample.csv`` (T-054): per rule kept-correct /
+kept-wrong / lost-correct / dropped-wrong (``yes`` is correct), precision and
+recall, for all rows and for ``fetch_status = 'ok'`` rows. (2) ``design_class``,
+the approved design v1 (accept / review / reject from the URL path and title,
+with a hand-kept alias map, ``&`` read as ``and``, an ordinary-word-name rule and
+an abbreviation list), scored post-stratified on either sample, in ``re-tag``
+mode (fetched title) and ``discovery`` mode (no title for ``sitemap`` rows).
 
-Each rule says whether to *keep* a ``(url, ticker)`` pair, from the URL, the
-title and the first 6,000 characters of the body. Per rule it prints
-kept-correct / kept-wrong / lost-correct / dropped-wrong (``yes`` is correct),
-precision and recall, for all rows and for ``fetch_status = 'ok'`` rows (what
-``portfolio-nlp`` reads). ``--exclude-ids`` drops rows, e.g. the two labels
-awaiting confirmation, to show the figures with and without them.
+Both samples are in-sample for the current rule (it was tuned on the first
+sample's errors and then the validation sample's), so the figures are optimistic;
+they are not the acceptance evidence, which is the fresh check in T-057.
+``--exclude-ids`` leaves sample rows out; ``--diff`` scans the whole corpus and
+lists the rows whose class changed because of the host fix and the abbreviation
+list (slow; read-only).
 
 Usage:
     PYTHONPATH=src uv run python scripts/score_ticker_rules.py [--db PATH]
-        [--sample PATH] [--exclude-ids ID ...]
+        [--sample PATH] [--exclude-ids ID ...] [--diff]
 """
 
 from __future__ import annotations
@@ -24,10 +27,11 @@ import argparse
 import csv
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from audit_ticker_tagging import WORD_TICKERS
 from ticker_tagging_sample import DEFAULT_SAMPLE, normalized_name
@@ -55,10 +59,13 @@ COMMON_TICKER_WORDS = frozenset(WORD_TICKERS) | frozenset(
         *("AM", "AN", "AS", "AT", "BE", "BY", "DO", "GO", "HE", "IF", "IN", "IS", "ME", "MY"),
         *("NO", "OF", "OR", "SO", "TO", "UP", "US", "WE", "I", "CAN", "FOR", "ONE", "OUT"),
         *("NEW", "BIG", "FAST", "KEY", "APP", "FIX"),
-        # Upper-case abbreviations of something else in a headline ("Egypt PM says").
-        *("PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"),
     }
 )
+# 2-letter tickers that are also upper-case abbreviations in a headline ("Egypt PM
+# says"). Never `accept` on their own, but never excluded either: an upper-case
+# hit in the title is `review` (judged downstream), so the list cannot hide a pair.
+ABBREVIATIONS = frozenset({"PM", "MA", "ED", "EL", "IP", "CI", "HD", "PH", "MS", "NI", "DD"})
+BASELINE_ABBREVIATIONS: frozenset[str] = frozenset()  # the first draft had none
 # Names a company is also known by, matched like the full name (hand-kept, tested).
 ALIASES: dict[str, tuple[str, ...]] = {
     "GOOGL": ("google",),
@@ -152,33 +159,78 @@ def _word(token: str, text: str, flags: int = re.IGNORECASE) -> bool:
     )
 
 
-def design_class(row: Row, title: str) -> str:
-    """T-055 design v1, from the URL and title only (what discovery can see).
+def design_class(
+    row: Row,
+    title: str,
+    *,
+    abbreviations: frozenset[str] = ABBREVIATIONS,
+    with_host: bool = False,
+) -> str:
+    """T-055 design v1, from the URL path and the title (what discovery can see).
 
-    ``accept``: the full normalized name is in the URL/title, or an explicit
-    ticker form, or an upper-case ticker (2+ letters, not a common word) in the
+    ``accept``: the full normalized company name (``&`` read as ``and``; a name
+    that is itself an ordinary word such as ``News`` never counts) or a hand-kept
+    alias is in the URL path or title, or an explicit ticker form, or an
+    upper-case ticker (2+ letters, not an ordinary word or abbreviation) in the
     title. ``review``: only a weaker sign, a non-common ticker or a distinctive
-    first word anywhere in the URL/title. ``reject``: nothing else.
+    first word in the URL/title, or an abbreviation-like 2-letter ticker in
+    upper case in the title. ``reject``: nothing else. The host is not matched
+    (``with_host`` exists only to measure what that leak used to accept).
     """
     ticker = row["ticker"]
-    slug = row["url"].split("//", 1)[-1]
+    parts = urlsplit(row["url"])
+    slug = (
+        f"{parts.netloc} {parts.path} {parts.query}" if with_host else f"{parts.path} {parts.query}"
+    )
     text = f"{slug} {title}"
+    common = COMMON_TICKER_WORDS | abbreviations
     strong = (
         _name_in(row, text)
         or _explicit(ticker, title, "")
-        or (
-            len(ticker) >= MIN_SHORT_TICKER
-            and ticker not in COMMON_TICKER_WORDS
-            and _word(ticker, title, 0)
-        )
+        or (len(ticker) >= MIN_SHORT_TICKER and ticker not in common and _word(ticker, title, 0))
     )
     if strong:
         return "accept"
     first = row["company"].split()[0].strip(",.")
     weak = (
-        len(ticker) >= MIN_TICKER and ticker not in COMMON_TICKER_WORDS and _word(ticker, text)
-    ) or (len(first) >= MIN_NAME and first.lower() not in STOPWORDS and _word(first, text))
+        (len(ticker) >= MIN_TICKER and ticker not in common and _word(ticker, text))
+        or (len(first) >= MIN_NAME and first.lower() not in STOPWORDS and _word(first, text))
+        or (ticker in abbreviations and _word(ticker, title, 0))
+    )
     return "review" if weak else "reject"
+
+
+def class_diff(db_path: Path, **overrides: object) -> tuple[Counter[tuple[str, str]], Counter[str]]:
+    """Scan the whole corpus: rows whose class changes when ``overrides`` are applied.
+
+    Returns the ``(old, new)`` transition counts and, per ticker, how many rows
+    moved. ``overrides`` are ``design_class`` keywords for the *old* behaviour
+    (``abbreviations=...``, ``with_host=True``); read-only.
+    """
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    moves: Counter[tuple[str, str]] = Counter()
+    by_ticker: Counter[str] = Counter()
+    with closing(connect(uri, uri=True)) as con:
+        cur = con.execute(
+            "SELECT d.url, d.ticker, d.company, COALESCE(NULLIF(d.title, ''), a.title, '')"
+            " FROM discovered_urls d LEFT JOIN articles a ON a.id = d.id"
+        )
+        for url, ticker, company, title in cur:
+            row = {"url": url, "ticker": ticker, "company": company}
+            old = design_class(row, title, **overrides)  # type: ignore[arg-type]
+            new = design_class(row, title)
+            if old != new:
+                moves[(old, new)] += 1
+                by_ticker[ticker] += 1
+    return moves, by_ticker
+
+
+def render_diff(label: str, moves: Counter[tuple[str, str]], by_ticker: Counter[str]) -> str:
+    """Format ``class_diff`` output."""
+    lines = [f"== class changes vs {label}: {sum(moves.values()):,} rows =="]
+    lines += [f"  {old} -> {new}: {n:,}" for (old, new), n in sorted(moves.items())]
+    lines.append("  top tickers: " + ", ".join(f"{t} {n:,}" for t, n in by_ticker.most_common(12)))
+    return "\n".join(lines)
 
 
 def design_report(data: list[tuple[Row, str, str, str]], discovery: bool = False) -> str:
@@ -313,6 +365,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", default=None, help="path to urls.db (default: $DATABASE_URL)")
     parser.add_argument("--sample", default=DEFAULT_SAMPLE)
     parser.add_argument("--exclude-ids", nargs="*", default=[], help="sample ids to leave out")
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help="scan the whole corpus (slow) for rows moved by the host fix and the abbreviation list",
+    )
     args = parser.parse_args(argv)
     db = Path(args.db or resolve_db_path())
     sample = Path(args.sample)
@@ -326,6 +383,12 @@ def main(argv: list[str] | None = None) -> int:
     print(render(data))
     print(design_report(data))
     print(design_report(data, discovery=True))
+    if args.diff:
+        for label, kw in (
+            ("matching the host (old)", {"with_host": True}),
+            ("no abbreviation list (first draft)", {"abbreviations": BASELINE_ABBREVIATIONS}),
+        ):
+            print(render_diff(label, *class_diff(db, **kw)))
     return 0
 
 
