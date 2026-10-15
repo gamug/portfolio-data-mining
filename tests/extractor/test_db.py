@@ -4,6 +4,7 @@ from collections.abc import Iterator
 import pytest
 from portfolio_common.db import Database
 
+from data_mining.matching import classify
 from extractor.db import (
     enable_foreign_keys,
     ensure_articles_table,
@@ -12,6 +13,7 @@ from extractor.db import (
     get_status_counts,
     get_urls_by_status,
     mark_status,
+    reevaluate_match,
     save_article,
 )
 
@@ -50,6 +52,7 @@ CREATE TABLE discovered_urls (
     status          TEXT    NOT NULL DEFAULT 'pending',
     fetch_status_code INTEGER,
     match_class     TEXT    NOT NULL DEFAULT 'accept',
+    match_reason    TEXT,
     UNIQUE (url, ticker)
 )
 """
@@ -284,3 +287,84 @@ def test_status_counts_leave_out_rejected_rows_and_class_counts_include_them(
 
     assert get_status_counts(conn) == {"pending": 3}
     assert get_match_class_counts(conn) == {"accept": 2, "reject": 1, "review": 1}
+
+
+def _add_row(
+    conn: Database,
+    url: str,
+    title: str | None,
+    match_class: str,
+    company: str = "Apple Inc.",
+    ticker: str = "AAPL",
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at, title, match_class) "
+        "VALUES (?, 'cnbc.com', ?, ?, 'ddg', '2026-08-10T00:00:00', ?, ?)",
+        (url, company, ticker, title, match_class),
+    )
+    conn.commit()
+    return int(cur.lastrowid or 0)
+
+
+def _class_of(conn: Database, url_id: int) -> tuple[str, str | None]:
+    row = conn.execute(
+        "SELECT match_class, match_reason FROM discovered_urls WHERE id = ?", (url_id,)
+    ).fetchone()
+    return row["match_class"], row["match_reason"]
+
+
+def test_reevaluate_match_promotes_review_to_accept_with_the_fetched_title(conn: Database) -> None:
+    url_id = _add_row(conn, "https://cnbc.com/2024/01/15/earnings-beat.html", None, "review")
+
+    assert reevaluate_match(conn, url_id, "Apple Inc. earnings beat")
+
+    assert _class_of(conn, url_id) == ("accept", "name")
+
+
+def test_reevaluate_match_never_demotes(conn: Database) -> None:
+    url_id = _add_row(
+        conn, "https://cnbc.com/2024/01/15/earnings-beat.html", "Apple earnings", "accept"
+    )
+
+    assert not reevaluate_match(conn, url_id, "unrelated headline")
+
+    assert _class_of(conn, url_id)[0] == "accept"
+
+
+def test_reevaluate_match_leaves_a_review_row_without_new_evidence(conn: Database) -> None:
+    url_id = _add_row(conn, "https://cnbc.com/2024/01/15/earnings-beat.html", None, "review")
+
+    assert not reevaluate_match(conn, url_id, "quarterly results")
+
+    assert _class_of(conn, url_id)[0] == "review"
+
+
+def test_reevaluate_match_ignores_a_rejected_row(conn: Database) -> None:
+    url_id = _add_row(conn, "https://cnbc.com/2024/01/15/x.html", "Apple Inc. beats", "reject")
+
+    assert not reevaluate_match(conn, url_id, "Apple Inc. beats")
+
+    assert _class_of(conn, url_id)[0] == "reject"
+
+
+def test_reevaluate_match_does_not_overwrite_a_class_changed_since_the_read(
+    conn: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    url_id = _add_row(conn, "https://cnbc.com/2024/01/15/earnings-beat.html", None, "review")
+    real_classify = classify
+
+    def racing(*args: str, **kwargs: object):  # type: ignore[no-untyped-def]
+        # A concurrent writer promotes the row between our read and our UPDATE.
+        conn.execute("UPDATE discovered_urls SET match_class = 'accept' WHERE id = ?", (url_id,))
+        conn.commit()
+        return real_classify(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("extractor.db.classify", racing)
+
+    assert not reevaluate_match(conn, url_id, "Apple Inc. earnings beat")
+
+    assert _class_of(conn, url_id) == ("accept", None)
+
+
+def test_reevaluate_match_unknown_id_is_a_noop(conn: Database) -> None:
+    assert not reevaluate_match(conn, 9999, "Apple Inc.")

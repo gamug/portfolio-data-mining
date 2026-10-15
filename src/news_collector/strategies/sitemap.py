@@ -101,8 +101,9 @@ class SitemapRSSStrategy:
     def _dedupe_and_filter(
         self, entries: list[SitemapEntry], company: str, ticker: str
     ) -> list[DiscoveredURL]:
-        """Normalize/dedupe raw sitemap+RSS+CDX entries, drop non-article and
-        company-irrelevant URLs, and convert what's left to DiscoveredURL."""
+        """Normalize/dedupe raw sitemap+RSS+CDX entries, drop non-article URLs,
+        and convert what's left to DiscoveredURL with its company-match class (a
+        `reject` pair is kept, stored as skipped by the queue, T-056c)."""
         seen: set[str] = set()
         results: list[DiscoveredURL] = []
         for entry in entries:
@@ -113,8 +114,7 @@ class SitemapRSSStrategy:
                 continue
             if not self._connector.is_article_url(url):
                 continue
-            if not self._connector.url_matches_company(url, entry.title or "", company, ticker):
-                continue
+            match = self._connector.explain_match(url, entry.title or "", company, ticker)
             seen.add(url)
             src = "sitemap" if not getattr(entry, "_from_rss", False) else "rss"
             results.append(
@@ -127,6 +127,8 @@ class SitemapRSSStrategy:
                     discovered_at=datetime.utcnow(),
                     pub_date=entry.lastmod,
                     title=entry.title,
+                    match_class=match.cls,
+                    match_reason=match.reason,
                 )
             )
         return results

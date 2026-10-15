@@ -45,6 +45,7 @@ from extractor.db import (
     get_status_counts,
     get_urls_by_status,
     mark_status,
+    reevaluate_match,
     save_article,
 )
 from extractor.parse import (
@@ -352,6 +353,7 @@ async def extract_run(
             )
             save_article(conn, article)
             mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
+            reevaluate_match(conn, article["id"], article.get("title"))
             counts[article["fetch_status"]] = counts.get(article["fetch_status"], 0) + 1
 
     return BatchExtractResult(requested=len(rows), processed=sum(counts.values()), counts=counts)
@@ -385,6 +387,7 @@ async def extract_one(
         )
     save_article(conn, article)
     mark_status(conn, article["id"], article["fetch_status"], article["http_status_code"])
+    reevaluate_match(conn, article["id"], article.get("title"))
     return Article(**article)
 
 

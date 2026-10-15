@@ -13,6 +13,7 @@ extractor-specific queries. See CLAUDE.md.
 from portfolio_common.db import Database, Row, in_clause
 
 from data_mining.db import connect as _connect
+from data_mining.matching import CLASS_RANK, classify
 from data_mining.schema import (
     ARTICLE_COLUMNS,
     ARTICLES_SCHEMA,
@@ -31,6 +32,7 @@ __all__ = [
     "get_status_counts",
     "get_urls_by_status",
     "mark_status",
+    "reevaluate_match",
     "save_article",
 ]
 
@@ -143,3 +145,32 @@ def mark_status(
         (status, http_status_code, url_id),
     )
     db.commit()
+
+
+def reevaluate_match(db: Database, url_id: int, fetched_title: str | None = None) -> bool:
+    """Re-class a fetched pair with the stored title (and the fetched one) and
+    promote it when the class rises (`review` -> `accept`). Never demotes.
+
+    The UPDATE writes only `match_class`/`match_reason` and is guarded in SQL on the
+    class that was read, so a concurrent writer (the collector's promotion) is never
+    overwritten with a lower class. A `reject` row is left alone: it was never
+    fetched, and lifting it is the queue's job (it also resets `status`).
+    Returns True when a row was promoted.
+    """
+    row = db.execute(
+        "SELECT url, title, company, ticker, match_class FROM discovered_urls WHERE id = ?",
+        (url_id,),
+    ).fetchone()
+    if row is None or row["match_class"] == "reject":
+        return False
+    title = " ".join(t for t in (row["title"], fetched_title) if t)
+    match = classify(row["url"], title, row["company"], row["ticker"])
+    if CLASS_RANK[match.cls] <= CLASS_RANK[row["match_class"]]:
+        return False
+    cur = db.execute(
+        "UPDATE discovered_urls SET match_class = ?, match_reason = ? "
+        "WHERE id = ? AND match_class = ?",
+        (match.cls, match.reason, url_id, row["match_class"]),
+    )
+    db.commit()
+    return cur.rowcount == 1

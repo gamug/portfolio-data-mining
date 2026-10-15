@@ -226,7 +226,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and the crawler's `/discovered` (the task text's `/discovered` is the crawler's route). Existing rows default to
       `accept` until the T-057 re-tag. The strategies still build `DiscoveredURL` with the default class, so nothing
       is quarantined until T-056c.
-- [ ] **T-056c** Strategies, fetch policy and re-evaluation (after `a` and `b`).
+- [x] **T-056c** *(done 2026-10-15)* Strategies, fetch policy and re-evaluation (after `a` and `b`).
       **Strategies stop dropping:** `ddg` and `sitemap` (`_dedupe_and_filter`) call
       `classify_match` and keep `review` and `reject` rows with their class and (for `ddg`)
       `query` instead of `continue`, so the quarantine exists for new crawls; `accept`
