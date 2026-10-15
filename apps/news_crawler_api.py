@@ -259,9 +259,17 @@ def reset_discovered(url_id: int, conn: Database = Depends(get_conn)) -> ResetRe
     """Flip a row back to 'pending' (clearing fetch_status_code) so it can be
     re-extracted -- handy for testing after a code change, without hand-editing
     the DB."""
-    row = conn.execute("SELECT id FROM discovered_urls WHERE id = ?", (url_id,)).fetchone()
+    row = conn.execute(
+        "SELECT id, match_class FROM discovered_urls WHERE id = ?", (url_id,)
+    ).fetchone()
     if row is None:
         raise HTTPException(404, f"discovered_urls id={url_id} not found")
+    if row["match_class"] == "reject":
+        raise HTTPException(
+            409,
+            f"discovered_urls id={url_id} is a matcher-rejected pair (match_class=reject): "
+            "it is promoted by rediscovery or by the re-tag decision, not reset",
+        )
     mark_status(conn, url_id, "pending", http_status_code=None)
     return ResetResult(id=url_id, status="pending")
 

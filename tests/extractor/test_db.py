@@ -48,6 +48,7 @@ CREATE TABLE discovered_urls (
     title           TEXT,
     status          TEXT    NOT NULL DEFAULT 'pending',
     fetch_status_code INTEGER,
+    match_class     TEXT    NOT NULL DEFAULT 'accept',
     UNIQUE (url, ticker)
 )
 """
@@ -239,9 +240,6 @@ def test_get_pending_urls_excludes_matcher_rejected_rows(conn: Database) -> None
     # T-056b: a rejected pair is written `status='skipped' AND match_class='reject'`,
     # so the extractor's status-only selection never returns it.
     conn.execute(
-        "ALTER TABLE discovered_urls ADD COLUMN match_class TEXT NOT NULL DEFAULT 'accept'"
-    )
-    conn.execute(
         "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at,"
         " status, match_class) VALUES ('https://cnbc.com/rej', 'cnbc.com', '3M', 'MMM', 'sitemap',"
         " '2026-08-10T00:00:00', 'skipped', 'reject')"
@@ -252,3 +250,20 @@ def test_get_pending_urls_excludes_matcher_rejected_rows(conn: Database) -> None
 
     assert "https://cnbc.com/rej" not in urls
     assert urls == ["https://cnbc.com/a", "https://cnbc.com/b"]
+
+
+def test_get_urls_by_status_never_returns_rejected_rows_even_when_asked_for_skipped(
+    conn: Database,
+) -> None:
+    conn.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at,"
+        " status, match_class) VALUES ('https://cnbc.com/rej', 'cnbc.com', '3M', 'MMM', 'sitemap',"
+        " '2026-08-10T00:00:00', 'skipped', 'reject'),"
+        " ('https://cnbc.com/paywall', 'cnbc.com', '3M', 'MMM', 'sitemap',"
+        " '2026-08-10T00:00:00', 'skipped', 'review')"
+    )
+    conn.commit()
+
+    urls = [row["url"] for row in get_urls_by_status(conn, ["skipped"])]
+
+    assert urls == ["https://cnbc.com/paywall"]

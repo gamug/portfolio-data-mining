@@ -75,6 +75,14 @@ def test_collector_pending_leaves_out_rejected_rows(db_path: str) -> None:
     assert {r["url"] for r in got} == {"https://cnbc.com/acc", "https://cnbc.com/rev"}
 
 
+def test_collector_stats_split_skipped_by_match_class(db_path: str) -> None:
+    app = FastAPI()
+    app.include_router(discovery.router)
+    got = TestClient(app).get("/discovery/stats", params={"db_path": db_path}).json()
+    assert got["by_status"] == {"pending": 2, "skipped": 1}
+    assert got["by_match_class"] == {"accept": 1, "review": 1, "reject": 1}
+
+
 def test_status_filter_description_says_skipped_includes_rejected() -> None:
     app = FastAPI()
     app.include_router(discovery.router)
@@ -110,3 +118,16 @@ def test_crawler_discovered_exposes_class_and_filters_on_it(crawler: TestClient)
     one = crawler.get(f"/discovered/{rejected[0]['id']}").json()
     assert one["match_class"] == "reject"
     assert crawler.get("/discovered", params={"match_class": "bogus"}).status_code == 422
+
+
+def test_crawler_reset_refuses_a_rejected_pair_and_resets_others(crawler: TestClient) -> None:
+    rows = {r["url"]: r["id"] for r in crawler.get("/discovered").json()}
+
+    refused = crawler.post(f"/discovered/{rows['https://cnbc.com/rej']}/reset")
+    assert refused.status_code == 409
+    assert "matcher-rejected" in refused.json()["detail"]
+    assert crawler.get(f"/discovered/{rows['https://cnbc.com/rej']}").json()["status"] == "skipped"
+
+    ok = crawler.post(f"/discovered/{rows['https://cnbc.com/rev']}/reset")
+    assert ok.status_code == 200
+    assert ok.json() == {"id": rows["https://cnbc.com/rev"], "status": "pending"}

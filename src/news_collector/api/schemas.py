@@ -139,8 +139,13 @@ class QueueStatsResponse(BaseModel):
     """Current state of the URL queue."""
 
     total: int
-    by_status: dict[str, int]
+    by_status: dict[str, int] = Field(
+        description="Rows per status; skipped includes matcher-rejected rows (see by_match_class)"
+    )
     by_domain: dict[str, int]
+    by_match_class: dict[str, int] = Field(
+        description="Rows per company-matching class: accept, review, reject"
+    )
 
 
 class QueryResponse(BaseModel):

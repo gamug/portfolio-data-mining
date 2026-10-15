@@ -22,6 +22,7 @@ class QueueStats(TypedDict):
     total: int
     by_status: dict[str, int]
     by_domain: dict[str, int]
+    by_match_class: dict[str, int]
 
 
 log = logging.getLogger(__name__)
@@ -108,12 +109,18 @@ class URLQueue:
         learn the id of what it just tried to insert, which downstream stages
         need as their foreign key back to this table.
 
+        Raises:
+            ValueError: a `match_class` is not `accept`/`review`/`reject` (nothing is written).
+
         Returns:
             Number of newly inserted rows.
         """
         assert self._conn is not None, "Call initialize() first"
         if not urls:
             return 0
+        for u in urls:
+            if u.match_class not in CLASS_RANK:
+                raise ValueError(f"invalid match_class {u.match_class!r} for {u.url}")
 
         rows = [
             (
@@ -463,7 +470,20 @@ class URLQueue:
                 "SELECT domain, COUNT(*) AS cnt FROM discovered_urls GROUP BY domain"
             ).fetchall()
         }
-        return {"total": total, "by_status": by_status, "by_domain": by_domain}
+        # `by_status['skipped']` mixes matcher-rejected rows with paywall/irrelevant
+        # skips; `by_match_class` tells them apart.
+        by_match_class = {
+            row["match_class"]: row["cnt"]
+            for row in self._conn.execute(
+                "SELECT match_class, COUNT(*) AS cnt FROM discovered_urls GROUP BY match_class"
+            ).fetchall()
+        }
+        return {
+            "total": total,
+            "by_status": by_status,
+            "by_domain": by_domain,
+            "by_match_class": by_match_class,
+        }
 
     def export_pending_csv(self, path: str | Path) -> int:
         """

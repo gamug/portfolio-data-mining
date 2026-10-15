@@ -357,3 +357,27 @@ def test_query_filters_by_match_class(queue: URLQueue) -> None:
     assert total == 1
     assert rows[0].url == "https://x.com/3"
     assert queue.query(status="skipped")[1] == 1
+
+
+def test_invalid_match_class_is_refused_before_any_write(queue: URLQueue) -> None:
+    good = _classed("https://x.com/good", "accept")
+    bad = _classed("https://x.com/bad", "accept")
+    bad.match_class = "bogus"  # type: ignore[assignment]
+    with pytest.raises(ValueError, match="bogus"):
+        queue.enqueue_batch([good, bad])
+    assert queue.stats()["total"] == 0
+
+
+def test_stats_counts_rows_by_match_class(queue: URLQueue) -> None:
+    queue.enqueue_batch(
+        [
+            _classed("https://x.com/1", "accept"),
+            _classed("https://x.com/2", "review"),
+            _classed("https://x.com/3", "reject"),
+            _classed("https://x.com/4", "reject"),
+        ]
+    )
+    queue.mark_skipped("https://x.com/1", "paywall")
+    stats = queue.stats()
+    assert stats["by_match_class"] == {"accept": 1, "review": 1, "reject": 2}
+    assert stats["by_status"] == {"pending": 1, "skipped": 3}

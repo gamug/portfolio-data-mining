@@ -185,3 +185,25 @@ def test_run_migrations_leaves_a_current_database_untouched(db: Database) -> Non
     run_migrations(db)
 
     assert db.execute("SELECT * FROM discovered_urls").fetchall() == before
+
+
+_BAD_INSERT = (
+    "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at, match_class)"
+    " VALUES ('https://cnbc.com/a', 'cnbc.com', '3M', 'MMM', 'ddg', '2026-08-10T00:00:00', 'bogus')"
+)
+
+
+def test_match_class_check_constraint_on_a_fresh_schema(db: Database) -> None:
+    apply_schema(db)
+    run_migrations(db)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(_BAD_INSERT)
+
+
+def test_match_class_check_constraint_on_a_migrated_schema(db: Database) -> None:
+    db.execute(LEGACY_DISCOVERED_V1)
+    db.commit()
+    apply_schema(db)
+    run_migrations(db)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(_BAD_INSERT)

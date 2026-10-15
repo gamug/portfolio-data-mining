@@ -84,6 +84,7 @@ async def queue_stats(
     return QueueStatsResponse(
         total=raw["total"],
         by_status=raw["by_status"],
+        by_match_class=raw["by_match_class"],
         by_domain=raw["by_domain"],
     )
 

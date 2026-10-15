@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS discovered_urls (
     title           TEXT,
     status          TEXT    NOT NULL DEFAULT 'pending',
     fetch_status_code INTEGER,
-    match_class     TEXT    NOT NULL DEFAULT 'accept',
+    match_class     TEXT    NOT NULL DEFAULT 'accept'
+                    CHECK (match_class IN ('accept', 'review', 'reject')),
     match_reason    TEXT,
     query           TEXT,
     UNIQUE (url, ticker)
@@ -132,7 +133,7 @@ def run_migrations(db: Database) -> None:
 # fetched; `mark_skipped` (paywall, irrelevant after inspection) leaves `match_class`
 # alone. Existing rows get the default `accept`; T-057's re-tag reclassifies them.
 MATCH_COLUMNS = {
-    "match_class": "TEXT NOT NULL DEFAULT 'accept'",
+    "match_class": "TEXT NOT NULL DEFAULT 'accept' CHECK (match_class IN ('accept', 'review', 'reject'))",
     "match_reason": "TEXT",
     "query": "TEXT",
 }

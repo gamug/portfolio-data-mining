@@ -222,7 +222,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `status`; the API listing and filter. **Done when:** the same four gates clean, the migration test and the `schema.py` docstring (`SCHEMA_VERSION` 2) updated, `SPEC.md` FR-014 and `docs/modules/news-collector.md` describe the columns, and the maintainer's #10 confirmation is recorded here. → step 3.
       **Results (T-056b):** the promotion runs in `URLQueue._promote_duplicates` (portable SQL, the dialect's
       `upsert` can only overwrite with `excluded.c`), after the insert; a row skipped for another reason (paywall)
-      is not reset by a promotion. The API surface is the collector's `/discovery/query` and `/discovery/pending`
+      is not reset by a promotion. `match_class` has a `CHECK` constraint and `enqueue_batch` validates it before any write; `stats()` gains `by_match_class`; `get_urls_by_status` excludes `reject` rows and the crawler's reset answers 409 for one. The API surface is the collector's `/discovery/query` and `/discovery/pending`
       and the crawler's `/discovered` (the task text's `/discovered` is the crawler's route). Existing rows default to
       `accept` until the T-057 re-tag. The strategies still build `DiscoveredURL` with the default class, so nothing
       is quarantined until T-056c.

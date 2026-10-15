@@ -46,7 +46,28 @@ demotes. Existing databases are upgraded by `run_migrations` (their rows default
 `T-057` re-tag reclassifies them). Both read APIs expose the class: the collector's
 `/discovery/query` and `/discovery/pending` return `match_class`/`match_reason` and `/discovery/query`
 filters on `match_class`; the crawler's `/discovered` does the same. The `status` filter's `skipped`
-includes matcher-rejected rows.
+includes matcher-rejected rows, so use `by_match_class` (in `queue.stats()`, the collector's
+`/discovery/stats` and the CLI `stats`) to tell them from paywall skips. `match_class` has a `CHECK`
+constraint and `enqueue_batch` raises `ValueError` before writing for any other value. The extractor's
+`get_urls_by_status` never returns a `reject` row, whatever status is asked for, and the crawler's
+`POST /discovered/{id}/reset` answers 409 for one.
+
+**Repeatable migration check** (run before any re-tag, on a copy, never the source):
+```bash
+cp data/urls.db /tmp/urls_copy.db
+PYTHONPATH=src uv run python - <<'PY'
+import sqlite3
+from news_collector.storage.queue import URLQueue
+p = "/tmp/urls_copy.db"
+before = sqlite3.connect(p).execute("SELECT COUNT(*) FROM discovered_urls").fetchone()[0]
+q = URLQueue(p); q.initialize()
+print(before, q._conn.execute(
+    "SELECT COUNT(*), SUM(match_class='accept'), (SELECT COUNT(*) FROM sqlite_master"
+    " WHERE name='idx_match_class'), (SELECT * FROM pragma_user_version) FROM discovered_urls").fetchone()[:])
+PY
+```
+Expect the same row count before and after, every row `accept`, the index present and user_version 2
+(the 481,332-row corpus gave exactly that on 2026-10-15).
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
