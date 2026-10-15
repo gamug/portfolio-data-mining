@@ -145,8 +145,8 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       details in `PLAN.md` Work item 10. → step 2.
 - [ ] **T-056** *(split into `T-056a`, `T-056b`, `T-056c` so each piece is
       reviewable and shippable; the IDs stay sub-numbered because `portfolio-nlp`
-      cites only `T-053`–`T-059`. Order: `a` (no schema) → maintainer's constitution #10
-      confirmation → `b` → `c`; T-057 starts after all three.)* Implement the approved
+      cites only `T-053`–`T-059`. Order: `a` (no schema) → `b` (constitution #10
+      confirmed 2026-10-15, starts after PR #58 is reviewed) → `c`; T-057 starts after all three.)* Implement the approved
       three-class rule. `T-056` is done when all three are.
 - [x] **T-056a** *(no schema change; done 2026-10-15, PR #58)* The matcher and the connectors. Put the pure
       module in the **shared library** (`data_mining/matching.py`; both `news_collector`
@@ -186,11 +186,11 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       samples, both modes) and exits 1 on drift. Known limitation, measured with `--names`: 59,956
       `accept` rows rest on a one-word name, about 12,400 of them dictionary words (Apple 9,890).
       T-057's fresh check is the acceptance evidence.
-- [ ] **T-056b** *(shared-schema change; needs the maintainer's constitution AI
-      behavior #10 confirmation before it starts: new `discovered_urls` columns, a `status`
-      convention and the extractor update touch the two-package DB contract. The design,
-      quarantine and a `query` column were approved on 2026-10-15; the exact columns and the
-      `skipped`+`reject` convention are listed here for that confirmation.)* Storage, queue
+- [ ] **T-056b** *(shared-schema change; constitution AI behavior #10 **confirmed by the
+      maintainer on 2026-10-15** for the exact columns, the `skipped`+`reject` convention, the
+      queue upsert and the extractor's promote-only update listed here: they touch the
+      two-package DB contract. Starts after PR #58 is reviewed; cite the confirmation and its
+      date in this task's PR description.)* Storage, queue
       and API. **Migration via the real mechanism in `data_mining/schema.py`:** add the
       columns to `_DISCOVERY_DDL`, bump `SCHEMA_VERSION` 1 → 2, add a `run_migrations`
       step calling `db.ensure_columns("discovered_urls", {...})` (the pattern of
