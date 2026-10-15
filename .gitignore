@@ -52,3 +52,5 @@ docs/superpowers/
 
 # T-054: fresh blank labeling sheet from `manual-export` (the filled one is committed)
 data/ticker_tagging_manual_new.csv
+
+# T-055/T-054: labeling sheets with article excerpts are local until stripped

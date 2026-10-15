@@ -853,7 +853,24 @@ it is clearing the flag. Exact class sizes over the whole corpus
 52,088 (10.8%), `reject` 311,344 (64.7%); the sample-weighted estimates above
 (28.7% / 12.0% / 59.2%) are close.
 
-**Validation sample (in progress):** `data/ticker_validation_sample.csv`, 100
+**Validation results (100 fresh pairs, hand-labeled by the maintainer
+2026-10-15; the rule was not tuned on them): design v1 does NOT meet its draft
+15% target.** Weighted wrong rate by class: `accept` **20.7%** (6/40 raw; `sitemap`
+6/25, `ddg` 0/15), `review` 45% (`ddg` 5/10 wrong, `sitemap` 9/20), `reject`
+99.9% (28 of 30 wrong, 2 correct pairs would be hidden). The failures are
+specific and fixable: five `accept` errors are `News Corp` (its normalized
+name is the ordinary word `news`, matching "bad news", "news conference"), one is
+`PM` (an upper-case 2-letter ticker that is also a common word, "Egypt PM says");
+the two hidden correct pairs are `S&P Global` and `Flavors & Fragrances` (the URL
+spells "&" as "and"); and `ddg` `review` rows are **not** reliably correct (5 of
+10 wrong: `ICE`, `CNP`, `GEN`, `BRO`), so the proposed `ddg` promotion to `accept`
+is withdrawn. Fixes for the next round: a normalized name that is a stoplist or
+common word never counts alone, a longer common-word list for 2-letter tickers,
+`&` read as `and`, no `ddg` promotion; then re-score. The validation sample was
+drawn before these fixes, so after them it is in-sample again, and a last small
+unbiased check (about 50 newly accepted pairs, in the T-057 dry run) is required.
+
+**Validation sample (labeled):** `data/ticker_validation_sample.csv`, 100
 new pairs not in the first sample, strata `(class, source)` with their
 population sizes (`accept` sitemap 25 / ddg 15, `review` 20 / 10, `reject`
 15 / 15), labeled by the maintainer with the same sheet workflow

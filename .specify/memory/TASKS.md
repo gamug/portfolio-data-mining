@@ -127,7 +127,8 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       and a minimum retention of known-correct pairs on the shared labeled
       sample — and writes both numbers, plus the final rule, into `SPEC.md`
       FR-014 and the `PLAN.md` acceptance criteria before any code is written.
-      **Design approved 2026-10-15 (maintainer; "take care not to exclude"); targets
+      **Validation labeled 2026-10-15: v1 fails the 15% target (accept 20.7% wrong; see
+      `PLAN.md`); rule fixes pending.** **Design approved 2026-10-15 (maintainer; "take care not to exclude"); targets
       confirmed after the validation sample is labeled (`data/ticker_validation_sample.csv`,
       100 fresh pairs, `scripts/ticker_validation_sample.py`):** three-class rule
       `accept`/`review`/`reject` from URL+title, quarantine for `review` and
