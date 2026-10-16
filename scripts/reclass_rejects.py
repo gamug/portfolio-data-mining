@@ -44,7 +44,7 @@ import sys
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from data_mining.db import connect, resolve_db_path
@@ -72,6 +72,16 @@ LIST_FIELDS = [
     "article_fetch_status",
 ]
 LIVE_WRITER_SECONDS = 60
+
+
+@contextmanager
+def _stage(name: str) -> Iterator[None]:
+    """Print how long a stage took (stderr), so a slow step of the real run is seen as it happens."""
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        print(f"stage {name}: {time.monotonic() - start:.1f}s", file=sys.stderr)
 
 
 def _fingerprint(con: sqlite3.Connection) -> Fingerprint:
@@ -387,10 +397,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.revert:
         return _revert_main(db_path, args)
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
-        expected = _fingerprint(con)  # taken with the plan, so `apply` can tell the database moved
-        promotions = plan(con)
-        details = report(con, promotions)
-        audit = audit_rows(con, promotions)
+        with _stage("fingerprint"):
+            expected = _fingerprint(con)  # taken with the plan, so `apply` can tell it moved
+        with _stage("plan"):
+            promotions = plan(con)
+        with _stage("report"):
+            details = report(con, promotions)
+            audit = audit_rows(con, promotions)
     print(json.dumps({"promotions": len(promotions), **summarize(promotions), **details}, indent=2))
     if not args.apply:
         return 0
@@ -405,11 +418,14 @@ def main(argv: list[str] | None = None) -> int:
     _warn_live_writer(db_path)
     _check_idle(db_path)
     if promotions and args.backup is not None:
-        print(f"backup {args.backup} sha256 {_backup(db_path, args.backup, expected)}")
+        with _stage("backup, check and sha256"):
+            sha = _backup(db_path, args.backup, expected)
+        print(f"backup {args.backup} sha256 {sha}")
     if promotions:
         _write_list(args.list, audit)
         print(f"audit list {args.list} ({len(audit)} rows)")
-    quarantined, released = apply(db_path, promotions, expected)
+    with _stage("apply and sync"):
+        quarantined, released = apply(db_path, promotions, expected)
     print(f"promoted {len(promotions)} rows; quarantined {quarantined}, released {released}")
     return 0
 
@@ -420,12 +436,18 @@ def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
     if args.backup is None or args.backup.exists():
         print("error: --revert needs --backup PATH naming a new file", file=sys.stderr)
         return 1
-    with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
+    with (
+        closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con,
+        _stage("fingerprint"),
+    ):
         expected = _fingerprint(con)
     _warn_live_writer(db_path)
     _check_idle(db_path)
-    print(f"backup {args.backup} sha256 {_backup(db_path, args.backup, expected)}")
-    quarantined, released = revert(db_path, rows, expected)
+    with _stage("backup, check and sha256"):
+        sha = _backup(db_path, args.backup, expected)
+    print(f"backup {args.backup} sha256 {sha}")
+    with _stage("revert and sync"):
+        quarantined, released = revert(db_path, rows, expected)
     print(f"reverted from {len(rows)} listed rows; quarantined {quarantined}, released {released}")
     return 0
 
