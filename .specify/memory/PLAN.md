@@ -1046,10 +1046,19 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   never `accept`, **in each of the seven connectors**; `accept` meets the FR-014
   targets (wrong rate at most 15%, correct pairs kept as `accept`/`review` at
   least 95%, known-correct `accept` at least 90%) on the labeled samples, **verified
-  by the T-057 fresh check** (at most 5 of 60 `accept` wrong, at most 1 of 40
-  `reject` correct); no abstract `BaseConnector` signature change.
+  by the T-057 fresh check** (passed 2026-10-15: 1 of 60 `accept` wrong, 1 of 40
+  `reject` correct, the limit; at most 5 and 1 were allowed); no abstract `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
-  and the real run leaves a restorable backup.
+  and the real run leaves a restorable backup (done: `urls.pre-retag.db`).
+- **Accepted recall loss (T-057 real run):** the frozen rule rejects some pairs whose full
+  company name is in the URL slug, so they are quarantined, not deleted. Found by scanning
+  the removed list for the full name as a slug (rows are in `data/retag/known_false_rejects.csv`):
+  `KLAC` 15 (`kla-corporation-…`; the hand-check row 302365 is one of them, which is why the
+  `reject` check passed at its limit), `SO` 11 (`southern-company-…`), `DG` 1 (id 190147),
+  `IFF` 1 (id 288255): 28 of 325,423. The rule is not changed (it would move every PLAN
+  figure and the frozen samples); `portfolio-nlp` is told not to purge them (T-058
+  comment). A later matcher fix re-classes them with a targeted pass (the re-tag only
+  touches rows with `match_reason IS NULL`) and `release_articles`.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
