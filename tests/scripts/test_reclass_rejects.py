@@ -492,3 +492,218 @@ def test_the_lookups_are_chunked_and_the_backup_directory_is_created(
     nested = tmp_path / "a" / "b" / "backup.db"
     assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(nested)]) == 0
     assert nested.is_file()
+
+
+def test_an_aborted_apply_leaves_no_list_and_the_rerun_with_the_same_list_works(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The list describes committed changes only: the fingerprint abort must not leave one behind."""
+    real_backup = reclass._backup
+
+    def backup_then_a_collector_writes(
+        db_path: Path, backup: Path, expected: tuple[object, ...]
+    ) -> str:
+        sha = real_backup(db_path, backup, expected)
+        _insert_row(db_path)
+        return sha
+
+    listing = tmp_path / "audit.csv"
+    monkeypatch.setattr(reclass, "_backup", backup_then_a_collector_writes)
+    with pytest.raises(SystemExit, match="changed since the plan"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--list",
+                str(listing),
+            ]
+        )
+    assert not listing.exists() and not reclass._partial(listing).exists()
+
+    monkeypatch.undo()  # the writer is stopped; the operator retries with the same list path
+    assert (
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b2.db"),
+                "--list",
+                str(listing),
+            ]
+        )
+        == 0
+    )
+    assert listing.is_file() and not reclass._partial(listing).exists()
+
+
+def test_a_crash_between_the_commit_and_the_sync_leaves_the_final_list(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The changes happened, so the list must be there (it is how they are reverted)."""
+
+    def crash(_db: object) -> tuple[int, int]:
+        raise RuntimeError("killed")
+
+    listing = tmp_path / "audit.csv"
+    monkeypatch.setattr(reclass, "_sync", crash)
+    with pytest.raises(RuntimeError):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--list",
+                str(listing),
+            ]
+        )
+
+    assert listing.is_file() and not reclass._partial(listing).exists()
+    assert _rows(db_file)[1][:2] == ("review", "loose_name")
+
+
+def test_a_leftover_partial_list_blocks_a_run_and_cannot_be_reverted(
+    db_file: Path, tmp_path: Path
+) -> None:
+    listing = tmp_path / "audit.csv"
+    reclass._partial(listing).write_text("id\n")
+
+    with pytest.raises(SystemExit, match="exists"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--list",
+                str(listing),
+            ]
+        )
+    assert (
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--revert",
+                str(reclass._partial(listing)),
+                "--backup",
+                str(tmp_path / "r.db"),
+            ]
+        )
+        == 1
+    )
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def _accepting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        reclass,
+        "classify",
+        lambda url, *_a, **_k: Match("accept" if "kla" in url or "bank" in url else "reject", "t"),
+    )
+
+
+def test_apply_fails_loudly_when_the_sync_did_not_release_what_the_dry_run_predicted(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _accepting(monkeypatch)
+    monkeypatch.setattr(reclass, "_sync", lambda _db: (0, 0))  # releases nothing
+
+    code = reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "the sync did (quarantined, released) = (0, 0), the dry run predicted (0, 1)" in err
+    assert "1 `accept` pair(s) still have a quarantined article" in err
+    assert "--revert LIST" in err
+
+
+def test_apply_fails_loudly_when_a_promotion_was_not_written(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    real_apply = reclass.apply
+
+    def apply_all_but_the_last(
+        db_path: Path,
+        promotions: list[tuple[int, str, str]],
+        expected: tuple[object, ...],
+        on_commit: object = None,
+    ) -> tuple[int, int]:
+        return real_apply(db_path, promotions[:-1], expected, on_commit)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(reclass, "apply", apply_all_but_the_last)
+
+    code = reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "class reject: 2 rows, expected 1" in err or "class review: 1 rows, expected 2" in err
+    assert "promoted row(s) are still `reject`" in err
+
+
+def test_revert_fails_loudly_when_a_listed_row_still_holds_what_the_run_wrote(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    listing = tmp_path / "audit.csv"
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+    monkeypatch.setattr(reclass, "revert", lambda *_a, **_k: (0, 0))  # does nothing
+
+    code = reclass.main(
+        ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
+    )
+
+    assert code == 1
+    assert "listed row(s) still hold what the run wrote" in capsys.readouterr().err
+
+
+def test_a_clean_apply_and_revert_report_no_problem(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing = tmp_path / "audit.csv"
+    assert (
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--list",
+                str(listing),
+            ]
+        )
+        == 0
+    )
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
+        )
+        == 0
+    )
+    assert "POST-CONDITION FAILED" not in capsys.readouterr().err
