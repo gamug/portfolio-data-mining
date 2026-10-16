@@ -297,7 +297,7 @@ gate) and `T-061` (matcher follow-up) were added later and are data-mining-only,
       `data/retag_known_false_rejects.csv`, quarantined not deleted; the hand check estimates 2.5% of the `reject` class (95% interval
       0.4%-12.9%). Accepted as a recall loss in `PLAN.md`, reported to `portfolio-nlp` as "do not purge". Real `urls.db`:
       `PRAGMA integrity_check` ok, `foreign_key_check` empty.
-- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
+- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection; follow-up comment 2026-10-16 correcting the known false rejects from 28 to at least 433 pairs, `T-061`)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
       (its `T-132` decides them; nothing is excluded on doubt there). **One agreed
