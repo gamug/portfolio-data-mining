@@ -91,6 +91,11 @@ _SUFFIX = re.compile(
 )
 
 
+_CAMEL_TAIL = re.compile(
+    r"(?<=[a-z])(?:Corp|Co)$"
+)  # PepsiCo, KeyCorp: a capital tail on a lower-case letter
+
+
 @dataclass(frozen=True)
 class Match:
     """A class and the signal that decided it (``reason``)."""
@@ -170,15 +175,18 @@ def _loose_name(company: str, text: str) -> bool:
     Three spellings the exact check misses (PLAN Work item 12): the name with its corporate
     suffix kept (``kla-corporation``, ``southern-company``, ``news-corp``), the name followed by
     a trailing ``s`` (``bank-of-americas``, a possessive that a slug cannot tell from a plural),
-    and the name with the ``and`` of an ``&`` dropped (``flavors-fragrances``). A single word is
-    never enough on its own: it must be distinctive, or the match must span two words or more.
+    the name with the ``and`` of an ``&`` dropped (``flavors-fragrances``), and the brand of a
+    camel-case name (``pepsi`` for ``PepsiCo``; only a capital ``Co``/``Corp`` tail counts, so
+    ``Costco`` and ``Cisco`` are not cut). A single word is never enough on its own: it must be
+    distinctive, or the match must span two words or more.
     """
     flat_text = flat(text)
     name = full_name(company)
     kept = " ".join(
         flat(re.sub(r"\([^)]*\)", " ", company)).split()
     )  # suffix kept, "(Class B)" gone
-    forms = {name, name.replace(" and ", " "), kept}
+    brand = flat(_CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())).strip()
+    forms = {name, name.replace(" and ", " "), kept, brand}
     for form in forms:
         multi = len(form.split()) >= MIN_WORDS
         distinctive = len(form) >= MIN_NAME and form not in STOPWORDS

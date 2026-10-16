@@ -252,6 +252,7 @@ def test_explicit_forms_edges_and_cashtags_of_common_tickers(
             "IFF",
         ),
         ("https://x.com/the-trade-desks-q4-earnings", "Trade Desk (The)", "TTD"),
+        ("https://x.com/pepsi-why-not-to-buy-this-soft-drink-maker", "PepsiCo", "PEP"),
     ],
 )
 def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
@@ -266,6 +267,9 @@ def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
         ("https://x.com/southern-states-weather", "Southern Company", "SO"),  # lone stopword
         ("https://x.com/latest-news-today", "News Corp (Class A)", "NWSA"),  # lone ordinary word
         ("https://x.com/kla-news", "KLA Corporation", "KLAC"),  # name split by other words
+        ("https://x.com/key-to-a-good-retirement", "KeyCorp", "KEY"),  # brand too short
+        ("https://x.com/cis-outlook-2024", "Cisco", "CSCO"),  # no capital tail to cut
+        ("https://x.com/sys-admin-tips", "Sysco", "SYY"),
     ],
 )
 def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) -> None:
