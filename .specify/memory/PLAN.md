@@ -1102,9 +1102,11 @@ removed and `review` counts. No schema change.
 
 Work items 3, 4, 5, 6, 7 and 9 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
-open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open;
-`portfolio-nlp`'s Work item 15 development waits on it, so it takes priority over any new work,
-alongside the already-active Work item 8.
+open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open, with `T-057`/`T-058` done:
+`portfolio-nlp` has the quarantine and the hand-off and no longer waits on it, `T-059`/`T-060` remain, and it
+stays a priority alongside the already-active Work item 8. Work item 11 (`T-061`, the matcher follow-up) is
+open but not scheduled and `portfolio-nlp` does not wait on it, so it takes no priority over other work until the
+maintainer schedules it.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

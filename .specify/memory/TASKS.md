@@ -354,9 +354,13 @@ Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open;
-`portfolio-nlp` waits on it before starting its own category-stage development.
+Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open: `T-057` and
+`T-058` are done (the corpus is re-tagged and quarantined, the hand-off is posted, so `portfolio-nlp` is
+unblocked and no longer waits on this repo); `T-059` (close-out) and `T-060` (content-quality gate) remain.
+
+Work item 11 (`T-061`, matcher follow-up for full-name false rejects) is open but not scheduled: the
+maintainer decides when. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
-CI is wanted again. No other work item is open.
+CI is wanted again. No other work item is open (apart from Work items 8, 10 and 11 above).
