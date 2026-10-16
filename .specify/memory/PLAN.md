@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-060` done (wall detector in the extractor and a per-domain audit); `T-059` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
+**Status: closed 2026-10-16 (`T-053`–`T-060`; tasks moved to `CHANGELOG.md`). `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-060` done (wall detector in the extractor and a per-domain audit); `T-059` done (close-out 2026-10-16); the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -1151,11 +1151,10 @@ removed and `review` counts. No schema change.
 
 ## Sequencing
 
-Work items 3, 4, 5, 6, 7, 9 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
+Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
-open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open, with `T-057`/`T-058` done:
-`portfolio-nlp` has the quarantine and the hand-off and no longer waits on it, `T-059`/`T-060` remain, and it
-stays a priority alongside the already-active Work item 8. Work item 12 (`T-062`, the matcher follow-up) is
+open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
+quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
 open but not scheduled and `portfolio-nlp` does not wait on it, so it takes no priority over other work until the
 maintainer schedules it.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
