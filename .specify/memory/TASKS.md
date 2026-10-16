@@ -77,7 +77,7 @@ Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` alrea
 cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
 after the fact; IDs are never reused, so they stay reserved. `T-060` (content-quality
-gate) and `T-061` (Work item 11, the matcher follow-up) were added later and are data-mining-only, so `portfolio-nlp` does not cite them.
+gate) and `T-062` (Work item 12, the matcher follow-up) were added later and are data-mining-only, so `portfolio-nlp` does not cite them.
 
 - [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
@@ -297,7 +297,7 @@ gate) and `T-061` (Work item 11, the matcher follow-up) were added later and are
       `data/retag_known_false_rejects.csv`, quarantined not deleted; the hand check estimates 2.5% of the `reject` class (95% interval
       0.4%-12.9%). Accepted as a recall loss in `PLAN.md`, reported to `portfolio-nlp` as "do not purge". Real `urls.db`:
       `PRAGMA integrity_check` ok, `foreign_key_check` empty.
-- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection; follow-up comment 2026-10-16 correcting the known false rejects from 28 to at least 433 pairs, `T-061`)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
+- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection; follow-up comment 2026-10-16 correcting the known false rejects from 28 to at least 433 pairs, `T-062`)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
       (its `T-132` decides them; nothing is excluded on doubt there). **One agreed
@@ -329,9 +329,9 @@ gate) and `T-061` (Work item 11, the matcher follow-up) were added later and are
       (constitution AI behavior #12). Also: decide how long `urls.pre-retag.db` (next to `urls.db` in
       `/workspaces/thesis/data/`) is kept, and who holds the git-ignored `data/retag/` lists
       (regenerate them with `retag_urls.py --out` on a copy of the backup if lost; the known false rejects are committed).
-      FR-014 is "implemented with the known recall gap in `T-061`", not "done". `T-061` is its own Work item 11 (PLAN), so item 10 closes
-      here and the `CHANGELOG.md` entry names `T-061` as the open successor. → acceptance criteria.
-- [ ] **T-061** *(Work item 11; follow-up found by the T-057 real run; changes the matcher, so the maintainer schedules it)*
+      FR-014 is "implemented with the known recall gap in `T-062`", not "done". `T-062` is its own Work item 12 (PLAN), so item 10 closes
+      here and the `CHANGELOG.md` entry names `T-062` as the open successor. → acceptance criteria.
+- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher, so the maintainer schedules it)*
       Fix the full-name false rejects: at least 433 `reject` pairs on 234 URLs whose URL spells the company
       out (`data/retag_known_false_rejects.csv`, `PLAN.md` Work item 10 "Accepted recall loss"). Three causes in
       `matching._name_reason`: a name that is short or a stopword once the suffix is removed (`kla`, `southern`, `news`),
@@ -347,10 +347,11 @@ gate) and `T-061` (Work item 11, the matcher follow-up) were added later and are
 
 ## Status
 
-Closed Work items 3, 4, 5, 6, 7 and 9 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
+Closed Work items 3, 4, 5, 6, 7, 9 and 11 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
-Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51).
+Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
+Work item 11, `T-061`, closed 2026-10-16 in PR #62, approved, awaiting merge).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
@@ -358,9 +359,9 @@ Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-
 `T-058` are done (the corpus is re-tagged and quarantined, the hand-off is posted, so `portfolio-nlp` is
 unblocked and no longer waits on this repo); `T-059` (close-out) and `T-060` (content-quality gate) remain.
 
-Work item 11 (`T-061`, matcher follow-up for full-name false rejects) is open but not scheduled: the
+Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
 maintainer decides when. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
-CI is wanted again. No other work item is open (apart from Work items 8, 10 and 11 above).
+CI is wanted again.

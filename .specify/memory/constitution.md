@@ -73,6 +73,18 @@ stack actually pinned in `pyproject.toml`.
    constitution-level change**: add it to `pyproject.toml` (in the correct
    service's dependency block, see #2) with a rationale in the PR, and if it
    changes a rule above, amend this section (see Governance).
+8. **One sanctioned one-off, private build-step source: Tiingo.** The
+   `leaver-prices` build step (`src/data_mining/leaver_prices.py`, run by
+   `cli/pricing_cli.py leaver-prices`) fetches daily EOD prices for the 33
+   S&P 500 leaver lines from Tiingo into a **private local file** under
+   `/workspaces/thesis/data/private/tiingo/`, for `portfolio-financial-analysis`
+   to import. It is deliberately **not** one of the four services' sources
+   (AI behavior #1): no `apps/*` or `src/pricing/` code touches it, no service
+   serves it, nothing from it is committed or redistributed, no value reaches a
+   database, and the key lives only in `$TIINGO_API_KEY` — never in `.env`, a
+   file, a URL, a log or a commit. It is a build step like `universe-gics`, not
+   a runtime provider. Adding any **other** external source still needs this
+   section amended first (#7).
 
 ## Project structure
 
@@ -150,7 +162,10 @@ acquisition stages themselves must behave, plus coding-agent conduct):*
    `pricing` pulls from Finnhub and `yfinance` (the OHLCV fallback and the
    only corporate-actions source); `sec_edgar` pulls from SEC EDGAR. Adding
    an eighth news domain or a new provider is a constitution-level dependency
-   change (see Technological stock #7), not a runtime option.
+   change (see Technological stock #7), not a runtime option. The one
+   sanctioned exception is the one-off, private `leaver-prices` build step
+   (Technological stock #8): it is not a service source and nothing from it is
+   served or redistributed.
 2. **Every stage behaves the same regardless of when or how many times it
    runs — idempotent and resumable by construction, not by convention.**
    `discover --resume` (default on) skips only a `(ticker, domain)` pair
@@ -408,4 +423,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.7.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-27
+**Version**: 1.8.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-15

@@ -220,7 +220,7 @@ ordinary word once its suffix is removed, a possessive `s`, an `&` the URL drops
 `PYTHONPATH=src uv run python scripts/known_false_rejects.py` scans `data/retag/removed_articles.csv` for the name as whole words of
 the URL path and writes `data/retag_known_false_rejects.csv` (committed: 433 pairs on 234 URLs, a lower bound; the hand check
 estimates 2.5% of the `reject` class, interval 0.4%-12.9%); `--check` exits 1 when the file differs from the scan. The 19 reviewed
-non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-061` fixes the matcher.
+non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-062` fixes the matcher.
 
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.

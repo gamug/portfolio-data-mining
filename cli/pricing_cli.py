@@ -15,6 +15,7 @@ Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-backfill
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-snapshot
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-gics --out ..\\data\\universe_history_gics.db
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py leaver-prices
     .venv\\Scripts\\python.exe cli\\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py actions XOM --start 2022-01-01 --end 2026-08-27
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-company AAPL --start 2024-01-01 --end 2024-06-01
@@ -39,6 +40,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from data_mining.leaver_prices import DEFAULT_OUTPUT_DIR, LeaverPricesError, fetch_leaver_prices
 from data_mining.portfolio import list_universe, resolve_symbol
 from data_mining.universe_gics import build_gics_db
 from data_mining.universe_history import backfill_from_changes, record_snapshot
@@ -90,6 +92,29 @@ def cmd_universe_gics(args: argparse.Namespace, **_clients: Any) -> None:
         print(str(e), file=sys.stderr)
         sys.exit(1)
     print_json(report)
+
+
+def cmd_leaver_prices(args: argparse.Namespace, **_clients: Any) -> None:
+    """Fetch the Tiingo prices for the 33 delivered leaver lines into the
+    private local file. Reads $TIINGO_API_KEY, sends read-only GETs to the
+    shared gateway, and never calls Finnhub."""
+    try:
+        manifest = fetch_leaver_prices(output_dir=Path(args.out))
+    except LeaverPricesError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    # Counts, dates and hashes only -- never a price (brief §7).
+    print_json(
+        {
+            "output_dir": str(Path(args.out)),
+            "data_file": manifest["data_file"],
+            "data_file_sha256": manifest["data_file_sha256"],
+            "request_count": manifest["request_count"],
+            "lines": len(manifest["lines"]),
+            "not_delivered": [entry["ask"] for entry in manifest["not_delivered"]],
+            "checks": manifest["checks"],
+        }
+    )
 
 
 def cmd_pricing(
@@ -148,7 +173,7 @@ def cmd_market_financials(
     print_json(market_client.get_basic_financials(args.ticker.upper(), metric=args.metric))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> argparse.Namespace:  # noqa: PLR0915 -- a flat argparse subcommand table
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -211,6 +236,18 @@ def parse_args() -> argparse.Namespace:
     p.set_defaults(func=cmd_universe_gics)
 
     p = sub.add_parser(
+        "leaver-prices",
+        help="Fetch the Tiingo daily prices for the 33 delivered S&P 500 leaver lines "
+        "into a private local file (never committed; never redistributed)",
+    )
+    p.add_argument(
+        "--out",
+        default=str(DEFAULT_OUTPUT_DIR),
+        help=f"Private output directory (default: {DEFAULT_OUTPUT_DIR})",
+    )
+    p.set_defaults(func=cmd_leaver_prices)
+
+    p = sub.add_parser(
         "pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)"
     )
     p.add_argument("ticker")
@@ -262,6 +299,12 @@ def main() -> None:
     # Parsed before reading FINNHUB_API_KEY so `--help` works without a
     # key configured -- argparse exits on -h/--help before returning here.
     args = parse_args()
+
+    # leaver-prices fetches from Tiingo only (and read-only GETs to the shared
+    # gateway) -- it never calls Finnhub, so it must not require that key.
+    if args.command == "leaver-prices":
+        args.func(args)
+        return
 
     # Fail fast if the key is missing, rather than lazily on first call --
     # same convention as apps/pricing_api.py, just deferred past --help.
