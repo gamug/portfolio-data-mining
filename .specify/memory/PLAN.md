@@ -1093,9 +1093,11 @@ dropped.
    FR-015/§2.1/§11/§12 record the sanctioned one-off source.
 
 **Acceptance criteria**:
-- Every line's row count, first/last date, trim set and last real close equal
-  report §2/§3; a difference, or a `valid_to` that gives a different expected
-  count, writes nothing and stops.
+- Every line's row count, first/last date, trim set **and reason class** and
+  last real close equal report §2/§3; every row's date is an NYSE session; a
+  non-zero gateway candle count stops the run (one vendor per line); a
+  difference, or a `valid_to` that gives a different expected count, writes
+  nothing and stops.
 - The ported calendar reproduces report §2's expected session count for all 35
   lines (`tests/data_mining/test_nyse_calendar.py`).
 - TTD/PVH/KMX match the gateway within tolerance; the AAPL dividend formula is

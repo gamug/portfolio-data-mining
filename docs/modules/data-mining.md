@@ -109,12 +109,18 @@ the key is read only from `$TIINGO_API_KEY` and sent only in the
 `Authorization: Token` header.
 
 Every check runs before anything is written — the report §2/§3 reproduction
-per line (row count, first/last date, trim set, last real close), the
+per line (row count, first/last date, trim set **and reason class**, last real
+close), every row's date on the NYSE calendar, the gateway's candle count
+(0 for all 33 — a non-zero count stops the run: one vendor per line), the
 calendar's expected-session count, the TTD/PVH/KMX gateway controls, the AAPL
 dividend formula, and the WBD-vs-production comparison. A mismatch writes
 nothing and stops. Every price lives in a private `expectations.json` (never
 committed); committed code and tests carry counts, dates and trim reasons
-only. `/tmp/tiingo_feasibility/` is deleted once the file passes.
+only. A `request_log.json` in the same folder persists the rolling-hour
+request timestamps (timestamps only), so a crash and a re-run within the hour
+do not start the counter from zero; the manifest reports this run's count, the
+total over all runs, and the largest rolling hour. `/tmp/tiingo_feasibility/`
+is deleted once the file passes.
 
 ```bash
 # The key is set in the shell only, never in .env:
@@ -124,7 +130,8 @@ uv run cli/pricing_cli.py leaver-prices
 
 The one procedure covering every copy (this machine, T-100's machine if
 different, any `thesis/data` backup, and the scratch folder) is recorded in
-the manifest's `deletion_step`.
+the manifest's `deletion_step` — every path rooted (absolute or a
+placeholder-rooted absolute), never a relative `rm -rf`.
 
 ## Engine-agnostic since `portfolio-common` v1.2.1
 

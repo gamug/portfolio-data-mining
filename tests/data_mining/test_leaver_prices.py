@@ -10,8 +10,10 @@ no test touches a real ``/workspaces/thesis`` file.
 from __future__ import annotations
 
 import json
+import sqlite3
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -56,6 +58,10 @@ def _tiingo_client(by_symbol: dict[str, list[dict[str, object]]]) -> httpx.Clien
     return httpx.Client(transport=httpx.MockTransport(handler))
 
 
+def _gateway_client() -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+
+
 def _expectations(tmp_path: Path, last_closes: dict[str, float]) -> Path:
     path = tmp_path / "expectations.json"
     path.write_text(json.dumps({"last_real_close": last_closes}))
@@ -79,7 +85,7 @@ TINY = LineSpec(
     2,
     "2019-01-02",
     "2019-01-03",
-    (("2019-01-04", "carried close"),),
+    (("2019-01-04", "carried"),),
 )
 
 
@@ -89,15 +95,15 @@ def _set_key(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------
-# Split formula (report §4)
+# Split formula (report §4) -- made-up numbers, never a real price
 # ---------------------------------------------------------------------
 
 
 def test_split_cum_applies_only_to_dates_before_the_ex_date() -> None:
     rows = [
-        tiingo_row("2021-06-15", 585.76, 1_000_000),
-        tiingo_row("2021-06-16", 590.0, 1_000_000),
-        tiingo_row("2021-06-17", 62.0, 10_000_000, split=10.0),
+        tiingo_row("2021-06-15", 500.0, 1_000_000),
+        tiingo_row("2021-06-16", 505.0, 1_000_000),
+        tiingo_row("2021-06-17", 50.0, 10_000_000, split=10.0),
     ]
     factors = lp.split_cum_factors(rows)
     assert factors["2021-06-15"] == 10.0
@@ -107,25 +113,35 @@ def test_split_cum_applies_only_to_dates_before_the_ex_date() -> None:
 
 def test_build_series_adjusts_price_and_volume_by_split() -> None:
     rows = [
-        tiingo_row("2021-06-15", 585.76, 1_000_000),
-        tiingo_row("2021-06-17", 62.0, 10_000_000, split=10.0),
+        tiingo_row("2021-06-15", 500.0, 1_000_000),
+        tiingo_row("2021-06-17", 50.0, 10_000_000, split=10.0),
     ]
     series = lp.build_series("TTD", rows, "2021-06-17")
-    assert series[0]["adj_close"] == pytest.approx(58.576)
+    assert series[0]["adj_close"] == pytest.approx(50.0)
     assert series[0]["adj_volume"] == 10_000_000
-    assert series[0]["raw_close"] == 585.76
-    assert series[1]["adj_close"] == pytest.approx(62.0)
+    assert series[0]["raw_close"] == 500.0
+    assert series[1]["adj_close"] == pytest.approx(50.0)
     assert series[1]["adj_volume"] == 10_000_000
 
 
 def test_build_series_keeps_divcash_and_splitfactor_as_returned() -> None:
     rows = [
-        tiingo_row("2020-08-07", 100.0, 1000, div=0.205),
+        tiingo_row("2020-08-07", 100.0, 1000, div=0.30),
         tiingo_row("2020-08-31", 25.0, 4000, split=4.0),
     ]
     series = lp.build_series("AAPL", rows, "2020-08-31")
-    assert series[0]["divCash"] == 0.205
+    assert series[0]["divCash"] == 0.30
     assert series[1]["splitFactor"] == 4.0
+
+
+def test_no_real_prices_in_committed_sources() -> None:
+    """Fix 5: the committed module and this test file must use made-up numbers,
+    never the real TTD/AAPL values (built here by concatenation so this guard
+    does not itself contain them)."""
+    forbidden = ["585" + ".76", "58" + ".576", "0." + "205"]
+    sources = Path(lp.__file__).read_text() + Path(__file__).read_text()
+    for value in forbidden:
+        assert value not in sources
 
 
 # ---------------------------------------------------------------------
@@ -135,6 +151,40 @@ def test_build_series_keeps_divcash_and_splitfactor_as_returned() -> None:
 
 def test_parse_tiingo_date_takes_the_date_part_only() -> None:
     assert lp._parse_tiingo_date("2019-01-02T00:00:00.000Z") == "2019-01-02"
+
+
+# ---------------------------------------------------------------------
+# Calendar check (fix 1)
+# ---------------------------------------------------------------------
+
+
+def test_assert_on_calendar_stops_on_a_non_session_date() -> None:
+    rows = [tiingo_row("2019-01-05", 10.0, 1000)]  # a Saturday
+    with pytest.raises(LeaverPricesError, match="not an NYSE session"):
+        lp._assert_on_calendar(TINY, rows)
+
+
+def test_assert_on_calendar_accepts_a_session_date() -> None:
+    rows = [tiingo_row("2019-01-04", 10.0, 1000)]  # a Friday
+    lp._assert_on_calendar(TINY, rows)  # no raise
+
+
+def test_fetch_stops_on_an_off_calendar_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    raw = {"TINY": [*TINY_RAW["TINY"], tiingo_row("2019-01-05", 11.0, 5)]}  # Saturday row
+    _patch_run(monkeypatch, TINY, raw)
+    out = tmp_path / "out"
+    with pytest.raises(LeaverPricesError, match="not an NYSE session"):
+        lp.fetch_leaver_prices(
+            output_dir=out,
+            expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
+            tiingo_client=_tiingo_client(raw),
+            gateway_client=_gateway_client(),
+            production_dbs=(),
+            pace_seconds=0.0,
+        )
+    assert not (out / lp.DATA_FILENAME).exists()
 
 
 # ---------------------------------------------------------------------
@@ -160,6 +210,7 @@ def test_detect_non_real_does_not_flag_a_real_same_close_row() -> None:
 
 
 def test_detect_non_real_flags_otc_after_delisting() -> None:
+    # SIVBQ: the delisting day does not reprice later -> the day itself is otc.
     rows = [
         tiingo_row("2023-03-09", 40.0, 1_000_000),
         tiingo_row("2023-03-10", 41.5, 11_000_000),
@@ -168,6 +219,22 @@ def test_detect_non_real_flags_otc_after_delisting() -> None:
     assert lp.detect_non_real("SIVBQ", rows) == {
         "2023-03-10": "otc",
         "2023-03-13": "otc",
+    }
+
+
+def test_detect_non_real_flags_halt_when_the_line_reprices_later() -> None:
+    # FRCB: the delisting day is followed by an OTC reprice -> halt; the
+    # zero-volume day after it is carried.
+    rows = [
+        tiingo_row("2023-04-28", 3.5, 1_000_000),
+        tiingo_row("2023-05-01", 3.5, 18_000_000),
+        tiingo_row("2023-05-02", 3.5, 0),
+        tiingo_row("2023-05-03", 0.33, 200_000_000),
+    ]
+    assert lp.detect_non_real("FRCB", rows) == {
+        "2023-05-01": "halt",
+        "2023-05-02": "carried",
+        "2023-05-03": "otc",
     }
 
 
@@ -207,6 +274,15 @@ def test_check_line_reports_a_trim_set_mismatch() -> None:
     assert any("trim set differs" in m for m in mismatches)
 
 
+def test_check_line_reports_a_trim_reason_mismatch() -> None:
+    # Fix 7: the date matches, but the detected class does not.
+    series = [row for row in _tiny_series() if row["date"] != "2019-01-04"]
+    mismatches = lp._check_line(
+        TINY, series, {"2019-01-04": "otc"}, {"last_real_close": {"TINY": 11.0}}
+    )
+    assert any("report §3 says" in m for m in mismatches)
+
+
 def test_check_line_reports_a_last_close_mismatch() -> None:
     series = [row for row in _tiny_series() if row["date"] != "2019-01-04"]
     mismatches = lp._check_line(
@@ -233,16 +309,16 @@ def test_compare_convention_matches_shared_dates() -> None:
 
 
 def test_dividend_formula_detects_split_adjusted_dividends() -> None:
-    # A 4:1 split on 2020-08-31; the pre-split dividend is divided by 4.
+    # A 4:1 split; the pre-split dividend is divided by 4.
     series = lp.build_series(
         "AAPL",
         [
-            tiingo_row("2020-08-07", 100.0, 1000, div=0.205),
+            tiingo_row("2020-08-07", 100.0, 1000, div=0.30),
             tiingo_row("2020-08-31", 25.0, 4000, split=4.0),
         ],
         "2020-08-31",
     )
-    gateway = [{"date": "2020-08-07", "value": 0.205 / 4}]
+    gateway = [{"date": "2020-08-07", "value": 0.30 / 4}]
     result = lp._dividend_formula(series, gateway)
     assert result["formula"] == "divCash / split_cum"
     assert result["max_abs_diff_adjusted"] < result["max_abs_diff_raw"]
@@ -257,6 +333,67 @@ def test_deletion_step_covers_every_copy() -> None:
     assert lp.FEASIBILITY_SCRATCH in text
     for step in steps:
         assert step["command"] and step["check"]
+        # Fix 7: no relative rm -rf -- every path is rooted (absolute or a
+        # placeholder-rooted absolute).
+        assert step["path"].startswith(("/", "<"))
+
+
+def test_deletion_step_t100_has_an_absolute_placeholder() -> None:
+    steps = {step["copy"]: step for step in lp._deletion_step(Path("/x/data/private/tiingo"))}
+    t100 = steps["T-100's machine, if different"]
+    assert t100["path"].startswith("<T-100 thesis folder>/")
+    assert "/data/private/tiingo" in t100["path"]
+    assert "Users/dova/thesis" in t100.get("example", "")
+
+
+# ---------------------------------------------------------------------
+# Manifest fields (fix 6)
+# ---------------------------------------------------------------------
+
+
+def test_k_line_carries_the_wk_kellogg_spinoff_note() -> None:
+    k = next(spec for spec in lp.LINES if spec.ask == "K")
+    note = " ".join(k.notes)
+    assert "WK Kellogg" in note and "1.065" in note
+    assert "spin-off" in note
+
+
+def test_declared_exception_has_label_and_accession() -> None:
+    assert lp.DECLARED_EXCEPTIONS["ANSS"]["label"] == (
+        "real final-day trade below deal value, kept as traded"
+    )
+    assert lp.DECLARED_EXCEPTIONS["ANSS"]["accession"] == "0001193125-24-008112"
+
+
+def test_all_trim_reasons_are_one_of_the_three_classes() -> None:
+    for spec in lp.LINES:
+        for _day, reason in spec.trims:
+            assert reason in {"carried", "halt", "otc"}
+
+
+# ---------------------------------------------------------------------
+# Production count by CIK + ticker (fix 3)
+# ---------------------------------------------------------------------
+
+
+def _financial_db(tmp_path: Path) -> Path:
+    path = tmp_path / "fin.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT, cik TEXT);"
+        "CREATE TABLE price_daily (id INTEGER PRIMARY KEY, asset_id INTEGER);"
+    )
+    con.execute("INSERT INTO assets VALUES (484, 'WBD', '0001437107')")
+    con.executemany("INSERT INTO price_daily (asset_id) VALUES (?)", [(484,)] * 5)
+    con.commit()
+    con.close()
+    return path
+
+
+def test_production_stored_count_matches_cik_and_ticker(tmp_path: Path) -> None:
+    db = _financial_db(tmp_path)
+    assert lp.production_stored_count("0001437107", "WBD", db) == 5
+    assert lp.production_stored_count("0001437107", "DISCK", db) == 0
 
 
 # ---------------------------------------------------------------------
@@ -307,12 +444,48 @@ def test_assert_not_in_git_worktree_allows_a_plain_dir(tmp_path: Path) -> None:
     lp.assert_not_in_git_worktree(tmp_path / "out")  # no raise
 
 
+# ---------------------------------------------------------------------
+# Request counter (fix 4)
+# ---------------------------------------------------------------------
+
+
 def test_rate_limiter_stops_at_headroom() -> None:
     limiter = lp.RateLimiter(max_per_hour=3, headroom=2)
     limiter.check()
     limiter.check()
     with pytest.raises(LeaverPricesError, match="budget reached"):
         limiter.check()
+
+
+def test_rate_limiter_persists_and_reloads(tmp_path: Path) -> None:
+    log = tmp_path / "request_log.json"
+    first = lp.RateLimiter(path=log, max_per_hour=5, headroom=4)
+    first.check()
+    first.check()
+    assert log.exists()
+    assert len(json.loads(log.read_text())) == 2
+
+    second = lp.RateLimiter(path=log, max_per_hour=5, headroom=4)
+    assert second.total_all_runs() == 2
+    second.check()
+    second.check()
+    with pytest.raises(LeaverPricesError, match="budget reached"):
+        second.check()
+    assert second.total_all_runs() == 4
+
+
+def test_rate_limiter_largest_rolling_hour(tmp_path: Path) -> None:
+    log = tmp_path / "request_log.json"
+    limiter = lp.RateLimiter(path=log)
+    limiter._times = [
+        datetime(2026, 1, 1, 0, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+        datetime(2026, 1, 1, 0, 59, tzinfo=UTC),
+        datetime(2026, 1, 1, 3, 0, tzinfo=UTC),
+        datetime(2026, 1, 1, 3, 10, tzinfo=UTC),
+    ]
+    assert limiter.largest_rolling_hour() == 3
+    assert limiter.total_all_runs() == 5
 
 
 # ---------------------------------------------------------------------
@@ -329,10 +502,10 @@ def _patch_run(
         lp,
         "read_membership_spans",
         lambda symbols, universe_db=None: {
-            spec.ask: {"cik": spec.cik, "valid_from": "2019-01-02", "valid_to": spec.valid_to}
+            spec.ask: [{"cik": spec.cik, "valid_from": "2019-01-02", "valid_to": spec.valid_to}]
         },
     )
-    monkeypatch.setattr(lp, "production_stored_count", lambda cik, financial_db=None: 0)
+    monkeypatch.setattr(lp, "production_stored_count", lambda cik, ticker, financial_db=None: 0)
     monkeypatch.setattr(lp, "_gateway_candles", lambda *a, **k: [])
     monkeypatch.setattr(
         lp,
@@ -354,7 +527,7 @@ def test_fetch_writes_csv_and_manifest(tmp_path: Path, monkeypatch: pytest.Monke
         output_dir=out,
         expectations_path=expectations,
         tiingo_client=_tiingo_client(TINY_RAW),
-        gateway_client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200))),
+        gateway_client=_gateway_client(),
         production_dbs=(),
         pace_seconds=0.0,
     )
@@ -365,14 +538,43 @@ def test_fetch_writes_csv_and_manifest(tmp_path: Path, monkeypatch: pytest.Monke
     assert manifest["data_file_sha256"] == lp.sha256_file(out / lp.DATA_FILENAME)
     assert manifest["lines"][0]["rows_kept"] == 2
     assert manifest["lines"][0]["trimmed_rows"] == [
-        {"date": "2019-01-04", "reason": "carried close", "detected_by": "carried"}
+        {"date": "2019-01-04", "reason": "carried", "detected_by": "carried"}
     ]
-    assert manifest["request_count"]["total"] == 1
+    # fix 6: every stint, not only the last valid_to
+    assert manifest["lines"][0]["membership_span"] == [
+        {"cik": "0000000001", "valid_from": "2019-01-02", "valid_to": "2019-01-04"}
+    ]
+    assert manifest["request_count"]["this_run"] == 1
+    assert manifest["request_count"]["log_file"] == lp.REQUEST_LOG_FILENAME
+    assert (out / lp.REQUEST_LOG_FILENAME).exists()
+    # fix 6: ANSS declared exception
+    anss = next(e for e in manifest["declared_exception"] if e["ask"] == "ANSS")
+    assert anss["accession"] == "0001193125-24-008112"
+    assert "kept as traded" in anss["label"]
     assert manifest["not_delivered"] and {d["ask"] for d in manifest["not_delivered"]} == {
         "INFO",
         "WRK",
     }
     assert (out / lp.MANIFEST_FILENAME).exists()
+
+
+def test_fetch_stops_when_the_gateway_serves_a_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Fix 2: one vendor per line -- a non-zero gateway count stops the run.
+    _patch_run(monkeypatch, TINY, TINY_RAW)
+    monkeypatch.setattr(lp, "_gateway_candles", lambda *a, **k: [{"date": "2019-01-02"}])
+    out = tmp_path / "out"
+    with pytest.raises(LeaverPricesError, match="one vendor per line"):
+        lp.fetch_leaver_prices(
+            output_dir=out,
+            expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
+            tiingo_client=_tiingo_client(TINY_RAW),
+            gateway_client=_gateway_client(),
+            production_dbs=(),
+            pace_seconds=0.0,
+        )
+    assert not (out / lp.DATA_FILENAME).exists()
 
 
 def test_fetch_writes_nothing_on_a_report_mismatch(
@@ -388,9 +590,7 @@ def test_fetch_writes_nothing_on_a_report_mismatch(
             output_dir=out,
             expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
             tiingo_client=_tiingo_client(TINY_RAW),
-            gateway_client=httpx.Client(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200))
-            ),
+            gateway_client=_gateway_client(),
             production_dbs=(),
             pace_seconds=0.0,
         )
@@ -403,7 +603,7 @@ def test_fetch_stops_when_valid_to_changed(tmp_path: Path, monkeypatch: pytest.M
         lp,
         "read_membership_spans",
         lambda symbols, universe_db=None: {
-            "TINY": {"cik": "0000000001", "valid_from": "2019-01-02", "valid_to": "2019-01-05"}
+            "TINY": [{"cik": "0000000001", "valid_from": "2019-01-02", "valid_to": "2019-01-05"}]
         },
     )
     with pytest.raises(LeaverPricesError, match="valid_to"):
@@ -411,9 +611,7 @@ def test_fetch_stops_when_valid_to_changed(tmp_path: Path, monkeypatch: pytest.M
             output_dir=tmp_path / "out",
             expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
             tiingo_client=_tiingo_client(TINY_RAW),
-            gateway_client=httpx.Client(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200))
-            ),
+            gateway_client=_gateway_client(),
             production_dbs=(),
             pace_seconds=0.0,
         )
@@ -428,9 +626,7 @@ def test_fetch_stops_when_expectations_missing(
             output_dir=tmp_path / "out",
             expectations_path=tmp_path / "nope.json",
             tiingo_client=_tiingo_client(TINY_RAW),
-            gateway_client=httpx.Client(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200))
-            ),
+            gateway_client=_gateway_client(),
             production_dbs=(),
             pace_seconds=0.0,
         )
@@ -444,9 +640,7 @@ def test_fetch_stops_when_key_missing(tmp_path: Path, monkeypatch: pytest.Monkey
             output_dir=tmp_path / "out",
             expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
             tiingo_client=_tiingo_client(TINY_RAW),
-            gateway_client=httpx.Client(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200))
-            ),
+            gateway_client=_gateway_client(),
             production_dbs=(),
             pace_seconds=0.0,
         )
@@ -467,22 +661,11 @@ def test_fetch_writes_nothing_when_a_control_fails(
             output_dir=out,
             expectations_path=_expectations(tmp_path, {"TINY": 11.0}),
             tiingo_client=_tiingo_client(TINY_RAW),
-            gateway_client=httpx.Client(
-                transport=httpx.MockTransport(lambda r: httpx.Response(200))
-            ),
+            gateway_client=_gateway_client(),
             production_dbs=(),
             pace_seconds=0.0,
         )
     assert not (out / lp.DATA_FILENAME).exists()
-
-
-def test_fetch_has_no_hardcoded_line_prices() -> None:
-    """Guard: the committed LINES table must never carry a price."""
-    for spec in lp.LINES:
-        assert isinstance(spec.expected_rows, int)
-        assert isinstance(spec.expected_sessions, int)
-        for day, reason in spec.trims:
-            assert isinstance(day, str) and isinstance(reason, str)
 
 
 # ---------------------------------------------------------------------

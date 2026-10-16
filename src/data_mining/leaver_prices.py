@@ -48,6 +48,9 @@ Output (brief §3), under ``/workspaces/thesis/data/private/tiingo/``
 --------------------------------------------------------------------
 - ``leaver_prices.csv`` -- one row per line and session (columns below);
 - ``leaver_prices.manifest.json`` -- the fetch record;
+- ``request_log.json`` -- the persisted rolling-hour request timestamps
+  (timestamps only, never the key or a URL), so a crash and a re-run within
+  the hour do not start the counter from zero;
 - ``expectations.json`` -- the private *input* (prices), written by the
   operator, not by this module.
 
@@ -94,6 +97,9 @@ DEFAULT_OUTPUT_DIR = Path("/workspaces/thesis/data/private/tiingo")
 DATA_FILENAME = "leaver_prices.csv"
 MANIFEST_FILENAME = "leaver_prices.manifest.json"
 EXPECTATIONS_FILENAME = "expectations.json"
+#: Persisted request timestamps (timestamps only), so a re-run within the hour
+#: does not start the rolling-hour counter from zero.
+REQUEST_LOG_FILENAME = "request_log.json"
 
 FINANCIAL_DB = Path("/workspaces/thesis/data/financial.db")
 FINANCIAL_DB_SHA1 = "5c5c0642619bcc2f80aa72f13599bf824f676675"
@@ -146,7 +152,8 @@ class LineSpec:
     expected_rows: int  # report §2 rows kept, after trims
     first_date: str
     last_date: str
-    trims: tuple[tuple[str, str], ...]  # (date, reason) -- report §3, dates/reasons only
+    trims: tuple[tuple[str, str], ...]  # (date, reason_class) -- carried/halt/otc
+    notes: tuple[str, ...] = ()  # committed, non-price notes surfaced in the manifest
 
 
 LINES: tuple[LineSpec, ...] = (
@@ -159,7 +166,7 @@ LINES: tuple[LineSpec, ...] = (
         786,
         "2019-01-02",
         "2022-02-11",
-        (("2022-02-14", "carried close"),),
+        (("2022-02-14", "carried"),),
     ),
     LineSpec("PBCT", "0001378946", "PBCT", "2022-04-03", 820, 820, "2019-01-02", "2022-04-01", ()),
     LineSpec(
@@ -175,7 +182,7 @@ LINES: tuple[LineSpec, ...] = (
         944,
         "2019-01-02",
         "2022-09-29",
-        (("2022-09-30", "carried close"),),
+        (("2022-09-30", "carried"),),
     ),
     LineSpec("DRE", "0000783280", "DRE", "2022-10-02", 945, 945, "2019-01-02", "2022-09-30", ()),
     LineSpec("NLSN", "0001492633", "NLSN", "2022-10-11", 952, 952, "2019-01-02", "2022-10-11", ()),
@@ -188,7 +195,7 @@ LINES: tuple[LineSpec, ...] = (
         964,
         "2019-01-02",
         "2022-10-27",
-        (("2022-10-28", "carried close"),),
+        (("2022-10-28", "carried"),),
     ),
     LineSpec(
         "ABMD", "0000815094", "ABMD", "2022-12-21", 1002, 1002, "2019-01-02", "2022-12-21", ()
@@ -203,8 +210,8 @@ LINES: tuple[LineSpec, ...] = (
         "2019-01-02",
         "2023-03-10",
         (
-            ("2023-03-13", "carried close (post-failure)"),
-            ("2023-03-14", "carried close (post-failure)"),
+            ("2023-03-13", "carried"),
+            ("2023-03-14", "carried"),
         ),
     ),
     LineSpec(
@@ -217,9 +224,9 @@ LINES: tuple[LineSpec, ...] = (
         "2019-01-02",
         "2023-03-09",
         (
-            ("2023-03-10", "OTC (post-delisting)"),
-            ("2023-03-13", "OTC (post-delisting)"),
-            ("2023-03-14", "OTC (post-delisting)"),
+            ("2023-03-10", "otc"),
+            ("2023-03-13", "otc"),
+            ("2023-03-14", "otc"),
         ),
     ),
     LineSpec(
@@ -232,9 +239,9 @@ LINES: tuple[LineSpec, ...] = (
         "2019-01-02",
         "2023-04-28",
         (
-            ("2023-05-01", "halt day (FDIC receivership)"),
-            ("2023-05-02", "carried close"),
-            ("2023-05-03", "OTC (post-delisting)"),
+            ("2023-05-01", "halt"),
+            ("2023-05-02", "carried"),
+            ("2023-05-03", "otc"),
         ),
     ),
     LineSpec(
@@ -249,7 +256,7 @@ LINES: tuple[LineSpec, ...] = (
         1204,
         "2019-01-02",
         "2023-10-12",
-        (("2023-10-13", "carried close"),),
+        (("2023-10-13", "carried"),),
     ),
     LineSpec("SEE", "0001012100", "SEE", "2023-12-17", 1249, 1249, "2019-01-02", "2023-12-15", ()),
     LineSpec(
@@ -261,7 +268,7 @@ LINES: tuple[LineSpec, ...] = (
         1343,
         "2019-01-02",
         "2024-05-02",
-        (("2024-05-03", "carried close"),),
+        (("2024-05-03", "carried"),),
     ),
     LineSpec("CMA", "0000028412", "CMA", "2024-06-23", 1377, 1377, "2019-01-02", "2024-06-21", ()),
     LineSpec(
@@ -273,7 +280,7 @@ LINES: tuple[LineSpec, ...] = (
         1484,
         "2019-01-02",
         "2024-11-21",
-        (("2024-11-22", "carried close"),),
+        (("2024-11-22", "carried"),),
     ),
     LineSpec(
         "CTLT",
@@ -284,7 +291,7 @@ LINES: tuple[LineSpec, ...] = (
         1501,
         "2019-01-02",
         "2024-12-17",
-        (("2024-12-18", "carried close"),),
+        (("2024-12-18", "carried"),),
     ),
     LineSpec(
         "QRVO", "0001604778", "QRVO", "2024-12-22", 1504, 1504, "2019-01-02", "2024-12-20", ()
@@ -299,7 +306,7 @@ LINES: tuple[LineSpec, ...] = (
         1633,
         "2019-01-02",
         "2025-07-01",
-        (("2025-07-02", "carried close"),),
+        (("2025-07-02", "carried"),),
     ),
     LineSpec(
         "ANSS",
@@ -310,7 +317,7 @@ LINES: tuple[LineSpec, ...] = (
         1643,
         "2019-01-02",
         "2025-07-16",
-        (("2025-07-17", "carried close"),),
+        (("2025-07-17", "carried"),),
     ),
     LineSpec(
         "HES",
@@ -321,11 +328,26 @@ LINES: tuple[LineSpec, ...] = (
         1644,
         "2019-01-02",
         "2025-07-17",
-        (("2025-07-18", "carried close"),),
+        (("2025-07-18", "carried"),),
     ),
     LineSpec("WBA", "0001618921", "WBA", "2025-08-27", 1673, 1673, "2019-01-02", "2025-08-27", ()),
     LineSpec("IPG", "0000051644", "IPG", "2025-11-27", 1737, 1737, "2019-01-02", "2025-11-26", ()),
-    LineSpec("K", "0000055067", "K", "2025-12-10", 1746, 1746, "2019-01-02", "2025-12-10", ()),
+    LineSpec(
+        "K",
+        "0000055067",
+        "K",
+        "2025-12-10",
+        1746,
+        1746,
+        "2019-01-02",
+        "2025-12-10",
+        (),
+        (
+            "2023-10-02 splitFactor 1.065: the WK Kellogg spin-off, applied as a "
+            "split -- the same convention as the gateway, which reports DHR's Veralto "
+            "spin-off as a 1.128 split on the same day.",
+        ),
+    ),
     LineSpec("DAY", "0001725057", "DAY", "2026-02-08", 1785, 1782, "2019-01-02", "2026-02-03", ()),
     LineSpec(
         "HOLX",
@@ -336,7 +358,7 @@ LINES: tuple[LineSpec, ...] = (
         1824,
         "2019-01-02",
         "2026-04-06",
-        (("2026-04-07", "carried close"),),
+        (("2026-04-07", "carried"),),
     ),
     LineSpec(
         "CTRA", "0000858470", "CTRA", "2026-05-06", 1846, 1846, "2019-01-02", "2026-05-06", ()
@@ -351,7 +373,7 @@ LINES: tuple[LineSpec, ...] = (
         1915,
         "2019-01-02",
         "2026-08-14",
-        (("2026-08-17", "carried close"),),
+        (("2026-08-17", "carried"),),
     ),
     LineSpec("WBD", "0001437107", "WBD", "2026-10-05", 1950, 1950, "2019-01-02", "2026-10-05", ()),
 )
@@ -375,6 +397,16 @@ NOT_DELIVERED: tuple[dict[str, str], ...] = (
 #: (4-for-1, 2020-08-31) and drives the dividend-formula check.
 CONVENTION_TICKERS: tuple[str, ...] = ("TTD", "PVH", "KMX")
 DIVIDEND_CONTROL = "AAPL"
+
+#: Declared exceptions (report §6). Committed metadata only -- the values
+#: (last real close, consideration, spread) stay in the private expectations
+#: file and are merged into the manifest at run time.
+DECLARED_EXCEPTIONS: dict[str, dict[str, str]] = {
+    "ANSS": {
+        "label": "real final-day trade below deal value, kept as traded",
+        "accession": "0001193125-24-008112",
+    }
+}
 
 #: Control tolerances, matching the report §4 observations (closes essentially
 #: exact, KMX worst at $0.02; volumes differ only by vendor reconciliation).
@@ -427,8 +459,8 @@ def split_cum_factors(rows: list[dict[str, Any]]) -> dict[str, float]:
     """``split_cum(d) = product of splitFactor(s) for split ex-dates s > d``.
 
     A split is recorded on its ex-date and applies to the *earlier* dates, so
-    a 10-for-1 split factor of 10 recorded on 2021-06-17 divides every close
-    before it (585.76 / 10 = 58.576) and multiplies their volume.
+    a 10-for-1 split factor of 10 recorded on an ex-date divides every close
+    before it (500.00 / 10 = 50.00) and multiplies their volume.
     """
     splits = [
         (_parse_tiingo_date(r["date"]), float(r["splitFactor"]))
@@ -450,13 +482,21 @@ def detect_non_real(symbol: str, rows: list[dict[str, Any]]) -> dict[str, str]:
     """The rows of an in-range series that are not exchange trades.
 
     Returns ``{date: detected_by}`` with ``detected_by`` in
-    ``{"otc", "carried"}`` -- the report §3 rule, applied mechanically:
+    ``{"carried", "halt", "otc"}`` -- the report §3 rule, applied
+    mechanically and in this order:
 
-    - **otc**: the symbol is an OTC listing (``SIVBQ``/``FRCB``) and the row
-      is on or after its exchange-delisting date;
     - **carried**: the close repeats the previous session's and the volume is
-      below :data:`CARRIED_VOLUME_RATIO` of the line's median volume (a
-      carried-over quote after a deal/halt).
+      exactly 0 (a carried-over quote after a deal/halt). This is checked
+      first so a zero-volume post-delisting print stays ``carried`` rather
+      than ``otc``;
+    - **halt** / **otc**: the symbol is an OTC listing (``SIVBQ``/``FRCB``)
+      and the row is on or after its exchange-delisting date. The delisting
+      day itself is ``halt`` when the line later reprices on the OTC venue
+      (a genuine halt, the OTC trade came later), else the delisting day is
+      itself the first OTC print and is ``otc``; a row strictly after the
+      delisting date is ``otc``;
+    - **carried**: otherwise, the close repeats the previous session's and the
+      volume is below :data:`CARRIED_VOLUME_RATIO` of the line's median volume.
     """
     volumes = [float(r["volume"]) for r in rows]
     median = statistics.median(volumes) if volumes else 0.0
@@ -464,15 +504,19 @@ def detect_non_real(symbol: str, rows: list[dict[str, Any]]) -> dict[str, str]:
     out: dict[str, str] = {}
     for index, r in enumerate(rows):
         day = _parse_tiingo_date(r["date"])
-        if delisting is not None and day >= delisting:
-            out[day] = "otc"
+        repeats_previous = index > 0 and r["close"] == rows[index - 1]["close"]
+        if repeats_previous and float(r["volume"]) == 0:
+            out[day] = "carried"
             continue
-        if (
-            index > 0
-            and r["close"] == rows[index - 1]["close"]
-            and median > 0
-            and float(r["volume"]) < CARRIED_VOLUME_RATIO * median
-        ):
+        if delisting is not None and day >= delisting:
+            if day > delisting:
+                out[day] = "otc"
+                continue
+            later_closes = [later["close"] for later in rows[index + 1 :]]
+            reprices = repeats_previous and any(close != r["close"] for close in later_closes)
+            out[day] = "halt" if reprices else "otc"
+            continue
+        if repeats_previous and median > 0 and float(r["volume"]) < CARRIED_VOLUME_RATIO * median:
             out[day] = "carried"
     return out
 
@@ -530,30 +574,51 @@ def _days(start: str, end: str) -> list[date]:
 
 @dataclass
 class RateLimiter:
-    """A rolling-hour request counter. Refuses the request that would reach
-    the cap, so the run stops rather than exceed the budget."""
+    """A rolling-hour request counter that **persists** its request times to a
+    file in the private folder, so a crash and a re-run within the hour do not
+    start from zero. The file holds timestamps only -- never the key, never a
+    URL. Refuses the request that would reach the cap."""
 
     max_per_hour: int = MAX_REQUESTS_PER_HOUR
     headroom: int = REQUEST_HEADROOM
+    path: Path | None = None
     _times: list[datetime] = field(default_factory=list)
 
-    def _prune(self, now: datetime) -> None:
+    def __post_init__(self) -> None:
+        if self.path is not None and self.path.exists():
+            self._times = [datetime.fromisoformat(t) for t in json.loads(self.path.read_text())]
+
+    def _within_last_hour(self, now: datetime) -> list[datetime]:
         cutoff = now - timedelta(hours=1)
-        self._times = [t for t in self._times if t > cutoff]
+        return [t for t in self._times if t > cutoff]
+
+    def _save(self) -> None:
+        if self.path is not None:
+            self.path.write_text(json.dumps([t.isoformat() for t in self._times]))
 
     def check(self) -> None:
         now = datetime.now(UTC)
-        self._prune(now)
-        if len(self._times) >= self.headroom:
+        recent = self._within_last_hour(now)
+        if len(recent) >= self.headroom:
             raise LeaverPricesError(
-                f"rolling-hour budget reached ({len(self._times)}/{self.max_per_hour}) -- stopping"
+                f"rolling-hour budget reached ({len(recent)}/{self.max_per_hour}) -- stopping"
             )
         self._times.append(now)
+        self._save()
 
     def rolling_count(self) -> int:
-        now = datetime.now(UTC)
-        self._prune(now)
+        return len(self._within_last_hour(datetime.now(UTC)))
+
+    def total_all_runs(self) -> int:
         return len(self._times)
+
+    def largest_rolling_hour(self) -> int:
+        times = sorted(self._times)
+        best = 0
+        for moment in times:
+            cutoff = moment - timedelta(hours=1)
+            best = max(best, sum(1 for other in times if cutoff < other <= moment))
+        return best
 
 
 # -- environment checks (brief §3/§5) --------------------------------------
@@ -611,9 +676,10 @@ def _effective_modes(path: Path) -> str:
 
 def read_membership_spans(
     symbols: list[str], universe_db: Path = UNIVERSE_GICS_DB
-) -> dict[str, dict[str, str]]:
-    """``{symbol: {"valid_from", "valid_to", "cik"}}`` from the delivered
-    universe-history DB, read-only (never ALTERs or writes it)."""
+) -> dict[str, list[dict[str, str]]]:
+    """``{symbol: [{"cik", "valid_from", "valid_to"}, ...]}`` -- **every** stint
+    of the line, oldest first, from the delivered universe-history DB, read-only
+    (never ALTERs or writes it)."""
     db = Database.connect(universe_db, read_only=True)
     try:
         placeholders = in_clause(symbols)
@@ -624,24 +690,31 @@ def read_membership_spans(
         ).fetchall()
     finally:
         db.close()
-    spans: dict[str, dict[str, str]] = {}
+    spans: dict[str, list[dict[str, str]]] = {}
     for row in rows:
-        symbol = row["symbol"]
-        valid_to = row["valid_to"] or ""
-        if symbol not in spans or valid_to > spans[symbol]["valid_to"]:
-            spans[symbol] = {
+        spans.setdefault(row["symbol"], []).append(
+            {
                 "cik": row["cik"] or "",
                 "valid_from": row["valid_from"] or "",
-                "valid_to": valid_to,
+                "valid_to": row["valid_to"] or "",
             }
+        )
+    for stints in spans.values():
+        stints.sort(key=lambda stint: stint["valid_from"])
     return spans
 
 
-def production_stored_count(cik: str, financial_db: Path = FINANCIAL_DB) -> int:
-    """Rows stored in production's ``price_daily`` for the CIK's asset, or 0."""
+def production_stored_count(cik: str, ticker: str, financial_db: Path = FINANCIAL_DB) -> int:
+    """Rows stored in production's ``price_daily`` for the line's **own** asset,
+    matched by CIK *and* ticker -- a CIK can carry several tickers (DISCK and
+    WBD share CIK 0001437107, but production stores only the WBD asset, so
+    DISCK is 0 and WBD is 1,189)."""
     db = Database.connect(financial_db, read_only=True)
     try:
-        assets = db.execute("SELECT id FROM assets WHERE cik = ?", (cik,)).fetchall()
+        assets = db.execute(
+            "SELECT id FROM assets WHERE cik = ? AND UPPER(ticker) = UPPER(?)",
+            (cik, ticker),
+        ).fetchall()
         total = 0
         for asset in assets:
             (count,) = db.execute(
@@ -737,6 +810,13 @@ def _check_line(
         extra = sorted(detected_set - expected_set)
         mismatches.append(f"trim set differs (not detected: {missing}; extra: {extra})")
 
+    # Compare the reason class too, not only the date (reviewer fix 7).
+    expected_reasons = {day: reason for day, reason in spec.trims}
+    for day, reason in expected_reasons.items():
+        got = detected.get(day)
+        if got is not None and got != reason:
+            mismatches.append(f"{day}: detected {got!r} but report §3 says {reason!r}")
+
     last_close = expectations.get("last_real_close", {}).get(spec.ask)
     if last_close is None:
         mismatches.append(f"no expected last close in {EXPECTATIONS_FILENAME}")
@@ -814,22 +894,34 @@ def _dividend_formula(
 # -- the run ---------------------------------------------------------------
 
 
-def _validate_membership(spans: dict[str, dict[str, str]], universe_db: Path) -> None:
+def _validate_membership(spans: dict[str, list[dict[str, str]]], universe_db: Path) -> None:
     """Stop-and-ask if a line's latest valid_to changed, or if it no longer
     gives report §2's expected session count (brief §3, correction 7)."""
     for spec in LINES:
-        span = spans.get(spec.ask)
-        if span is None:
+        stints = spans.get(spec.ask)
+        if not stints:
             raise LeaverPricesError(f"{spec.ask}: no membership stint in {universe_db}")
-        if span["valid_to"] != spec.valid_to:
+        latest = max(stint["valid_to"] for stint in stints)
+        if latest != spec.valid_to:
             raise LeaverPricesError(
-                f"{spec.ask}: latest valid_to is {span['valid_to']!r}, expected "
+                f"{spec.ask}: latest valid_to is {latest!r}, expected "
                 f"{spec.valid_to!r} -- membership span changed; stop and ask"
             )
         if expected_sessions(spec.valid_to) != spec.expected_sessions:
             raise LeaverPricesError(
                 f"{spec.ask}: valid_to {spec.valid_to} gives a different expected session "
                 f"count than report §2 -- stop and ask"
+            )
+
+
+def _assert_on_calendar(spec: LineSpec, raw: list[dict[str, Any]]) -> None:
+    """Reviewer A's rule: every row's date must be an NYSE session, else the
+    run stops and nothing is written."""
+    for row in raw:
+        day = _parse_tiingo_date(row["date"])
+        if not is_trading_day(date.fromisoformat(day)):
+            raise LeaverPricesError(
+                f"{spec.ask}: {day} is not an NYSE session -- date off the calendar; stop and ask"
             )
 
 
@@ -845,8 +937,10 @@ def _fetch_lines(
     report-reproduction mismatches (empty means it reproduces report §2/§3)."""
     results: list[LineResult] = []
     report_mismatches: list[dict[str, Any]] = []
+    served_by_gateway: list[str] = []
     for spec in LINES:
         raw = _tiingo_fetch(tiingo_client, limiter, spec.symbol, START, spec.valid_to)
+        _assert_on_calendar(spec, raw)
         series = build_series(spec.symbol, raw, spec.valid_to)
         in_range = [r for r in raw if START <= _parse_tiingo_date(r["date"]) <= spec.valid_to]
         detected = detect_non_real(spec.symbol, in_range)
@@ -855,10 +949,17 @@ def _fetch_lines(
         if mismatches:
             report_mismatches.append({"ask": spec.ask, "mismatches": mismatches})
         candles = _gateway_candles(gateway_client, spec.ask, START, spec.valid_to)
-        stored = production_stored_count(spec.cik, financial_db)
+        if candles:
+            served_by_gateway.append(f"{spec.ask} ({len(candles)})")
+        stored = production_stored_count(spec.cik, spec.ask, financial_db)
         results.append(LineResult(spec, kept, detected, len(candles), stored))
         if pace_seconds:
             time.sleep(pace_seconds)
+    if served_by_gateway:
+        raise LeaverPricesError(
+            "the gateway served candles for a line that must be Tiingo-only "
+            f"({', '.join(served_by_gateway)}) -- one vendor per line; stop and ask"
+        )
     return results, report_mismatches
 
 
@@ -891,10 +992,10 @@ def fetch_leaver_prices(
     expectations = json.loads(expectations_path.read_text())
 
     assert_not_in_git_worktree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     sha1_before = {str(p): sha1_file(p) for p in production_dbs if p.exists()}
-    _validate_membership(
-        read_membership_spans([spec.ask for spec in LINES], universe_db), universe_db
-    )
+    spans = read_membership_spans([spec.ask for spec in LINES], universe_db)
+    _validate_membership(spans, universe_db)
 
     owns_tiingo = tiingo_client is None
     owns_gateway = gateway_client is None
@@ -902,7 +1003,8 @@ def fetch_leaver_prices(
         headers={"Authorization": f"Token {key}"}, timeout=60.0
     )
     gateway_client = gateway_client or httpx.Client(timeout=60.0)
-    limiter = RateLimiter()
+    limiter = RateLimiter(path=output_dir / REQUEST_LOG_FILENAME)
+    requests_before = limiter.total_all_runs()
     try:
         results, report_mismatches = _fetch_lines(
             tiingo_client, gateway_client, limiter, financial_db, expectations, pace_seconds
@@ -927,7 +1029,15 @@ def fetch_leaver_prices(
         raise LeaverPricesError("a production DB changed during the run")
 
     return _write_outputs(
-        output_dir, expectations_path, results, checks, limiter, sha1_before, sha1_after
+        output_dir,
+        expectations_path,
+        results,
+        checks,
+        limiter,
+        sha1_before,
+        sha1_after,
+        spans,
+        requests_this_run=limiter.total_all_runs() - requests_before,
     )
 
 
@@ -988,6 +1098,9 @@ def _write_outputs(
     limiter: RateLimiter,
     sha1_before: dict[str, str],
     sha1_after: dict[str, str],
+    spans: dict[str, list[dict[str, str]]],
+    *,
+    requests_this_run: int,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(output_dir, 0o700)
@@ -1041,17 +1154,21 @@ def _write_outputs(
             "dividends are NOT removed (never Tiingo's own adjClose)."
         ),
         "trim_rule": (
-            "a row is real only if it is an exchange trade: no carried close with ~0 volume "
-            "(close == prev_close and volume < 0.10 * median), no halt day, no OTC quote "
-            "(symbol on/after its exchange-delisting date)."
+            "a row is real only if it is an exchange trade. The rule is applied by class "
+            "(carried / halt / otc) and checked against the committed per-line table; a "
+            "class mismatch stops the run. carried = close == prev_close with volume 0, or "
+            "with volume < 0.10 * median; halt = the OTC symbol's exchange-delisting day "
+            "when the line later reprices; otc = any other row on/after the delisting date."
         ),
         "data_file": DATA_FILENAME,
         "data_file_sha256": sha256_file(data_path),
         "request_count": {
-            "total": limiter.rolling_count(),
-            "rolling_hour_max": limiter.rolling_count(),
-            "window": "rolling hour",
+            "this_run": requests_this_run,
+            "total_all_runs": limiter.total_all_runs(),
+            "rolling_hour_now": limiter.rolling_count(),
+            "largest_rolling_hour": limiter.largest_rolling_hour(),
             "cap_per_hour": MAX_REQUESTS_PER_HOUR,
+            "log_file": REQUEST_LOG_FILENAME,
         },
         "tiingo_terms": {
             "licence": "UNCONFIRMED",
@@ -1065,12 +1182,14 @@ def _write_outputs(
             "directory_mode": _effective_modes(output_dir),
             "data_file_mode": _effective_modes(data_path),
             "filesystem_type": _filesystem_type(output_dir),
+            "request_log": REQUEST_LOG_FILENAME,
             "note": "chmod is a no-op on this filesystem; effective modes are recorded, not enforced.",
         },
         "production_db_sha1_before": sha1_before,
         "production_db_sha1_after": sha1_after,
         "expectations_file": str(expectations_path),
         "provenance": _provenance(expectations_path),
+        "declared_exception": _declared_exceptions(expectations_path),
         "checks": checks,
         "lines": [
             {
@@ -1090,7 +1209,8 @@ def _write_outputs(
                 ],
                 "first_date": r.series[0]["date"] if r.series else None,
                 "last_date": r.series[-1]["date"] if r.series else None,
-                "membership_span": {"valid_to": r.spec.valid_to},
+                "membership_span": spans.get(r.spec.ask, []),
+                "notes": list(r.spec.notes),
                 "why_tiingo": {
                     "gateway_candle_count": r.gateway_candles,
                     "production_stored_count": r.production_rows,
@@ -1109,6 +1229,17 @@ def _write_outputs(
     manifest_path.write_text(json.dumps(manifest, indent=2))
     os.chmod(manifest_path, 0o600)
     return manifest
+
+
+def _declared_exceptions(expectations_path: Path) -> list[dict[str, Any]]:
+    """The report §6 declared exceptions: the committed label/accession plus the
+    private values (last real close, consideration, spread) from the
+    expectations file."""
+    private = json.loads(expectations_path.read_text()).get("declared_exception", {})
+    out: list[dict[str, Any]] = []
+    for ask, meta in DECLARED_EXCEPTIONS.items():
+        out.append({"ask": ask, **private.get(ask, {}), **meta})
+    return out
 
 
 def _provenance(expectations_path: Path) -> dict[str, Any]:
@@ -1134,15 +1265,16 @@ def _deletion_step(output_dir: Path) -> list[dict[str, str]]:
         },
         {
             "copy": "T-100's machine, if different",
-            "path": "thesis/data/private/tiingo/",
-            "command": "rm -rf thesis/data/private/tiingo",
-            "check": "test ! -e thesis/data/private/tiingo",
+            "path": "<T-100 thesis folder>/data/private/tiingo",
+            "command": "rm -rf <T-100 thesis folder>/data/private/tiingo",
+            "check": "test ! -e <T-100 thesis folder>/data/private/tiingo",
+            "example": "on the user's Mac: /Users/dova/thesis/data/private/tiingo",
         },
         {
             "copy": "every backup of thesis/data the user names",
-            "path": "<backup>/private/tiingo/",
-            "command": "rm -rf <backup>/private/tiingo",
-            "check": "test ! -e <backup>/private/tiingo",
+            "path": "<backup thesis folder>/data/private/tiingo",
+            "command": "rm -rf <backup thesis folder>/data/private/tiingo",
+            "check": "test ! -e <backup thesis folder>/data/private/tiingo",
         },
         {
             "copy": "feasibility scratch",
