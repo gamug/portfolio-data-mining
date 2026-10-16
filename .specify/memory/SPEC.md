@@ -508,7 +508,7 @@ treating a related FR/NR as done:
     Surfaced by `portfolio-nlp`, whose category stage labels 42.7% of its
     corpus `other` largely because of it. **Not accepted — active work**
     (unlike the accepted items above, and unlike §14's permanent boundaries):
-    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-060 (requested by
+    tracked as `PLAN.md` Work item 10, `TASKS.md` T-053–T-060 (its matcher follow-up is Work item 11, T-061) (requested by
     `portfolio-nlp` T-128), with the requirement in FR-014.
 
 ## 14. Scope Boundaries (Out of Scope, Not Deferred)

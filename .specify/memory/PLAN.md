@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-059`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-059`–`T-060` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 11 / `T-061`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -1076,12 +1076,27 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   frozen samples); `portfolio-nlp` is told not to purge the known ones (T-058 comment). A matcher
   fix (for example `review` when the full normalized name is in the text, with a possessive and
   `&` normalization) is a follow-up task (`T-061`): it re-classes those rows with a targeted pass (the re-tag
-  only touches rows with `match_reason IS NULL`) and `release_articles`.
+  only touches rows with `match_reason IS NULL`) and `release_articles`. It is Work item 11 below, so this
+  item closes at T-059 with a named successor.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
   item 10 and FR-014, `docs/modules/news-collector.md` and the architecture artifacts
   reconciled (constitution AI behavior #11, never renamed).
+
+## Work item 11 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, T-061)
+
+**Status: open, not scheduled (maintainer decides; found by the Work item 10 real run, 2026-10-15).**
+**Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` +
+`NWSA`, `KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1) whose URL carries the company's full name, and the
+hand check estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, scope and the
+current figures are in Work item 10 ("Accepted recall loss"). **What:** a full-name hit is at least `review`
+(never `reject`), with the possessive `s` and `&` normalized; the quarantined rows are re-classed with a
+targeted pass and released when they become `accept`. **Tooling the hand check needs:** the T-057 sheet
+(`data/ticker_retag_check_sample.csv`) joins `EARLIER_SAMPLES` and the `--final` exclusions, and the new draw uses `--final --out <new path>` (the default output is that sheet); the new sheet is drawn from the post-fix classes.
+**Acceptance:** the 433 rows are no longer `reject`, `score_ticker_rules.py --check` is re-measured and
+the PLAN figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, and `portfolio-nlp` gets the new
+removed and `review` counts. No schema change.
 
 ## Sequencing
 
