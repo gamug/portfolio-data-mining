@@ -1077,9 +1077,10 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   fix (for example `review` when the full normalized name is in the text, with a possessive and
   `&` normalization) is a follow-up task (`T-062`): it re-classes those rows with a targeted pass (the re-tag
   only touches rows with `match_reason IS NULL`) and `release_articles`. It is Work item 12 below, so this
-  item closes at T-059 with a named successor.
+  item closed at T-059 (2026-10-16) with a named successor.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
-  queries.
+  queries. *Status at close (2026-10-16): hand-off posted on `portfolio-nlp` #102 (`T-058`); their
+  confirmation has not arrived. It is theirs to give (its `T-132`) and does not block this item.*
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
   item 10 and FR-014, `docs/modules/news-collector.md` and the architecture artifacts
   reconciled (constitution AI behavior #11, never renamed).

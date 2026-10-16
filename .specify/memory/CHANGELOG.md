@@ -661,7 +661,9 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       so `T-060` reached `master` only with PR #65. **Maintainer decisions, proposed here and for the maintainer to confirm:**
       keep `urls.pre-retag.db` until `T-062`'s targeted re-class pass is checked (it is the only way back to the pre-re-tag
       `fetch_status`), then delete it; the maintainer holds the git-ignored `data/retag/` lists (`retag_urls.py --out` on a copy
-      of the backup regenerates them).
+      of the backup regenerates them). **Open criterion:** `portfolio-nlp`'s confirmation that wrong-company rows no
+      longer reach its pending queries has not arrived (only the `T-058` hand-off on its #102 is posted); it is theirs to
+      give (its `T-132`) and does not block closing this item.
 
 ## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (T-061)
 
