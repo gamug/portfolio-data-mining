@@ -1045,9 +1045,12 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   a ticker as a bare substring such as `A` in any URL) as `reject` or `review`,
   never `accept`, **in each of the seven connectors**; `accept` meets the FR-014
   targets (wrong rate at most 15%, correct pairs kept as `accept`/`review` at
-  least 95%, known-correct `accept` at least 90%) on the labeled samples, **verified
-  by the T-057 fresh check** (passed 2026-10-15: 1 of 60 `accept` wrong, 1 of 40
-  `reject` correct, the limit; at most 5 and 1 were allowed); no abstract `BaseConnector` signature change.
+  least 95%, known-correct `accept` at least 90%) on the labeled samples; **the T-057
+  fresh check passed its pass/fail criterion** (2026-10-15: 1 of 60 `accept` wrong, 1 of 40
+  `reject` correct, the limit; at most 5 and 1 were allowed), but 100 rows cannot confirm the
+  percentage targets: the `reject` side's 95% interval is 0.4%-12.9%, so "correct pairs kept at
+  least 95%" is neither confirmed nor refuted by it (see the accepted recall loss below; at least
+  433 known false rejects); no abstract `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup (done: `urls.pre-retag.db`).
 - **Accepted recall loss (T-057 real run):** the frozen rule rejects some pairs whose full
@@ -1063,8 +1066,9 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   **at least 433 pairs on 234 URLs** (`NWSA` 201 and `NWS` 199, the same News Corp articles under
   both tickers; `KLAC` 15; `SO` 11; `BAC` 4; `DG`, `IFF`, `TTD` 1 each), committed in
   `data/retag_known_false_rejects.csv` and pinned by `tests/scripts/test_known_false_rejects.py`.
-  Hits for `BBY`, `ON`, `T`, `TGT` were read and are not the company, so they are left out
-  (`NOISE`). The hand-check row 302365 is one of the KLAC pairs, which is why the `reject` check
+  The 19 hits for `BBY`, `ON`, `T`, `TGT` were read and are not the company (`best-buys`,
+  `on-semiconductors`, `at-t-mobiles`, `target-corporations`), so those article ids, and only
+  those, are left out (`NOISE`). The hand-check row 302365 is one of the KLAC pairs, which is why the `reject` check
   passed at its limit. **Estimated:** the scan finds one shape only. The hand check had 1 of 40
   `reject` pairs correct (2.5%, Wilson 95% interval 0.4%-12.9%), i.e. roughly 1,400 to 42,000 of the
   325,423 (point estimate about 8,100); a 40-row sample cannot say more, so 433 is about a twentieth

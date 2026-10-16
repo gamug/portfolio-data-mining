@@ -58,13 +58,37 @@ def test_in_url_ignores_partial_words_and_the_host(company: str, url: str) -> No
     assert not scan_mod.in_url(company, url)
 
 
-def test_scan_leaves_out_the_reviewed_noise_tickers() -> None:
+def test_scan_leaves_out_only_the_reviewed_noise_ids() -> None:
+    noise_id = next(i for i, why in scan_mod.NOISE.items() if why.startswith("ON:"))
     rows = [
-        _row("ON", "ON Semiconductor", "https://x.com/tariffs-on-semiconductors.html"),
+        {
+            **_row("ON", "ON Semiconductor", "https://x.com/tariffs-on-semiconductors.html"),
+            "article_id": noise_id,
+        },
+        _row(
+            "BBY", "Best Buy", "https://x.com/best-buy-earnings-beat.html"
+        ),  # same ticker family, real
         _row("KLAC", "KLA Corporation", "https://x.com/kla-corporation-q4"),
     ]
 
-    assert [r["ticker"] for r in scan_mod.scan(rows)] == ["KLAC"]
+    assert [r["ticker"] for r in scan_mod.scan(rows)] == ["BBY", "KLAC"]
+
+
+def test_an_empty_scan_writes_a_header_only_file(tmp_path: Path) -> None:
+    removed = tmp_path / "removed.csv"
+    removed.write_text(",".join(scan_mod.FIELDS) + "\n")
+    out = tmp_path / "out.csv"
+
+    assert scan_mod.main(["--removed", str(removed), "--out", str(out)]) == 0
+    assert out.read_text().strip() == ",".join(scan_mod.FIELDS)
+    assert scan_mod.main(["--removed", str(removed), "--out", str(out), "--check"]) == 0
+
+
+def test_the_noise_ids_are_not_in_the_committed_file() -> None:
+    with _SHEET.open(newline="", encoding="utf-8") as fh:
+        ids = {r["article_id"] for r in csv.DictReader(fh)}
+
+    assert not ids & set(scan_mod.NOISE)
 
 
 def test_the_committed_file_is_the_pairs_the_frozen_rule_rejects() -> None:
@@ -73,7 +97,6 @@ def test_the_committed_file_is_the_pairs_the_frozen_rule_rejects() -> None:
 
     assert rows
     assert len({r["article_id"] for r in rows}) == len(rows)
-    assert not {r["ticker"] for r in rows} & set(scan_mod.NOISE)
     assert all(scan_mod.in_url(r["company"], r["url"]) for r in rows)
     # pins today's behaviour: a matcher fix changes this, then re-class and release the articles
     assert {classify(r["url"], "", r["company"], r["ticker"]).cls for r in rows} == {"reject"}
