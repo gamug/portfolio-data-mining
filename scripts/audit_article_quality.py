@@ -81,15 +81,20 @@ def wall_ids(db_path: Path) -> list[int]:
         return [row_id for row_id, body in cur if is_wall_page(body or "")]
 
 
-def by_status(db_path: Path) -> dict[str, dict[str, int]]:
-    """`wall_kind` over every body: per `fetch_status`, the rows classed `failed`, `paywalled`,
-    or `none` (database opened read-only)."""
+def by_status(db_path: Path) -> tuple[dict[str, dict[str, int]], dict[str, int]]:
+    """`wall_kind` over every body (database opened read-only): per `fetch_status`, the rows classed
+    `failed`, `paywalled` or `none`, and the number of wall hits per `source_domain`."""
     out: dict[str, dict[str, int]] = defaultdict(lambda: {"failed": 0, "paywalled": 0, "none": 0})
+    domains: Counter[str] = Counter()
     uri = f"file:{db_path.resolve()}?mode=ro"
     with closing(connect(uri, uri=True)) as con:
-        for status, body in con.execute("SELECT fetch_status, body_text FROM articles"):
-            out[status or ""][wall_kind(body or "") or "none"] += 1
-    return dict(sorted(out.items()))
+        cur = con.execute("SELECT fetch_status, body_text, source_domain FROM articles")
+        for status, body, domain in cur:
+            kind = wall_kind(body or "")
+            out[status or ""][kind or "none"] += 1
+            if kind:
+                domains[domain or ""] += 1
+    return dict(sorted(out.items())), dict(sorted(domains.items()))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -102,10 +107,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--by-status", action="store_true", help="detector hits per fetch_status")
     args = parser.parse_args(argv)
     if args.by_status:
-        for status, r in by_status(Path(args.db or resolve_db_path())).items():
+        statuses, domains = by_status(Path(args.db or resolve_db_path()))
+        for status, r in statuses.items():
             print(
                 f"{status:14} failed={r['failed']:>6} paywalled={r['paywalled']:>6} none={r['none']:>7}"
             )
+        print("wall hits per domain:", domains or "none")
         return 0
     if args.list:
         ids = wall_ids(Path(args.db or resolve_db_path()))

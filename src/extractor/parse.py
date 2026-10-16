@@ -71,13 +71,15 @@ def _has_phrase(head: str, phrases: tuple[str, ...]) -> bool:
     return any(re.search(rf"\b{re.escape(phrase)}\b", head) for phrase in phrases)
 
 
+# a challenge page opens with its message, possibly after quote / markdown marks
+_STARTS_WITH_CHALLENGE = re.compile(rf"[\s\"'#*]*(?:{'|'.join(map(re.escape, CHALLENGE_START))})\b")
+
+
 def wall_kind(text: str) -> Literal["failed", "paywalled"] | None:
     """`fetch_status` for a wall page: `failed` (bot challenge), `paywalled` (login / subscribe
     prompt), or None when the body is an article."""
     head = text[:WALL_HEAD_CHARS].lower()
-    if _has_phrase(head, CHALLENGE_PHRASES) or head.lstrip(" \t\r\n\"'#*").startswith(
-        CHALLENGE_START
-    ):
+    if _has_phrase(head, CHALLENGE_PHRASES) or _STARTS_WITH_CHALLENGE.match(head):
         return "failed"
     if _has_phrase(head, GATE_PHRASES):
         return "paywalled"

@@ -328,16 +328,18 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       `--retry-failed` retries it), a login or subscribe prompt `paywalled` (gated: not retried); neither is `ok`.
       `scripts/audit_article_quality.py --by-status` ran the final detector over all 481,332 real bodies
       (2026-10-16): `failed` 578 hits of 9,634, `quarantined` 198 of 376,718, `ok` 0 of 93,224, `thin_content` 0 of
-      1,756. The 776 hits are exactly the ft.com `Security Verification` pages (578 + 198, the counts of the earlier
-      raw scan); nothing else. The scan also found three head false positives that shaped the rules: "just a
+      1,756. `--by-status` also prints the hits per `source_domain`: all 776 are `ft.com`
+      (`Security Verification`, 38 words each). Those pages were already `failed` (HTTP 403) and at fetch time are
+      `thin_content` (under 80 words), so they never reach `wall_kind` in the pipeline: on the real corpus the gate
+      changed no stored row. It is preventive, for a wall long enough to pass the length check. The scan also found three head false positives that shaped the rules: "just a
       *momentary* blip", "investigating unusual traffic that might be from hackers" and a quarantined CNBC article
       (id 78699) opening "For just a moment, mentally fast-forward...". So phrases are whole-word, `unusual traffic`
-      needs `from your`, and `just a moment` / `access denied` count only at the very start of the body. The real
+      needs `from your`, and `just a moment` / `access denied` count only at the very start of the body, as whole words ("Just a momentary..." is not a wall). The real
       excerpts are fixtures in `test_parse_body.py`.
       The audit (read-only, per domain: walls, under the word floor, hashed duplicate bodies; `--list` prints wall ids;
       exit 1 on a wall or an under-floor row) also covers rows quarantined from `ok` (`held`, `held walls`), since a
-      release restores `ok`. Real `urls.db`: 93,224 `ok` + 366,000 held rows, 0 walls, 0 under the floor. The
-      duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 771.
+      release restores `ok`. Real `urls.db`: 93,224 `ok` + 365,888 held rows, 0 walls, 0 under the floor. The
+      duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 777.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`

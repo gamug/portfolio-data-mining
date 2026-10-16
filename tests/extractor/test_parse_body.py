@@ -160,3 +160,18 @@ def test_real_cnbc_prose_with_a_wall_phrase_is_not_a_wall(text: str) -> None:
 @pytest.mark.parametrize("key", [k for k in _REAL_PROSE if "deep" not in k], ids=lambda k: k)
 def test_real_cnbc_prose_with_a_phrase_in_its_head_is_not_a_wall(key: str) -> None:
     assert wall_kind(_REAL_PROSE[key]) is None  # the phrase is inside the first 300 characters
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Just a momentary lapse of reason hit shares on Monday. ", "Access deniedly, he said. "],
+)
+def test_a_body_that_opens_with_a_longer_word_is_not_a_wall(body: str) -> None:
+    assert wall_kind(body + _PROSE) is None
+
+
+@pytest.mark.parametrize(
+    "body", ["Just a moment... ", '"Just a moment" ', "## Just a moment\n", "\n  Access denied. "]
+)
+def test_a_body_that_opens_with_the_challenge_message_is_a_wall(body: str) -> None:
+    assert wall_kind(body + _PROSE) == "failed"

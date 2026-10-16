@@ -92,8 +92,9 @@ def test_a_held_wall_alone_fails_the_audit(tmp_path: Path) -> None:
 
 
 def test_by_status_counts_the_detector_over_every_row(tmp_path: Path) -> None:
-    result = by_status(_db(tmp_path))
+    result, domains = by_status(_db(tmp_path))
 
     assert result["failed"] == {"failed": 1, "paywalled": 0, "none": 0}
     assert result["quarantined"] == {"failed": 2, "paywalled": 0, "none": 0}
     assert result["ok"] == {"failed": 1, "paywalled": 0, "none": 3}
+    assert domains == {"cnbc.com": 4}  # rows 3, 5, 6, 7
