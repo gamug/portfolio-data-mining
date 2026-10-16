@@ -952,8 +952,8 @@ wheels = [
 
 [[package]]
 name = "portfolio-common"
-version = "1.2.1"
-source = { git = "https://github.com/gamug/portfolio-common?tag=v1.2.1#644bb07075dbeec504cb08f3faafc303ad2e0d17" }
+version = "1.2.2"
+source = { git = "https://github.com/gamug/portfolio-common?tag=v1.2.2#5e4ee82d1bd6789c0b94d4972181b25b13071df0" }
 
 [[package]]
 name = "portfolio-data-mining"
@@ -1009,7 +1009,7 @@ requires-dist = [
     { name = "lxml", specifier = ">=5.2.0" },
     { name = "numpy" },
     { name = "pandas", specifier = ">=2.0" },
-    { name = "portfolio-common", git = "https://github.com/gamug/portfolio-common?tag=v1.2.1" },
+    { name = "portfolio-common", git = "https://github.com/gamug/portfolio-common?tag=v1.2.2" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "requests" },
