@@ -321,10 +321,11 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
 
 ## Status
 
-Closed Work items 3, 4, 5, 6, 7 and 9 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
+Closed Work items 3, 4, 5, 6, 7, 9 and 11 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
-Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51).
+Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
+Work item 11, `T-061`, closed 2026-10-16 in PR #62, approved, awaiting merge).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
@@ -333,4 +334,4 @@ Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
-CI is wanted again. No other work item is open.
+CI is wanted again.

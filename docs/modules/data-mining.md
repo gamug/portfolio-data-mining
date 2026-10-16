@@ -17,6 +17,8 @@ connection/schema layer, and the universe loader (live + point-in-time).
 | `universe_history.py` | `backfill_from_changes()`, `record_snapshot()`, `query_as_of()`, `resolve_as_of()` — point-in-time membership. Reconstructs `valid_from`/`valid_to` intervals per ticker by combining today's live roster with the ["Historical components of the S&P 500"](https://en.wikipedia.org/wiki/Historical_components_of_the_S%26P_500) Wikipedia article's addition/removal log (back to 1976). | `pricing`'s `as_of=` path only (`list_universe`/`resolve_symbol`, `/universe` routes); never called from the `as_of=None` default path |
 | `queries.py` | The only SQL text for `data/universe.db`'s `universe_membership` (SCD-2) table — `write_intervals`, `fetch_open_symbols`, `close_intervals`, `query_membership_as_of`, `fetch_gics_targets`, `update_gics`, etc. Pure DB-touching functions; `universe_history.py` holds the parsing/reconstruction logic and orchestrates these. | `universe_history.py`, `universe_gics.py` |
 | `universe_gics.py` | `build_gics_db()`, `fill_gics()`, `fetch_revision_list()`/`fetch_revision_content()` — fills `gics_sector`/`gics_sub_industry` plus the revision citation for the S&P 500 leaver stints, from the revision history of Wikipedia's ["List of S&P 500 companies"](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies) page. | `cli/pricing_cli.py`'s `universe-gics` subcommand only |
+| `nyse_calendar.py` | `is_trading_day()`, `sessions()`, `nyse_holidays()`, `next_trading_day()`, `add_trading_days()` — the NYSE trading calendar, ported from `portfolio-financial-analysis`'s `src/kg_schema/trading_calendar.py` (commit `87dd9bf`), used for the leaver-prices "expected sessions" counts and the off-calendar guard. | `leaver_prices.py` |
+| `leaver_prices.py` | `fetch_leaver_prices()`, `build_series()`, `detect_non_real()`, `split_cum_factors()`, `LINES` — the one-off, **private** Tiingo fetch for the 33 S&P 500 leaver lines (FR-015): a CSV + JSON manifest into `/workspaces/thesis/data/private/tiingo/`. Never a service source. | `cli/pricing_cli.py`'s `leaver-prices` subcommand only |
 | `matching.py` | `classify()`, `Match`, `MatchClass`, `ALIASES`, `WORD_TICKERS` — the pure company-matching rule (accept / review / reject from the URL path and title; no I/O, no dependency), shared by the news-collector connectors (`BaseConnector.classify_match`) and, later, the extractor's post-fetch re-evaluation (`T-056c`). | `news_collector` connectors; `scripts/audit_ticker_tagging.py`, `scripts/score_ticker_rules.py` |
 | `quarantine.py` | `quarantine_articles()`, `release_articles()`, `sync_quarantine()` — the reversible quarantine of fetched articles whose pair is not `accept` (`fetch_status = 'quarantined'`, previous status in `articles.prev_fetch_status`; T-057). | `extractor.db.record_fetch`; `scripts/retag_urls.py` |
 | `errors.py` | `UpstreamDataError` — the shared exception type for an upstream provider (Finnhub, yfinance, SEC EDGAR) failing in an *unexpected* way. Most consumer wrappers already return `{"success": False, "error": ...}` instead of raising (constitution: AI behavior #3); this is the safety net for anything that raises instead, paired with a FastAPI exception handler so a route never leaks a raw traceback. | `pricing`, `sec_edgar` |
@@ -91,6 +93,46 @@ report-only stability check (each chosen label vs. the same CIK+symbol in
 the newest revision ≥30 days older) and lists any differences rather than
 silently trusting them.
 
+## Leaver prices fetch (`leaver-prices`, FR-015)
+
+`leaver_prices.fetch_leaver_prices()` fetches Tiingo's daily EOD rows for the
+33 S&P 500 leaver lines the gateway cannot serve (`INFO`/`WRK` are
+unobtainable), over `2019-01-02 .. latest valid_to` from
+`universe_history_gics.db` (read-only). It applies the Task B feasibility
+report's trim rule and split formula, then writes a CSV and a JSON manifest
+into `/workspaces/thesis/data/private/tiingo/` — outside every git
+repository, `0700`/`0600`, with the effective modes and filesystem type
+recorded (on this machine `chmod` is a no-op over `v9fs`). It is the one
+sanctioned one-off, private build-step source (constitution: Technological
+stock #8): no service serves it, nothing is committed or redistributed, and
+the key is read only from `$TIINGO_API_KEY` and sent only in the
+`Authorization: Token` header.
+
+Every check runs before anything is written — the report §2/§3 reproduction
+per line (row count, first/last date, trim set **and reason class**, last real
+close), every row's date on the NYSE calendar, the gateway's candle count
+(0 for all 33 — a non-zero count stops the run: one vendor per line), the
+calendar's expected-session count, the TTD/PVH/KMX gateway controls, the AAPL
+dividend formula, and the WBD-vs-production comparison. A mismatch writes
+nothing and stops. Every price lives in a private `expectations.json` (never
+committed); committed code and tests carry counts, dates and trim reasons
+only. A `request_log.json` in the same folder persists the rolling-hour
+request timestamps (timestamps only), so a crash and a re-run within the hour
+do not start the counter from zero; the manifest reports this run's count, the
+total over all runs, and the largest rolling hour. `/tmp/tiingo_feasibility/`
+is deleted once the file passes.
+
+```bash
+# The key is set in the shell only, never in .env:
+read -rs TIINGO_API_KEY && export TIINGO_API_KEY
+uv run cli/pricing_cli.py leaver-prices
+```
+
+The one procedure covering every copy (this machine, T-100's machine if
+different, any `thesis/data` backup, and the scratch folder) is recorded in
+the manifest's `deletion_step` — every path rooted (absolute or a
+placeholder-rooted absolute), never a relative `rm -rf`.
+
 ## Engine-agnostic since `portfolio-common` v1.2.1
 
 As of `docs/portfolio-common-v1.2-engine-agnostic.md` (PR #26), no file in
@@ -111,4 +153,7 @@ uv run pytest tests/data_mining -q
 Hermetic — the Wikipedia scrape (`portfolio.py`/`universe_history.py`) and
 the MediaWiki revision API (`universe_gics.py`) are mocked at the HTTP
 boundary, and `db.py`/`schema.py`/`queries.py` run against a temporary
-SQLite file, not the real `data/urls.db`/`data/universe.db`.
+SQLite file, not the real `data/urls.db`/`data/universe.db`. The leaver-prices
+fetch (`test_leaver_prices.py`) mocks Tiingo and the gateway with an
+`httpx.MockTransport` and hand-made synthetic responses (never a real Tiingo
+value), and `test_nyse_calendar.py` is pure date arithmetic.

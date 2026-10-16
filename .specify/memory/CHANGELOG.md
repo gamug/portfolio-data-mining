@@ -366,3 +366,28 @@ Full request: `portfolio-financial-analysis`'s
       no data change): resumable, atomic `build_gics_db`; real `NAME`/`EMAIL`
       User-Agent; public `queries.connect`. 333 tests.
 
+## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (T-061)
+
+Requested by `portfolio-financial-analysis` for its `T-100` (full-universe run; raised by `T-153`
+parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private local file."
+
+- [x] **T-061** Build `src/data_mining/leaver_prices.py` and the `cli/pricing_cli.py
+      leaver-prices` subcommand (like `universe-gics`); port `portfolio-financial-analysis`'s
+      rule-based NYSE calendar into `src/data_mining/nyse_calendar.py`; add the `TIINGO_API_KEY`
+      note to `.env.example`; amend the constitution (Technological stock #8, 1.8.0) and `SPEC.md`
+      FR-015/§2.1/§11/§12; run the fetch into `/workspaces/thesis/data/private/tiingo/`; delete
+      `/tmp/tiingo_feasibility/` once the file passes §4. → `PLAN.md` Work item 11. **Done
+      2026-10-16** (PR #62, approved; awaiting merge): 33 lines, **44,989** rows, **20** trimmed,
+      **37** missing sessions, **442** dividend rows, **1** split row; the file's sha256 is
+      `d6ef4052aac37fa1c1b584e0653c0e3abc3ff690bd12e64ed40a2ec8a7589179` (unchanged across the
+      fix-round re-run); the calendar reproduces report §2's expected count for all 35 lines;
+      TTD/PVH/KMX match the gateway, the AAPL dividend formula is `divCash / split_cum`, WBD
+      matches production within 1 cent; the gateway serves **0** candles for all 33, production
+      stores DISCK **0** / WBD **1,189**; Tiingo requests **42** (feasibility, 2026-10-14) + **37**
+      (run 1, 2026-10-15) + **37** (run 2, 2026-10-16) — more than an hour apart, so no rolling hour
+      over 37; `/tmp/tiingo_feasibility/` deleted; the four production DB sha1s unchanged; 734 tests.
+      PR #62 review follow-ups (second commit `21751b1`): per-row calendar check, one-vendor-per-line
+      stop, DISCK's CIK+ticker production count, persisted `request_log.json`, made-up numbers in the
+      committed tests, `membership_span` per stint + ANSS `declared_exception` + K's spin-off note in
+      the manifest, and a trim-reason-class comparison.
+
