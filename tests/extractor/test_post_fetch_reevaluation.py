@@ -42,6 +42,7 @@ def db_path(tmp_path: Path) -> str:
     queue = URLQueue(path)
     queue.initialize()
     queue.enqueue_batch([_row(_URL, "review"), _row("https://www.cnbc.com/rej.html", "reject")])
+    queue.close()  # only `path` is used after this; nothing else needs the connection open
     return path
 
 
