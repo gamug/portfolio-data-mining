@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057`–`T-060` pending; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is in PR #61, the real run waits for the hand-labeled check.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-059`–`T-060` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -1045,11 +1045,39 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   a ticker as a bare substring such as `A` in any URL) as `reject` or `review`,
   never `accept`, **in each of the seven connectors**; `accept` meets the FR-014
   targets (wrong rate at most 15%, correct pairs kept as `accept`/`review` at
-  least 95%, known-correct `accept` at least 90%) on the labeled samples, **verified
-  by the T-057 fresh check** (at most 5 of 60 `accept` wrong, at most 1 of 40
-  `reject` correct); no abstract `BaseConnector` signature change.
+  least 95%, known-correct `accept` at least 90%) on the labeled samples; **the T-057
+  fresh check passed its pass/fail criterion** (2026-10-15: 1 of 60 `accept` wrong, 1 of 40
+  `reject` correct, the limit; at most 5 and 1 were allowed), but 100 rows cannot confirm the
+  percentage targets: the `reject` side's 95% interval is 0.4%-12.9%, so "correct pairs kept at
+  least 95%" is neither confirmed nor refuted by it (see the accepted recall loss below; at least
+  433 known false rejects); no abstract `BaseConnector` signature change.
 - The re-tag dry run reports before/after counts per ticker and per source,
-  and the real run leaves a restorable backup.
+  and the real run leaves a restorable backup (done: `urls.pre-retag.db`).
+- **Accepted recall loss (T-057 real run):** the frozen rule rejects some pairs whose full
+  company name is in the URL, so they are quarantined, not deleted. **Three causes**
+  (`_name_reason`, `matching.py`): (1) the name is short or an ordinary word once its suffix is
+  removed (`KLA Corporation` becomes `kla`, under `MIN_NAME`; `Southern Company` becomes `southern`;
+  `News Corp` becomes `news`, both in `STOPWORDS`), and the `weak_first_word` fallback has the same
+  floor, so the pair is `reject`, not `review`; (2) a possessive, which URLs write as a trailing
+  `s` (`bank-of-americas`, `dollar-generals`, `trade-desks`), so the whole-word match fails; (3) an
+  `&` in the name that URLs drop (`International Flavors & Fragrances` is searched as `… and
+  fragrances`). **Known (lower bound):** `scripts/known_false_rejects.py` scans the removed list for
+  the name as whole words of the URL path (with and without suffix, `&`, trailing `s`) and finds
+  **at least 433 pairs on 234 URLs** (`NWSA` 201 and `NWS` 199, the same News Corp articles under
+  both tickers; `KLAC` 15; `SO` 11; `BAC` 4; `DG`, `IFF`, `TTD` 1 each), committed in
+  `data/retag_known_false_rejects.csv` and pinned by `tests/scripts/test_known_false_rejects.py`.
+  The 19 hits for `BBY`, `ON`, `T`, `TGT` were read and are not the company (`best-buys`,
+  `on-semiconductors`, `at-t-mobiles`, `target-corporations`), so those article ids, and only
+  those, are left out (`NOISE`). The hand-check row 302365 is one of the KLAC pairs, which is why the `reject` check
+  passed at its limit. **Estimated:** the scan finds one shape only. The hand check had 1 of 40
+  `reject` pairs correct (2.5%, Wilson 95% interval 0.4%-12.9%), i.e. roughly 1,400 to 42,000 of the
+  325,423 (point estimate about 8,100); a 40-row sample cannot say more, so 433 is about a twentieth
+  of the point estimate. The rule is not changed here (it would move every PLAN figure and the
+  frozen samples); `portfolio-nlp` is told not to purge the known ones (T-058 comment). A matcher
+  fix (for example `review` when the full normalized name is in the text, with a possessive and
+  `&` normalization) is a follow-up task (`T-062`): it re-classes those rows with a targeted pass (the re-tag
+  only touches rows with `match_reason IS NULL`) and `release_articles`. It is Work item 12 below, so this
+  item closes at T-059 with a named successor.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
@@ -1107,14 +1135,30 @@ dropped.
   DB sha1s unchanged.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, T-062)
+
+**Status: open, not scheduled (maintainer decides; found by the Work item 10 real run, 2026-10-15).**
+**Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` +
+`NWSA`, `KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1) whose URL carries the company's full name, and the
+hand check estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, scope and the
+current figures are in Work item 10 ("Accepted recall loss"). **What:** a full-name hit is at least `review`
+(never `reject`), with the possessive `s` and `&` normalized; the quarantined rows are re-classed with a
+targeted pass and released when they become `accept`. **Tooling the hand check needs:** the T-057 sheet
+(`data/ticker_retag_check_sample.csv`) joins `EARLIER_SAMPLES` and the `--final` exclusions, and the new draw uses `--final --out <new path>` (the default output is that sheet); the new sheet is drawn from the post-fix classes.
+**Acceptance:** the 433 rows are no longer `reject`, `score_ticker_rules.py --check` is re-measured and
+the PLAN figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, and `portfolio-nlp` gets the new
+removed and `review` counts. No schema change.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
-open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open;
-`portfolio-nlp`'s Work item 15 development waits on it, so it takes priority over any new work,
-alongside the already-active Work item 8. Otherwise there is no ordering constraint from the rest
-of the backlog, since every other `SPEC.md` §13 item is accepted (Non-goals above) and not touched
-by this plan.
+open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open, with `T-057`/`T-058` done:
+`portfolio-nlp` has the quarantine and the hand-off and no longer waits on it, `T-059`/`T-060` remain, and it
+stays a priority alongside the already-active Work item 8. Work item 12 (`T-062`, the matcher follow-up) is
+open but not scheduled and `portfolio-nlp` does not wait on it, so it takes no priority over other work until the
+maintainer schedules it.
+Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
+item is accepted (Non-goals above) and not touched by this plan.
 
 See `TASKS.md` for the discrete, checkable task breakdown.

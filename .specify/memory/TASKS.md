@@ -77,7 +77,7 @@ Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` alrea
 cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
 after the fact; IDs are never reused, so they stay reserved. `T-060` (content-quality
-gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite it.
+gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work item 11, the leaver prices) were added later and are data-mining-only, so `portfolio-nlp` does not cite them.
 
 - [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
@@ -256,7 +256,7 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       (save, status, re-evaluation of a page that was read) is the one post-fetch step used by the
       crawler CLI and both API endpoints; `POST /extract/{id}` answers 409 for a `reject` row.
       `scripts/score_ticker_rules.py --check` exits 0 ("figures match PLAN"; no matcher change since T-056a). Test counts live in the PR description.
-- [ ] **T-057** *(tooling done and dry-run on a corpus copy; the hand-label check and the real run are open)* Re-tag `urls.db`: dry run on a copy (before/after counts per
+- [x] **T-057** *(done 2026-10-15: PR #61 tooling, real run on `urls.db` after the hand check passed)* Re-tag `urls.db`: dry run on a copy (before/after counts per
       ticker and source; count URLs also tagged to a correct ticker), then the
       real run with a restorable backup and a reversible representation
       (quarantine over delete) that `portfolio-nlp`'s pending queries
@@ -285,10 +285,19 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       the 481,332-row corpus (2026-10-15): accept 104,614 / review 51,295 / reject 325,423 (the PLAN figures),
       376,718 articles quarantined, no pending rows (every row already has an article), restoring the flag
       reproduces the backup exactly, a second run changes nothing, integrity and foreign-key checks clean;
-      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. By previous status: `review` 49,645 `ok` / 1,153 `thin_content` / 497 `failed` (only the `ok` ones are decidable by T-132), `reject` 316,243 / 8,197 / 983. `--apply` verifies the result against the plan and exits 1 (no lists) on a mismatch. Open:
-      `data/ticker_retag_check_manual.csv` (100 blind pairs, `ticker_validation_sample.py --final`) is to be hand-labeled,
-      scored with `--verdict`, and only then the real run and the T-058 lists.
-- [ ] **T-058** Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
+      26,044 `reject` and 9,343 `review` URLs are also `accept` for another ticker. By previous status: `review` 49,645 `ok` / 1,153 `thin_content` / 497 `failed` (only the `ok` ones are decidable by T-132), `reject` 316,243 / 8,197 / 983. `--apply` verifies the result against the plan and exits 1 (no lists) on a mismatch. **Real run (2026-10-15):** hand check PASS (60 `accept`: 1 wrong, max 5; 40 `reject`: 1 correct, max 1; 1 `unclear`), sheets
+      committed (`data/ticker_retag_check_*.csv`). `--apply` on `/workspaces/thesis/data/urls.db`, backup `urls.pre-retag.db`: `verified: true`,
+      481,332 rows re-tagged (accept 104,614 / review 51,295 / reject 325,423), 376,718 articles quarantined, lists in
+      `data/retag/` (git-ignored: `removed_articles.csv` 325,423, `review_quarantine.csv` 51,295, `retag_summary.json`). Label vocabulary is `yes`/`no`/`unclear`.
+      The one `reject` row labeled `yes` (id 302365, KLAC `kla-corporation-…-earnings-call-presentation`) is a rule gap, not a
+      one-off, and the check passed at its limit. Three causes: a name that is short or a stopword once the suffix is removed
+      (`kla`, `southern`, `news`; no `review` fallback), a possessive written as a trailing `s` in the slug (`bank-of-americas`), and an `&`
+      the URL drops. `scripts/known_false_rejects.py` (lower bound: the name as whole words of the URL path) finds **at least 433 pairs
+      on 234 URLs** (News Corp 400 as `NWS`+`NWSA`, `KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1), committed in
+      `data/retag_known_false_rejects.csv`, quarantined not deleted; the hand check estimates 2.5% of the `reject` class (95% interval
+      0.4%-12.9%). Accepted as a recall loss in `PLAN.md`, reported to `portfolio-nlp` as "do not purge". Real `urls.db`:
+      `PRAGMA integrity_check` ok, `foreign_key_check` empty.
+- [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection; follow-up comment 2026-10-16 correcting the known false rejects from 28 to at least 433 pairs, `T-062`)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
       (its `T-132` decides them; nothing is excluded on doubt there). **One agreed
@@ -317,7 +326,24 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
-      (constitution AI behavior #12). → acceptance criteria.
+      (constitution AI behavior #12). Also: decide how long `urls.pre-retag.db` (next to `urls.db` in
+      `/workspaces/thesis/data/`) is kept, and who holds the git-ignored `data/retag/` lists
+      (regenerate them with `retag_urls.py --out` on a copy of the backup if lost; the known false rejects are committed).
+      FR-014 is "implemented with the known recall gap in `T-062`", not "done". `T-062` is its own Work item 12 (PLAN), so item 10 closes
+      here and the `CHANGELOG.md` entry names `T-062` as the open successor. → acceptance criteria.
+- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher, so the maintainer schedules it)*
+      Fix the full-name false rejects: at least 433 `reject` pairs on 234 URLs whose URL spells the company
+      out (`data/retag_known_false_rejects.csv`, `PLAN.md` Work item 10 "Accepted recall loss"). Three causes in
+      `matching._name_reason`: a name that is short or a stopword once the suffix is removed (`kla`, `southern`, `news`),
+      a possessive written as a trailing `s` (`bank-of-americas`), and an `&` the URL drops. Make a full-name hit at
+      least `review` (never `reject`), normalize the possessive and `&`, then re-class the quarantined rows with a
+      targeted pass (the re-tag only touches `match_reason IS NULL` rows) and `release_articles` for any that become
+      `accept`. Acceptance: the 433 rows are no longer `reject` (update `known_false_rejects.py --check` and
+      `tests/scripts/test_known_false_rejects.py`), `score_ticker_rules.py --check` is re-measured and `PLAN.md`'s figures
+      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told the new
+      counts of removed and `review` rows (its T-131/T-132 inputs change). Constitution AI behavior #10 does not apply
+      (no schema change). Tooling for that sheet: add `data/ticker_retag_check_sample.csv` to `EARLIER_SAMPLES` and to the
+      `--final` exclusions in `ticker_validation_sample.py`, and draw with `--final --out <new path>` (the default output is the T-057 sheet and must not be overwritten).
 
 ## Status
 
@@ -329,8 +355,12 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62, approved, awaiting merge).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open;
-`portfolio-nlp` waits on it before starting its own category-stage development.
+Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open: `T-057` and
+`T-058` are done (the corpus is re-tagged and quarantined, the hand-off is posted, so `portfolio-nlp` is
+unblocked and no longer waits on this repo); `T-059` (close-out) and `T-060` (content-quality gate) remain.
+
+Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
+maintainer decides when. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
