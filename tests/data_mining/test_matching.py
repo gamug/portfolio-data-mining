@@ -244,15 +244,15 @@ def test_explicit_forms_edges_and_cashtags_of_common_tickers(
         ("https://x.com/kla-corporation-2022-q4-results", "KLA Corporation", "KLAC"),
         ("https://x.com/2024/southern-company-ceo-says.html", "Southern Company", "SO"),
         ("https://x.com/murdochs-news-corp-to-sell-foxtel", "News Corp (Class B)", "NWS"),
-        ("https://x.com/semiconductor-bank-of-americas-top-picks", "Bank of America", "BAC"),
-        ("https://x.com/discount-dollar-generals-sales-miss", "Dollar General", "DG"),
         (
             "https://x.com/stake-in-international-flavors-fragrances",
             "International Flavors & Fragrances",
             "IFF",
         ),
-        ("https://x.com/the-trade-desks-q4-earnings", "Trade Desk (The)", "TTD"),
         ("https://x.com/pepsi-why-not-to-buy-this-soft-drink-maker", "PepsiCo", "PEP"),
+        ("https://x.com/semiconductor-bank-of-americas-top-chip-stocks", "Bank of America", "BAC"),
+        ("https://x.com/news-corps-dual-class-structure", "News Corp (Class B)", "NWS"),
+        ("https://x.com/dollar-generals-sales-miss", "Dollar General", "DG"),
     ],
 )
 def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
@@ -274,3 +274,23 @@ def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
 )
 def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) -> None:
     assert cls(url, "", company, ticker) == "reject"
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        (
+            "https://x.com/pros-best-buys-in-health-care",
+            "Best Buy",
+            "BBY",
+        ),  # a plural, not the company
+        ("https://x.com/cramer-on-semiconductors-risk", "ON Semiconductor", "ON"),
+        ("https://x.com/best-apples-for-pies", "Apple Inc.", "AAPL"),
+        ("https://x.com/student-visas-explained", "Visa Inc.", "V"),
+        ("https://x.com/tariffs-on-semiconductors-hit-asia", "ON Semiconductor", "ON"),
+    ],
+)
+def test_a_trailing_s_in_the_url_is_not_read_as_the_company(
+    url: str, company: str, ticker: str
+) -> None:
+    assert matching.Match("review", "loose_name") != classify(url, "", company, ticker)

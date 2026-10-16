@@ -91,6 +91,10 @@ _SUFFIX = re.compile(
 )
 
 
+# Names whose plural the slug spells like a possessive but is an ordinary phrase (read by hand in the
+# real data, PLAN Work item 12: `best-buys` is a list of picks, not Best Buy, and
+# `on-semiconductors` is a plural, not ON Semiconductor).
+PLURAL_PHRASES = frozenset({"best buy", "on semiconductor"})
 _CAMEL_TAIL = re.compile(
     r"(?<=[a-z])(?:Corp|Co)$"
 )  # PepsiCo, KeyCorp: a capital tail on a lower-case letter
@@ -169,30 +173,41 @@ def _name_reason(
     return None
 
 
+def _kept_name(company: str) -> str:
+    """The lower-case name with its corporate suffix kept and ``(Class B)`` gone."""
+    return " ".join(flat(re.sub(r"\([^)]*\)", " ", company)).split())
+
+
+def _spelled_enough(form: str) -> bool:
+    """A form is safe to look for on its own: two words or more, or one distinctive word."""
+    return len(form.split()) >= MIN_WORDS or (len(form) >= MIN_NAME and form not in STOPWORDS)
+
+
 def _loose_name(company: str, text: str) -> bool:
     """The company's name as a URL spells it, a weaker sign than the exact name (``review``).
 
-    Three spellings the exact check misses (PLAN Work item 12): the name with its corporate
-    suffix kept (``kla-corporation``, ``southern-company``, ``news-corp``), the name followed by
-    a trailing ``s`` (``bank-of-americas``, a possessive that a slug cannot tell from a plural),
-    the name with the ``and`` of an ``&`` dropped (``flavors-fragrances``), and the brand of a
-    camel-case name (``pepsi`` for ``PepsiCo``; only a capital ``Co``/``Corp`` tail counts, so
-    ``Costco`` and ``Cisco`` are not cut). A single word is never enough on its own: it must be
-    distinctive, or the match must span two words or more.
+    Spellings the exact check misses (PLAN Work item 12): the name with its corporate suffix kept
+    (``kla-corporation``, ``southern-company``, ``news-corp``), the name with the ``and`` of an ``&``
+    dropped (``flavors-fragrances``), and the brand of a camel-case name (``pepsi`` for ``PepsiCo``;
+    only a capital ``Co``/``Corp`` tail counts, so ``Costco`` and ``Cisco`` are not cut). A trailing
+    ``s`` of a possessive is read (``news-corps-dual-class``, ``bank-of-americas-ceo``; 45 of the 433
+    known false rejects) only for a name of two words or more, because a slug writes a plural the same
+    way (``apples`` and ``visas`` are nouns), and not for a name in `PLURAL_PHRASES`, the phrases read
+    by hand in the real data. A single word
+    is never enough on its own: it must be distinctive, or the match must span two words or more.
     """
     flat_text = flat(text)
     name = full_name(company)
-    kept = " ".join(
-        flat(re.sub(r"\([^)]*\)", " ", company)).split()
-    )  # suffix kept, "(Class B)" gone
     brand = flat(_CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())).strip()
-    forms = {name, name.replace(" and ", " "), kept, brand}
+    forms = {name, name.replace(" and ", " "), _kept_name(company), brand}
     for form in forms:
-        multi = len(form.split()) >= MIN_WORDS
-        distinctive = len(form) >= MIN_NAME and form not in STOPWORDS
-        if not form or not (multi or distinctive):
+        if not form or not _spelled_enough(form):
             continue
-        if f" {form} " in flat_text or f" {form}s " in flat_text:
+        if f" {form} " in flat_text:
+            return True
+        words = form.split()
+        possessive_safe = len(words) >= MIN_WORDS and form not in PLURAL_PHRASES
+        if possessive_safe and f" {form}s " in flat_text:
             return True
     return False
 
