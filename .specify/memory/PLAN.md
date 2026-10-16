@@ -1075,7 +1075,7 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   of the point estimate. The rule is not changed here (it would move every PLAN figure and the
   frozen samples); `portfolio-nlp` is told not to purge the known ones (T-058 comment). A matcher
   fix (for example `review` when the full normalized name is in the text, with a possessive and
-  `&` normalization) is a follow-up task: it re-classes those rows with a targeted pass (the re-tag
+  `&` normalization) is a follow-up task (`T-061`): it re-classes those rows with a targeted pass (the re-tag
   only touches rows with `match_reason IS NULL`) and `release_articles`.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.

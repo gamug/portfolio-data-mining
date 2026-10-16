@@ -215,6 +215,13 @@ article quarantined, nothing non-`accept` readable or pending) and exits 1 witho
 `review_quarantine.csv` (T-132's selection with the evidence), both with `match_class`, `match_reason` and `prev_fetch_status`
 columns (`ok` = a readable body; `failed`/`thin_content` articles cannot be judged by `portfolio-nlp` T-132, so T-058 reports the
 decidable share; `retag_summary.json` has the counts per previous status), and `retag_summary.json`; `data/retag/` is git-ignored (regenerated, hundreds of thousands of rows).
+**Known false rejects.** The frozen rule rejects some pairs whose URL spells the company out (a name that is short or an
+ordinary word once its suffix is removed, a possessive `s`, an `&` the URL drops; PLAN Work item 10).
+`PYTHONPATH=src uv run python scripts/known_false_rejects.py` scans `data/retag/removed_articles.csv` for the name as whole words of
+the URL path and writes `data/retag_known_false_rejects.csv` (committed: 433 pairs on 234 URLs, a lower bound; the hand check
+estimates 2.5% of the `reject` class, interval 0.4%-12.9%); `--check` exits 1 when the file differs from the scan. The 19 reviewed
+non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-061` fixes the matcher.
+
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
 

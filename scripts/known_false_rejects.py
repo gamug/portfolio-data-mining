@@ -10,9 +10,9 @@ of whole words of the URL path. A trailing ``s`` cannot tell a possessive from a
 hits were read by hand once: ``NOISE`` holds the 19 article ids that are not the company
 (``best-buys`` is a list of picks, ``on-semiconductors`` a plural, ``at-t-mobiles`` is T-Mobile,
 ``target-corporations`` a noun), keyed by id so only what was read is left out and a later hit for
-the same ticker still counts. The committed ``data/retag_known_false_rejects.csv`` is the scan without
-them. It is a lower bound: a
-name the URL abbreviates, reorders or leaves to the title is not found.
+the same ticker still counts. The committed ``data/retag_known_false_rejects.csv`` is the scan
+without them. It is a lower bound: a name the URL abbreviates, reorders or leaves to the title is
+not found.
 
 Usage:
     PYTHONPATH=src uv run python scripts/known_false_rejects.py [--removed PATH] [--out PATH]
