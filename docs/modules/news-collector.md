@@ -220,10 +220,46 @@ ordinary word once its suffix is removed, a possessive `s`, an `&` the URL drops
 `PYTHONPATH=src uv run python scripts/known_false_rejects.py` scans `data/retag/removed_articles.csv` for the name as whole words of
 the URL path and writes `data/retag_known_false_rejects.csv` (committed: 433 pairs on 234 URLs, a lower bound; the hand check
 estimates 2.5% of the `reject` class, interval 0.4%-12.9%); `--check` exits 1 when the file differs from the scan. The 19 reviewed
-non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-062` fixes the matcher.
+non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-062` (below) fixes the matcher.
 
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
+
+## Re-class the rejected pairs (T-062)
+
+The matcher reads a name the URL spells loosely as `review` with reason `loose_name`, never `reject`: the
+name with its corporate suffix kept (`kla-corporation`, `news-corp`), with the `and` of an `&` dropped,
+the brand of a camel-case name (`pepsi` for `PepsiCo`; only a capital `Co`/`Corp` tail is cut, so `Costco`
+is not), and a slug's possessive `s` (`bank-of-americas`) only for a name of two words or more outside
+`matching.PLURAL_PHRASES` (`best-buys` and `on-semiconductors` are plurals). A single word must be
+distinctive. The re-tag only touched `match_reason IS NULL` rows, so the pairs rejected earlier keep
+`reject`; `scripts/reclass_rejects.py` classes them again and promotes the ones the matcher no longer
+rejects (a class is only ever promoted; a `skipped` row goes back to `pending`; `sync_quarantine` runs after).
+
+```
+PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db                      # dry run
+PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --apply --backup NEW.db
+PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --revert data/retag/reclass_promoted.csv --backup NEW2.db
+```
+
+The dry run is read-only (a few minutes on the 2 GB file) and prints `promotions`, `by_class`, `by_reason`,
+`by_status` (the discovery status of the promoted rows), `skipped_back_to_pending`,
+`promoted_with_a_quarantined_article`, `top_tickers`, `predicted_sync` (`quarantined`, `released`: what the
+sync will print) and `api_rejects_left_alone`. `--apply` needs a backup path that does not exist and refuses a
+busy database, a disk that cannot hold the copy, an existing or unwritable audit list, and a database whose
+fingerprint (row counts, highest ids, rows per status and per class) moved since the plan; it checks the
+copy (fingerprint, `quick_check`) and prints its SHA-256, and warns when `-wal` is not empty. Stop the
+collector and the crawler first. It writes the audit list (`data/retag/reclass_promoted.csv`, git-ignored;
+`--list` to move it) before changing anything; `--revert LIST` puts back the old class, reason and status of
+the rows that still hold what the run wrote, then syncs. If the process dies between the promotions and the
+sync, `--apply` again (no backup is asked for when nothing is left to promote) runs the sync.
+
+A promoted pair is `review`, so its article stays quarantined and `portfolio-nlp` reads exactly what it read
+before; the counts that change are `reject` and `review`. `scripts/loose_name_precision.py sample` draws 30
+promoted pairs (News Corp 10, the rest 20) for a person to label and `summary` scores them, so releasing a
+subset to `accept` is decided on a measured share, not assumed. A labeled check sheet goes stale when the
+matcher changes: `ticker_validation_sample.py --refresh SHEET --db urls.db` keeps every row whose class
+still holds (with its label) and replaces only the others, which a person then labels.
 
 ## Content-quality gate (T-060)
 

@@ -75,8 +75,9 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
       targeted pass (the re-tag only touches `match_reason IS NULL` rows) and `release_articles` for any that become
       `accept`. Acceptance: the 433 rows are no longer `reject` (update `known_false_rejects.py --check` and
       `tests/scripts/test_known_false_rejects.py`), `score_ticker_rules.py --check` is re-measured and `PLAN.md`'s figures
-      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told the new
-      counts of removed and `review` rows (its T-131/T-132 inputs change). Constitution AI behavior #10 does not apply
+      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told what changes for it:
+      the `reject` count falls and the `review` count rises by the promoted pairs, while the rows it can read do not change (a
+      promoted pair is `review`, so its article stays quarantined) unless the maintainer decides to release a subset to `accept`. Constitution AI behavior #10 does not apply
       (no schema change). Tooling for that sheet: add `data/ticker_retag_check_sample.csv` to `EARLIER_SAMPLES` and to the
       `--final` exclusions in `ticker_validation_sample.py`, and draw with `--final --out <new path>` (the default output is the T-057 sheet and must not be overwritten).
 
@@ -92,8 +93,8 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62).
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
 Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in progress (scheduled 2026-10-16):
-matcher and `scripts/reclass_rejects.py` are written, the hand-check sheet is labeled and passed (for the rule
-before the PepsiCo fix), the real re-class run and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
+matcher and `scripts/reclass_rejects.py` are written, the hand-check sheet was refreshed for the shipped rule (one
+row to label), the `loose_name` precision sample is drawn and unlabeled, the real re-class run and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import hashlib
 import importlib.util
 import json
 import sqlite3
@@ -37,6 +39,11 @@ ROWS = [
     (3, "https://x.com/bank-of-americas-picks", "BAC", "Bank of America", "sitemap", "skipped"),
     (4, "https://x.com/feed-item", "MSFT", "Microsoft", "api", "fetched"),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _audit_list_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reclass, "DEFAULT_LIST", str(tmp_path / "audit" / "list.csv"))
 
 
 @pytest.fixture
@@ -130,10 +137,11 @@ def test_apply_writes_nothing_when_the_database_moved_since_the_plan(
     real_backup = reclass._backup
 
     def backup_then_a_collector_writes(
-        db_path: Path, backup: Path, expected: tuple[int, int]
-    ) -> None:
-        real_backup(db_path, backup, expected)
+        db_path: Path, backup: Path, expected: tuple[object, ...]
+    ) -> str:
+        sha = real_backup(db_path, backup, expected)
         _insert_row(db_path)
+        return sha
 
     monkeypatch.setattr(reclass, "_backup", backup_then_a_collector_writes)
     before = _rows(db_file)
@@ -177,18 +185,18 @@ def test_a_copy_that_does_not_match_the_plan_is_removed_and_nothing_is_written(
 ) -> None:
     backup = tmp_path / "b.db"
 
-    real = reclass._counts
+    real = reclass._fingerprint
     calls = {"n": 0}
 
-    def counts_then_a_bad_copy(con: sqlite3.Connection) -> tuple[int, int]:
+    def counts_then_a_bad_copy(con: sqlite3.Connection) -> tuple[object, ...]:
         calls["n"] += 1
         if calls["n"] == 2:  # the read of the finished copy
-            return (0, 0)
+            return ((0, 0),)
         return real(con)
 
-    monkeypatch.setattr(reclass, "_counts", counts_then_a_bad_copy)
+    monkeypatch.setattr(reclass, "_fingerprint", counts_then_a_bad_copy)
 
-    with pytest.raises(SystemExit, match="backup holds"):
+    with pytest.raises(SystemExit, match="does not match the plan"):
         reclass.main(["--db", str(db_file), "--apply", "--backup", str(backup)])
 
     assert not backup.exists()
@@ -280,3 +288,207 @@ def test_the_predicted_sync_counts_only_articles_that_exist_and_are_held_back(
     assert capsys.readouterr().out.strip().splitlines()[-1] == (
         "promoted 3 rows; quarantined 0, released 1"
     )
+
+
+def _articles(path: Path) -> dict[int, str]:
+    with sqlite3.connect(path) as con:
+        return dict(con.execute("SELECT id, fetch_status FROM articles"))
+
+
+def test_apply_stops_when_a_status_flipped_after_the_plan_even_if_no_row_was_added(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crawler changing an existing row leaves every row count as it was; the fingerprint sees it."""
+    real_backup = reclass._backup
+
+    def backup_then_the_crawler_flips_a_status(
+        db_path: Path, backup: Path, expected: tuple[object, ...]
+    ) -> str:
+        sha = real_backup(db_path, backup, expected)
+        with sqlite3.connect(db_path) as con:
+            con.execute("UPDATE discovered_urls SET status = 'failed' WHERE id = 1")
+        return sha
+
+    monkeypatch.setattr(reclass, "_backup", backup_then_the_crawler_flips_a_status)
+
+    with pytest.raises(SystemExit, match="changed since the plan"):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    assert _rows(db_file)[1] == ("reject", "none", "failed")  # promoted nothing
+
+
+def test_apply_saves_the_audit_list_and_never_overwrites_one(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing = tmp_path / "audit.csv"
+    args = [
+        "--db",
+        str(db_file),
+        "--apply",
+        "--backup",
+        str(tmp_path / "b.db"),
+        "--list",
+        str(listing),
+    ]
+    assert reclass.main(args) == 0
+    rows = {r["id"]: r for r in csv.DictReader(listing.open())}
+
+    assert set(rows) == {"1", "3"}
+    assert rows["1"]["old_class"] == "reject" and rows["1"]["new_class"] == "review"
+    assert (rows["1"]["old_status"], rows["1"]["new_status"]) == ("fetched", "fetched")
+    assert (rows["3"]["old_status"], rows["3"]["new_status"]) == ("skipped", "pending")
+    assert rows["1"]["article_id"] == "1" and rows["3"]["article_id"] == ""
+    assert rows["1"]["article_fetch_status"] == "quarantined"
+    out = capsys.readouterr().out
+    assert f"audit list {listing} (2 rows)" in out
+    assert "sha256 " + hashlib.sha256((tmp_path / "b.db").read_bytes()).hexdigest() in out
+
+
+def test_an_existing_audit_list_or_an_unwritable_one_stops_before_any_write(
+    db_file: Path, tmp_path: Path
+) -> None:
+    kept = tmp_path / "kept.csv"
+    kept.write_text("custody")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    before = _rows(db_file)
+
+    with pytest.raises(SystemExit, match="exists"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--list",
+                str(kept),
+            ]
+        )
+    with pytest.raises(SystemExit, match="cannot write"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "c.db"),
+                "--list",
+                str(blocker / "x.csv"),
+            ]
+        )
+
+    assert kept.read_text() == "custody"
+    assert _rows(db_file) == before
+
+
+def test_revert_puts_the_rows_back_and_leaves_a_row_changed_since_alone(
+    db_file: Path, tmp_path: Path
+) -> None:
+    listing = tmp_path / "audit.csv"
+    original, original_articles = _rows(db_file), _articles(db_file)
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+    assert _rows(db_file) != original
+
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
+        )
+        == 0
+    )
+
+    assert _rows(db_file) == original  # class, reason and status (skipped again) as before
+    assert _articles(db_file) == original_articles
+
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b2.db"),
+            "--list",
+            str(tmp_path / "second.csv"),
+        ]
+    )
+    with sqlite3.connect(db_file) as con:  # a person re-classed row 1 meanwhile
+        con.execute(
+            "UPDATE discovered_urls SET match_class = 'accept', match_reason = 'hand' WHERE id = 1"
+        )
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--revert",
+            str(tmp_path / "second.csv"),
+            "--backup",
+            str(tmp_path / "r2.db"),
+        ]
+    )
+
+    assert _rows(db_file)[1][:2] == ("accept", "hand")  # not what the run wrote: untouched
+    assert _rows(db_file)[3] == ("reject", "none", "skipped")
+
+
+def test_revert_needs_a_new_backup(db_file: Path, tmp_path: Path) -> None:
+    listing = tmp_path / "audit.csv"
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+
+    assert reclass.main(["--db", str(db_file), "--revert", str(listing)]) == 1
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "b.db")]
+        )
+        == 1
+    )
+
+
+def test_a_nonempty_wal_or_a_fresh_shm_is_warned_about(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = tmp_path / "x.db"
+    fake.write_text("")
+    (tmp_path / "x.db-wal").write_text("frames")
+    (tmp_path / "x.db-shm").write_text("index")
+
+    reclass._warn_live_writer(fake)
+
+    err = capsys.readouterr().err
+    assert "x.db-wal is not empty" in err
+    assert "x.db-shm changed in the last" in err
+
+
+def test_the_lookups_are_chunked_and_the_backup_directory_is_created(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(reclass, "CHUNK", 1)  # one id per IN (...) query
+
+    reclass.main(["--db", str(db_file)])
+    assert json.loads(capsys.readouterr().out)["by_status"] == {"fetched": 1, "skipped": 1}
+
+    nested = tmp_path / "a" / "b" / "backup.db"
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(nested)]) == 0
+    assert nested.is_file()
