@@ -294,3 +294,26 @@ def test_a_trailing_s_in_the_url_is_not_read_as_the_company(
     url: str, company: str, ticker: str
 ) -> None:
     assert matching.Match("review", "loose_name") != classify(url, "", company, ticker)
+
+
+# The 11 names of the real universe (506 company names in `urls.db`) whose last word ends in "co" or
+# "corp": the camel-case rule must cut exactly two of them.
+CO_ENDING_NAMES = [
+    "Costco",
+    "Cisco",
+    "Fifth Third Bancorp",
+    "Invesco",
+    "KeyCorp",
+    "Kimco Realty",
+    "Labcorp",
+    "Masco",
+    "PepsiCo",
+    "Sysco",
+    "U.S. Bancorp",
+]
+
+
+def test_the_camel_case_tail_cuts_only_pepsico_and_keycorp() -> None:
+    cut = [n for n in CO_ENDING_NAMES if matching._CAMEL_TAIL.search(n)]
+
+    assert cut == ["KeyCorp", "PepsiCo"]

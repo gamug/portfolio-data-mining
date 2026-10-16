@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -109,6 +110,131 @@ def test_apply_needs_a_backup_that_does_not_exist(db_file: Path, tmp_path: Path)
     assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(existing)]) == 1
     assert existing.read_text() == "keep"
     assert _rows(db_file)[1][0] == "reject"
+
+
+def _insert_row(path: Path) -> None:
+    with sqlite3.connect(path) as con:
+        con.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, discovered_at,"
+            " status, match_class, match_reason) VALUES (99, 'https://x.com/z', 'x.com', 'Z', 'Z',"
+            " 'sitemap', 'now', 'pending', 'reject', 'none')"
+        )
+
+
+def test_apply_writes_nothing_when_the_database_moved_since_the_plan(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The baseline is the counts taken with the plan, so a row added while the plan or the backup
+    ran (a collector left running) stops the apply; the old check compared two reads microseconds apart."""
+    real_backup = reclass._backup
+
+    def backup_then_a_collector_writes(
+        db_path: Path, backup: Path, expected: tuple[int, int]
+    ) -> None:
+        real_backup(db_path, backup, expected)
+        _insert_row(db_path)
+
+    monkeypatch.setattr(reclass, "_backup", backup_then_a_collector_writes)
+    before = _rows(db_file)
+
+    with pytest.raises(SystemExit, match="changed since the plan"):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    assert _rows(db_file) == {**before, 99: ("reject", "none", "pending")}
+
+
+def test_apply_refuses_a_busy_database_before_it_copies_anything(
+    db_file: Path, tmp_path: Path
+) -> None:
+    holder = sqlite3.connect(db_file, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(SystemExit, match="busy"):
+            reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+
+    assert not (tmp_path / "b.db").exists()
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def test_apply_refuses_when_the_disk_cannot_hold_the_copy(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reclass.shutil, "disk_usage", lambda _p: type("U", (), {"free": 10})())
+
+    with pytest.raises(SystemExit, match="not enough disk"):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    assert not (tmp_path / "b.db").exists()
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def test_a_copy_that_does_not_match_the_plan_is_removed_and_nothing_is_written(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup = tmp_path / "b.db"
+
+    real = reclass._counts
+    calls = {"n": 0}
+
+    def counts_then_a_bad_copy(con: sqlite3.Connection) -> tuple[int, int]:
+        calls["n"] += 1
+        if calls["n"] == 2:  # the read of the finished copy
+            return (0, 0)
+        return real(con)
+
+    monkeypatch.setattr(reclass, "_counts", counts_then_a_bad_copy)
+
+    with pytest.raises(SystemExit, match="backup holds"):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(backup)])
+
+    assert not backup.exists()
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def test_a_crash_between_the_commit_and_the_sync_is_finished_by_a_rerun_without_a_backup(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def crash(_db: object) -> tuple[int, int]:
+        raise RuntimeError("killed")
+
+    monkeypatch.setattr(reclass, "sync_quarantine", crash)
+    with pytest.raises(RuntimeError):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+    assert _rows(db_file)[1][:2] == ("review", "loose_name")  # promotions are in
+
+    monkeypatch.undo()
+    assert (
+        reclass.main(["--db", str(db_file), "--apply"]) == 0
+    )  # nothing to promote: no backup needed
+    with sqlite3.connect(db_file) as con:
+        status = con.execute("SELECT fetch_status FROM articles WHERE id = 1").fetchone()[0]
+    assert status == "quarantined"
+
+
+def test_apply_with_something_to_promote_needs_a_backup(db_file: Path) -> None:
+    assert reclass.main(["--db", str(db_file), "--apply"]) == 1
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def test_the_dry_run_reports_status_tickers_and_the_sync_it_will_run(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reclass.main(["--db", str(db_file)])
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["by_status"] == {"fetched": 1, "skipped": 1}
+    assert report["skipped_back_to_pending"] == 1
+    assert report["promoted_with_a_quarantined_article"] == 1
+    assert report["top_tickers"] == {"KLAC": 1, "BAC": 1}
+    assert report["api_rejects_left_alone"] == 1
+    assert report["predicted_sync"] == {"quarantined": 0, "released": 0}
+
+    reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+    applied = capsys.readouterr().out.strip().splitlines()[-1]
+    assert applied == "promoted 2 rows; quarantined 0, released 0"
 
 
 def test_the_t057_sheet_is_not_its_own_earlier_sample() -> None:
