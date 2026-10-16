@@ -225,6 +225,23 @@ non-company hits are `NOISE` (by article id). The rows are quarantined, not dele
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
 
+## Content-quality gate (T-060)
+
+`extractor.parse.wall_kind` classifies a login wall, bot challenge or subscribe prompt that passes the length
+check from the first 300 characters of the body: a challenge is `failed`, a login/subscribe prompt is
+`paywalled`, neither is ever `ok` (see `news-crawler.md`). Audit the stored `ok` rows (read-only, per domain:
+walls, under the word floor, duplicate bodies; exit 1 on a wall or an under-floor row). Rows quarantined from
+`ok` are audited too (`held`, `held walls` columns), because releasing a quarantined pair restores `ok`:
+
+```bash
+PYTHONPATH=src uv run python scripts/audit_article_quality.py --db /path/to/urls.db
+PYTHONPATH=src uv run python scripts/audit_article_quality.py --db /path/to/urls.db --list  # ids of ok / held walls
+PYTHONPATH=src uv run python scripts/audit_article_quality.py --db /path/to/urls.db --by-status  # detector hits per fetch_status
+```
+
+To re-fetch the listed ids, set their `discovered_urls.status` back to `pending` and run
+`cli/news_crawler_cli.py`.
+
 ## Testing
 
 ```bash

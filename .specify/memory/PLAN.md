@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-059`–`T-060` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
+**Status: closed 2026-10-16 (`T-053`–`T-060`; tasks moved to `CHANGELOG.md`). `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-060` done (wall detector in the extractor and a per-domain audit); `T-059` done (close-out 2026-10-16); the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -768,7 +768,7 @@ bot-challenge and empty bodies seen in the labeling sheet are all rows with
 `failed`/`thin_content`), so no wall has propagated. The `ft.com`,
 `investing.com`, `nasdaq.com` and `stocktwits.com` rows are 100% non-`ok` (no
 article body at all). The remaining risk is a wall page that passes as `ok`
-because only the length is checked, tracked as `T-060`.
+because only the length is checked; `T-060` closed it (the extractor now stores a wall as `failed` (challenge) or `paywalled` (login prompt), and `scripts/audit_article_quality.py` audits the `ok` rows).
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
@@ -1077,16 +1077,17 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
   fix (for example `review` when the full normalized name is in the text, with a possessive and
   `&` normalization) is a follow-up task (`T-062`): it re-classes those rows with a targeted pass (the re-tag
   only touches rows with `match_reason IS NULL`) and `release_articles`. It is Work item 12 below, so this
-  item closes at T-059 with a named successor.
+  item closed at T-059 (2026-10-16) with a named successor.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
-  queries.
+  queries. *Status at close (2026-10-16): hand-off posted on `portfolio-nlp` #102 (`T-058`); their
+  confirmation has not arrived. It is theirs to give (its `T-132`) and does not block this item.*
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
   item 10 and FR-014, `docs/modules/news-collector.md` and the architecture artifacts
   reconciled (constitution AI behavior #11, never renamed).
 
 ## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (code + data, cross-repo origin, T-061)
 
-**Status: closed 2026-10-16 (PR #62, approved; awaiting merge); task moved to `CHANGELOG.md`.**
+**Status: closed 2026-10-16 (PR #62, merged); task moved to `CHANGELOG.md`.**
 
 **Why**: `portfolio-financial-analysis` (its `T-100` full-universe run, raised by
 `T-153` parts 2–3; request `gamug/portfolio-financial-analysis/docs/upstream_requests/data_mining_leaver_prices.md`)
@@ -1151,11 +1152,10 @@ removed and `review` counts. No schema change.
 
 ## Sequencing
 
-Work items 3, 4, 5, 6, 7, 9 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
+Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
-open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open, with `T-057`/`T-058` done:
-`portfolio-nlp` has the quarantine and the hand-off and no longer waits on it, `T-059`/`T-060` remain, and it
-stays a priority alongside the already-active Work item 8. Work item 12 (`T-062`, the matcher follow-up) is
+open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
+quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
 open but not scheduled and `portfolio-nlp` does not wait on it, so it takes no priority over other work until the
 maintainer schedules it.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13

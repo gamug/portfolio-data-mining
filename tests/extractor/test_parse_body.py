@@ -1,8 +1,12 @@
+import pytest
+
 from extractor.parse import (
     detect_language,
     extract_body_text,
     is_probably_paywalled,
     is_thin_content,
+    is_wall_page,
+    wall_kind,
     word_count,
 )
 
@@ -73,3 +77,101 @@ def test_detect_language_identifies_english() -> None:
 
 def test_detect_language_returns_none_for_empty_text() -> None:
     assert detect_language("") is None
+
+
+# --- wall detector (T-060) ---
+
+_PROSE = "Shares rose as analysts weighed the results. " * 30  # well over 200 words
+
+
+def test_wall_phrase_at_the_start_of_a_long_body_is_a_wall() -> None:
+    assert is_wall_page("Just a moment... " + _PROSE)
+    assert is_wall_page("Security Verification\nVerify you are human. " + _PROSE)
+
+
+def test_wall_phrase_deep_in_a_long_article_is_not_a_wall() -> None:
+    prose = _PROSE + "Wait just a moment, the CEO said, before the unusual traffic of buyers."
+    assert not is_wall_page(prose)  # the CNBC false positives: normal prose, not a challenge page
+
+
+def test_wall_phrase_deep_in_a_short_article_is_not_a_wall() -> None:
+    body = ("Headlines of the day. " * 30) + "Access denied to the plant, a spokesman said."
+    assert not is_wall_page(body)  # 90+ words, so it is not thin, and the phrase is not at the head
+
+
+def test_wall_kind_separates_a_challenge_from_a_login_prompt() -> None:
+    assert wall_kind("Just a moment... " + _PROSE) == "failed"  # transient: retried
+    assert (
+        wall_kind("Subscribe to continue reading. " + _PROSE) == "paywalled"
+    )  # gated: not retried
+    assert wall_kind(_PROSE) is None
+
+
+def test_an_ordinary_article_is_not_a_wall() -> None:
+    assert not is_wall_page(_PROSE)
+    assert not is_wall_page("")
+
+
+# --- real excerpts from the 2026-10 urls.db (T-060): what is and is not a wall ---
+
+_REAL_WALL = (  # ft.com, 578 `failed` + 198 quarantined rows look like this
+    "Security Verification\nFor help please visit help.ft.com. We apologise for any inconvenience.\n"
+    "The following information can help our support team to resolve this issue.\n- Reason\n- Challenge\n"
+    "- Request ID\n- a2b869f5af68f78e\n- Status Code\n- 403"
+)
+_REAL_PROSE = {
+    "momentary blip (cnbc, head)": (
+        "The markets are losing steam today as the one-month anniversary of the summer rally comes "
+        "and goes. Is this just a momentary blip on the radar or is it the start of the 2009 summer sell-off?"
+    ),
+    "unusual traffic (cnbc, head)": (
+        "Twitter shares fell almost 7 percent on Monday after the company said it was investigating "
+        "unusual traffic that might be from state-sponsored hackers and a security firm said hackers "
+        "used the platform to try to steal user data."
+    ),
+    "for just a moment (cnbc, head, id 78699)": (
+        "For just a moment, mentally fast-forward ahead 12 months and imagine that it's now the end of "
+        "2014. As you look back on the year, what do you hope will have happened at work?"
+    ),
+    "just a moment (cnbc, deep)": (
+        "ANDY JASSY: A lot of them. Thanks for having me.\nSORKIN: It's very nice to have you here and "
+        "I want to talk about your letter in just a moment because it is a major piece of the news."
+    ),
+    "access denied (cnbc, deep)": (
+        'But before I could, my screen said "Access denied" alongside an "error code 1020" message. '
+        "Care Access denied the allegations of quality violations."
+    ),
+    "captcha (cnbc)": (
+        'some retail websites use what\'s known as a "CAPTCHA" typically a distorted string of letters'
+    ),
+}
+
+
+def test_a_real_ft_challenge_page_is_a_wall() -> None:
+    assert wall_kind(_REAL_WALL) == "failed"
+
+
+@pytest.mark.parametrize("text", _REAL_PROSE.values(), ids=_REAL_PROSE.keys())
+def test_real_cnbc_prose_with_a_wall_phrase_is_not_a_wall(text: str) -> None:
+    # as in the real pages, the "deep" phrases sit well past the first 300 characters
+    assert wall_kind(_PROSE + text) is None
+
+
+@pytest.mark.parametrize("key", [k for k in _REAL_PROSE if "deep" not in k], ids=lambda k: k)
+def test_real_cnbc_prose_with_a_phrase_in_its_head_is_not_a_wall(key: str) -> None:
+    assert wall_kind(_REAL_PROSE[key]) is None  # the phrase is inside the first 300 characters
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Just a momentary lapse of reason hit shares on Monday. ", "Access deniedly, he said. "],
+)
+def test_a_body_that_opens_with_a_longer_word_is_not_a_wall(body: str) -> None:
+    assert wall_kind(body + _PROSE) is None
+
+
+@pytest.mark.parametrize(
+    "body", ["Just a moment... ", '"Just a moment" ', "## Just a moment\n", "\n  Access denied. "]
+)
+def test_a_body_that_opens_with_the_challenge_message_is_a_wall(body: str) -> None:
+    assert wall_kind(body + _PROSE) == "failed"
