@@ -236,3 +236,37 @@ def test_explicit_forms_edges_and_cashtags_of_common_tickers(
     title: str, company: str, ticker: str, expected: str
 ) -> None:
     assert cls("https://x.com/news/story", title, company, ticker) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        ("https://x.com/kla-corporation-2022-q4-results", "KLA Corporation", "KLAC"),
+        ("https://x.com/2024/southern-company-ceo-says.html", "Southern Company", "SO"),
+        ("https://x.com/murdochs-news-corp-to-sell-foxtel", "News Corp (Class B)", "NWS"),
+        ("https://x.com/semiconductor-bank-of-americas-top-picks", "Bank of America", "BAC"),
+        ("https://x.com/discount-dollar-generals-sales-miss", "Dollar General", "DG"),
+        (
+            "https://x.com/stake-in-international-flavors-fragrances",
+            "International Flavors & Fragrances",
+            "IFF",
+        ),
+        ("https://x.com/the-trade-desks-q4-earnings", "Trade Desk (The)", "TTD"),
+    ],
+)
+def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
+    url: str, company: str, ticker: str
+) -> None:
+    assert classify(url, "", company, ticker) == matching.Match("review", "loose_name")
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        ("https://x.com/southern-states-weather", "Southern Company", "SO"),  # lone stopword
+        ("https://x.com/latest-news-today", "News Corp (Class A)", "NWSA"),  # lone ordinary word
+        ("https://x.com/kla-news", "KLA Corporation", "KLAC"),  # name split by other words
+    ],
+)
+def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) -> None:
+    assert cls(url, "", company, ticker) == "reject"

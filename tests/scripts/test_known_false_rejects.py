@@ -91,12 +91,12 @@ def test_the_noise_ids_are_not_in_the_committed_file() -> None:
     assert not ids & set(scan_mod.NOISE)
 
 
-def test_the_committed_file_is_the_pairs_the_frozen_rule_rejects() -> None:
+def test_the_committed_file_is_the_pairs_the_t057_rule_rejected() -> None:
     with _SHEET.open(newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
 
     assert rows
     assert len({r["article_id"] for r in rows}) == len(rows)
     assert all(scan_mod.in_url(r["company"], r["url"]) for r in rows)
-    # pins today's behaviour: a matcher fix changes this, then re-class and release the articles
-    assert {classify(r["url"], "", r["company"], r["ticker"]).cls for r in rows} == {"reject"}
+    # T-062: the matcher no longer rejects them (they are `review`: quarantined, never excluded)
+    assert {classify(r["url"], "", r["company"], r["ticker"]).cls for r in rows} == {"review"}

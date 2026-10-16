@@ -42,6 +42,7 @@ CLASS_RANK: dict[MatchClass, int] = {"reject": 0, "review": 1, "accept": 2}
 WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
 
 MIN_NAME = 4
+MIN_WORDS = 2  # a loose name match spans two words or more, or the name is distinctive
 MIN_TICKER = 3
 MIN_SHORT_TICKER = 2
 
@@ -163,6 +164,31 @@ def _name_reason(
     return None
 
 
+def _loose_name(company: str, text: str) -> bool:
+    """The company's name as a URL spells it, a weaker sign than the exact name (``review``).
+
+    Three spellings the exact check misses (PLAN Work item 12): the name with its corporate
+    suffix kept (``kla-corporation``, ``southern-company``, ``news-corp``), the name followed by
+    a trailing ``s`` (``bank-of-americas``, a possessive that a slug cannot tell from a plural),
+    and the name with the ``and`` of an ``&`` dropped (``flavors-fragrances``). A single word is
+    never enough on its own: it must be distinctive, or the match must span two words or more.
+    """
+    flat_text = flat(text)
+    name = full_name(company)
+    kept = " ".join(
+        flat(re.sub(r"\([^)]*\)", " ", company)).split()
+    )  # suffix kept, "(Class B)" gone
+    forms = {name, name.replace(" and ", " "), kept}
+    for form in forms:
+        multi = len(form.split()) >= MIN_WORDS
+        distinctive = len(form) >= MIN_NAME and form not in STOPWORDS
+        if not form or not (multi or distinctive):
+            continue
+        if f" {form} " in flat_text or f" {form}s " in flat_text:
+            return True
+    return False
+
+
 def name_in(
     company: str,
     ticker: str,
@@ -203,6 +229,8 @@ def _weak(
         return Match("review", "cashtag")
     if len(ticker) >= MIN_TICKER and ticker not in common and word(ticker, text):
         return Match("review", "weak_ticker")
+    if _loose_name(company, text):
+        return Match("review", "loose_name")
     words = company.split(maxsplit=1)
     first = words[0].strip(",.") if words else ""
     if len(first) >= MIN_NAME and first.lower() not in STOPWORDS and word(first, text):
