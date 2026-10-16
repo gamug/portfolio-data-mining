@@ -1153,13 +1153,42 @@ targeted pass and released when they become `accept`. **Tooling the hand check n
 the PLAN figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, and `portfolio-nlp` gets the new
 removed and `review` counts (the readable set does not change unless the maintainer decides to release a subset). No schema change.
 
+## Work item 13 — Release the News Corp pairs the loose-name rule held back (code + data, T-063)
+
+**Status: scheduled by the maintainer on 2026-10-16 (decision on the Work item 12 evidence); not started.
+Depends on `T-062` being merged and its real re-class run done: the pairs it promotes are `review`/`loose_name`
+and quarantined, and this item makes the News Corp ones `accept`.**
+**Why:** `T-062` stops rejecting pairs whose URL spells the company out, but a promoted pair is `review`, so its
+article stays quarantined and `portfolio-nlp` reads nothing more than before. The News Corp pairs are 402 of the 437
+promotions (`NWS` 200, `NWSA` 202; 202 distinct URLs) and the evidence that they are the company is strong: every
+one of the 202 URLs contains the literal `news-corp` (19 as the possessive `news-corps`), the 201 slugs of the known
+file were read and all are about News Corp, and the maintainer's hand sample is 10 of 10 (95% lower bound 72%).
+The other 35 pairs (`KLAC` 16, `SO` 11, `BAC` 4, `DG`/`IFF`/`PEP`/`TTD` 1; sample 20 of 20, lower bound 84%) stay
+`review`; this item does not touch them (the maintainer may extend it later).
+**What:** (1) the matcher's existing mechanism for a name a company is also known by, `matching.ALIASES`
+(`WMT` `wal mart`, `META` `facebook`), gets `NWS` and `NWSA` `("news corp", "news corps")`: a hit is `accept` with reason
+`alias`, so new collector rows are tagged right at discovery and not only after a re-class. (2) `reclass_rejects.py`
+learns `--from-class review` (default `reject`) so the same audited pass (dry run, backup, audit list, `--revert`,
+fingerprint guard) promotes the `review`/`loose_name` rows that now classify `accept`; `sync_quarantine` then releases
+their articles. (3) Before the release, `audit_article_quality.py` (T-060) is run on the articles to be released: a wall,
+an under-floor or a duplicate body stays quarantined and is listed (releasing restores the previous status, which was
+`ok` for most). (4) `portfolio-nlp` is told how many articles it gains before the real run.
+**Acceptance:** `ALIASES` has the two entries with tests (the 202 slug forms are `accept`/`alias`; another company
+whose name contains `news` stays as it was); `known_false_rejects.py --check` and its test are updated (the News Corp
+rows are `accept`, the rest `review`); `score_ticker_rules.py --check` is re-measured and the PLAN figures re-frozen
+if they move; the dry run on the real database reports the exact number of articles released and the audit result;
+a rehearsal on a copy (apply, second apply, revert) matches the dry run; the real run is done by the maintainer's go-ahead
+with a new backup; the released articles are readable (`ok`) and `portfolio-nlp` has the number. No schema change
+(constitution #10 does not apply). Constitution #11 and #12 apply at close.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
-in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it.
+in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it. Work item 13 (`T-063`, release the News Corp
+pairs) is scheduled 2026-10-16 and follows Work item 12's real re-class run.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
