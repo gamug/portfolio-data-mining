@@ -93,8 +93,10 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62).
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
 Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in progress (scheduled 2026-10-16):
-matcher and `scripts/reclass_rejects.py` are written, the hand-check sheet was refreshed for the shipped rule (one
-row to label), the `loose_name` precision sample is drawn and unlabeled, the real re-class run and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
+matcher and `scripts/reclass_rejects.py` are written and rehearsed on a copy of the real database (apply, second
+apply, revert), the hand-check sheet passes for the shipped rule, and the `loose_name` precision sample is
+labeled except 4 refreshed rows. The real re-class run (437 promotions, all `review`) and the `portfolio-nlp`
+hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

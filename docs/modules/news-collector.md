@@ -256,8 +256,12 @@ sync, `--apply` again (no backup is asked for when nothing is left to promote) r
 
 A promoted pair is `review`, so its article stays quarantined and `portfolio-nlp` reads exactly what it read
 before; the counts that change are `reject` and `review`. `scripts/loose_name_precision.py sample` draws 30
-promoted pairs (News Corp 10, the rest 20) for a person to label and `summary` scores them, so releasing a
-subset to `accept` is decided on a measured share, not assumed. A labeled check sheet goes stale when the
+promoted pairs by distinct URL (News Corp 10, the rest 20) for a person to label; `summary` scores them with a
+lower bound and `unclear` counts (`--what-if ID=LABEL` shows what a contested label changes), and `refresh`
+replaces only the rows a later matcher change un-promoted. Releasing a
+subset to `accept` is decided on a measured share, not assumed. A form of the name needs words of two
+characters or more (`AT&T`'s `at t` is not a spelling); `matching.PLURAL_PHRASES` holds the plural phrases read by hand
+(`best buy`, `on semiconductor`, `target corporation`). Each stage of `reclass_rejects.py` prints its duration to stderr. A labeled check sheet goes stale when the
 matcher changes: `ticker_validation_sample.py --refresh SHEET --db urls.db` keeps every row whose class
 still holds (with its label) and replaces only the others, which a person then labels.
 
