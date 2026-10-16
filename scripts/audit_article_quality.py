@@ -1,18 +1,24 @@
 """Read-only audit of the `ok` rows of `articles`, per domain (T-060).
 
 Reports, for every ``source_domain``: the ``ok`` rows, how many match a wall phrase
-(``extractor.parse.is_wall_page``), how many fall under the word-count floor, and how many
+(``extractor.parse.wall_kind``), how many fall under the word-count floor, and how many
 bodies are duplicated (the same body stored once per tagged ticker). A non-zero ``walls`` means a
-wall page was stored as ``ok`` (rows fetched before the detector existed). Only ``fetch_status = 'ok'``
-rows are audited: the quarantined ones are not.
+wall page was stored as ``ok`` (rows fetched before the detector existed).
 
-``--list`` prints the ids of the ``ok`` rows that are walls. To re-fetch them, set their
+Quarantined rows come back as ``ok`` when their pair is promoted (``release_articles`` restores
+``prev_fetch_status``), so the ones quarantined from ``ok`` are audited too, in the ``held`` and
+``held_walls`` columns (``ok`` / ``walls`` / ``under_floor`` / ``duplicate_bodies`` cover ``ok`` rows only).
+
+``--by-status`` instead runs the detector over *every* body and counts, per ``fetch_status``, how many
+are classed ``failed`` / ``paywalled`` / neither (the precision check of the detector).
+
+``--list`` prints the ids of the ``ok`` and held rows that are walls. To re-fetch them, set their
 ``discovered_urls.status`` back to ``pending`` and run ``cli/news_crawler_cli.py``; the detector
 then stores them as ``failed`` / ``paywalled`` (or ``ok`` again if the page is now an article).
 
 Usage:
     PYTHONPATH=src uv run python scripts/audit_article_quality.py [--db PATH] [--json]
-        [--floor N] [--list]
+        [--floor N] [--list] [--by-status]
 """
 
 from __future__ import annotations
@@ -25,21 +31,39 @@ from contextlib import closing
 from pathlib import Path
 
 from data_mining.db import connect, resolve_db_path
-from extractor.parse import MIN_WORDS_FOR_FULL_CONTENT, is_wall_page
+from extractor.parse import MIN_WORDS_FOR_FULL_CONTENT, is_wall_page, wall_kind
+
+# `ok` now, or `ok` again once released from quarantine
+_EFFECTIVE_OK = (
+    "(fetch_status = 'ok' OR (fetch_status = 'quarantined' AND prev_fetch_status = 'ok'))"
+)
 
 
 def audit(db_path: Path, floor: int = MIN_WORDS_FOR_FULL_CONTENT) -> dict[str, dict[str, int]]:
     """Per-domain counters over the `ok` articles (database opened read-only)."""
     per: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"ok": 0, "walls": 0, "under_floor": 0, "duplicate_bodies": 0}
+        lambda: {
+            "ok": 0,
+            "walls": 0,
+            "under_floor": 0,
+            "duplicate_bodies": 0,
+            "held": 0,
+            "held_walls": 0,
+        }
     )
     bodies: dict[str, Counter[bytes]] = defaultdict(Counter)
     uri = f"file:{db_path.resolve()}?mode=ro"
     with closing(connect(uri, uri=True)) as con:
-        cur = con.execute("SELECT source_domain, body_text FROM articles WHERE fetch_status = 'ok'")
-        for domain, body in cur:
+        cur = con.execute(
+            f"SELECT source_domain, body_text, fetch_status FROM articles WHERE {_EFFECTIVE_OK}"  # noqa: S608
+        )
+        for domain, body, status in cur:
             text = body or ""
             row = per[domain or ""]
+            if status == "quarantined":
+                row["held"] += 1
+                row["held_walls"] += is_wall_page(text)
+                continue
             row["ok"] += 1
             row["walls"] += is_wall_page(text)
             row["under_floor"] += len(text.split()) < floor
@@ -53,10 +77,19 @@ def wall_ids(db_path: Path) -> list[int]:
     """Ids of the `ok` articles whose body is a wall page (database opened read-only)."""
     uri = f"file:{db_path.resolve()}?mode=ro"
     with closing(connect(uri, uri=True)) as con:
-        cur = con.execute(
-            "SELECT id, body_text FROM articles WHERE fetch_status = 'ok' ORDER BY id"
-        )
+        cur = con.execute(f"SELECT id, body_text FROM articles WHERE {_EFFECTIVE_OK} ORDER BY id")  # noqa: S608
         return [row_id for row_id, body in cur if is_wall_page(body or "")]
+
+
+def by_status(db_path: Path) -> dict[str, dict[str, int]]:
+    """`wall_kind` over every body: per `fetch_status`, the rows classed `failed`, `paywalled`,
+    or `none` (database opened read-only)."""
+    out: dict[str, dict[str, int]] = defaultdict(lambda: {"failed": 0, "paywalled": 0, "none": 0})
+    uri = f"file:{db_path.resolve()}?mode=ro"
+    with closing(connect(uri, uri=True)) as con:
+        for status, body in con.execute("SELECT fetch_status, body_text FROM articles"):
+            out[status or ""][wall_kind(body or "") or "none"] += 1
+    return dict(sorted(out.items()))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,8 +98,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--db", default=None, help="path to urls.db (default: $DATABASE_URL)")
     parser.add_argument("--floor", type=int, default=MIN_WORDS_FOR_FULL_CONTENT)
     parser.add_argument("--json", action="store_true")
-    parser.add_argument("--list", action="store_true", help="print the ids of `ok` wall rows")
+    parser.add_argument("--list", action="store_true", help="print the ids of `ok`/held wall rows")
+    parser.add_argument("--by-status", action="store_true", help="detector hits per fetch_status")
     args = parser.parse_args(argv)
+    if args.by_status:
+        for status, r in by_status(Path(args.db or resolve_db_path())).items():
+            print(
+                f"{status:14} failed={r['failed']:>6} paywalled={r['paywalled']:>6} none={r['none']:>7}"
+            )
+        return 0
     if args.list:
         ids = wall_ids(Path(args.db or resolve_db_path()))
         print("\n".join(map(str, ids)))
@@ -75,13 +115,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(result, indent=2))
     else:
-        print(f"{'domain':32} {'ok':>8} {'walls':>6} {'<floor':>7} {'dup bodies':>11}")
+        print(
+            f"{'domain':32} {'ok':>8} {'walls':>6} {'<floor':>7} {'dup bodies':>11} "
+            f"{'held':>8} {'held walls':>11}"
+        )
         for domain, r in result.items():
             print(
                 f"{domain:32} {r['ok']:>8} {r['walls']:>6} {r['under_floor']:>7} "
-                f"{r['duplicate_bodies']:>11}"
+                f"{r['duplicate_bodies']:>11} {r['held']:>8} {r['held_walls']:>11}"
             )
-    return int(any(r["walls"] or r["under_floor"] for r in result.values()))
+    return int(any(r["walls"] or r["held_walls"] or r["under_floor"] for r in result.values()))
 
 
 if __name__ == "__main__":

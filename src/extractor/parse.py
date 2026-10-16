@@ -8,7 +8,7 @@ preferred over trafilatura's own metadata guesses or an LLM.
 import json
 import re
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Literal
 
 import trafilatura
 from bs4 import BeautifulSoup
@@ -27,23 +27,22 @@ PAYWALL_MARKERS = (
 MIN_WORDS_FOR_FULL_CONTENT = 80
 
 # Pages served with a 200 and a body long enough to pass the length check that are not the article
-# (T-060). Matched case-insensitively in the *first* `WALL_HEAD_CHARS` characters of the extracted
-# body only: a page that is a wall starts with its own message, while a real article that quotes
-# "just a moment" or "unusual traffic" does so in its prose.
-# A bot challenge is transient, so it is `failed` (`--retry-failed` retries it); a login or
-# subscribe prompt is gated content that a retry does not change, so it is `paywalled`.
-# Whole-word matches: real CNBC articles open with "just a momentary blip" and "investigating unusual
-# traffic that might be from hackers", which a substring or a bare "unusual traffic" would flag.
+# (T-060). A wall starts with its own message, so only the first `WALL_HEAD_CHARS` characters are
+# matched, case-insensitively and as whole words: real CNBC articles open with "just a momentary
+# blip" and "investigating unusual traffic that might be from hackers". A bot challenge is
+# transient (`failed`, retried by `--retry-failed`); a login or subscribe prompt is gated content a
+# retry does not change (`paywalled`).
+# "Just a moment..." and "Access denied" are common prose ("For just a moment, mentally fast-forward"),
+# so they only count at the very start of the body, where a challenge page puts them.
+CHALLENGE_START = ("just a moment", "access denied")
 CHALLENGE_PHRASES = (
     "security verification",
-    "just a moment",
     "unusual traffic from your",
     "verify you are a human",
     "verify you are human",
     "are you a robot",
     "checking your browser",
     "enable javascript and cookies",
-    "access denied",
 )
 GATE_PHRASES = (
     "sign in to continue",
@@ -72,11 +71,13 @@ def _has_phrase(head: str, phrases: tuple[str, ...]) -> bool:
     return any(re.search(rf"\b{re.escape(phrase)}\b", head) for phrase in phrases)
 
 
-def wall_kind(text: str) -> str | None:
+def wall_kind(text: str) -> Literal["failed", "paywalled"] | None:
     """`fetch_status` for a wall page: `failed` (bot challenge), `paywalled` (login / subscribe
     prompt), or None when the body is an article."""
     head = text[:WALL_HEAD_CHARS].lower()
-    if _has_phrase(head, CHALLENGE_PHRASES):
+    if _has_phrase(head, CHALLENGE_PHRASES) or head.lstrip(" \t\r\n\"'#*").startswith(
+        CHALLENGE_START
+    ):
         return "failed"
     if _has_phrase(head, GATE_PHRASES):
         return "paywalled"

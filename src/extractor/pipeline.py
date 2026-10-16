@@ -52,10 +52,9 @@ def classify_and_build_article(
         fetch_status = "paywalled"
     elif is_thin_content(body_text):
         fetch_status = "thin_content"
+    # a wall served as a 200 is never `ok` (challenge: failed, login/subscribe prompt: paywalled)
     elif wall := wall_kind(body_text):
-        fetch_status = (
-            wall  # a wall served as a 200 is never `ok` (challenge: failed, gate: paywalled)
-        )
+        fetch_status = wall
     else:
         fetch_status = "ok"
 

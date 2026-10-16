@@ -326,15 +326,18 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       **Done:** `extractor.parse.wall_kind` looks for whole-word wall phrases in the first 300 characters of the
       body only. A bot challenge (`Security Verification`, `Just a moment`, ...) is stored `failed` (transient:
       `--retry-failed` retries it), a login or subscribe prompt `paywalled` (gated: not retried); neither is `ok`.
-      A scan of all 481,332 real bodies (2026-10-16) found the real walls (ft.com `Security Verification`, 578
-      `failed` + 198 quarantined) and two head false positives a substring rule would have flagged ("just a
-      momentary blip", "investigating unusual traffic that might be from hackers"), so the phrases are whole-word
-      and `unusual traffic` needs `from your`; the real excerpts are fixtures in `test_parse_body.py`.
-      `scripts/audit_article_quality.py` is the read-only per-domain audit of the `ok` rows (walls, under the
-      word floor, duplicate bodies; hashed, `--list` prints wall ids; exit 1 on a wall or an under-floor row; it
-      does not cover quarantined rows). Run on the real `urls.db`: 93,224 `ok` rows on 3 domains, 0 walls, 0 under
-      the floor. The duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory).
-      Tests: 767.
+      `scripts/audit_article_quality.py --by-status` ran the final detector over all 481,332 real bodies
+      (2026-10-16): `failed` 578 hits of 9,634, `quarantined` 198 of 376,718, `ok` 0 of 93,224, `thin_content` 0 of
+      1,756. The 776 hits are exactly the ft.com `Security Verification` pages (578 + 198, the counts of the earlier
+      raw scan); nothing else. The scan also found three head false positives that shaped the rules: "just a
+      *momentary* blip", "investigating unusual traffic that might be from hackers" and a quarantined CNBC article
+      (id 78699) opening "For just a moment, mentally fast-forward...". So phrases are whole-word, `unusual traffic`
+      needs `from your`, and `just a moment` / `access denied` count only at the very start of the body. The real
+      excerpts are fixtures in `test_parse_body.py`.
+      The audit (read-only, per domain: walls, under the word floor, hashed duplicate bodies; `--list` prints wall ids;
+      exit 1 on a wall or an under-floor row) also covers rows quarantined from `ok` (`held`, `held walls`), since a
+      release restores `ok`. Real `urls.db`: 93,224 `ok` + 366,000 held rows, 0 walls, 0 under the floor. The
+      duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 771.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`

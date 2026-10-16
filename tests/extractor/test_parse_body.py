@@ -129,6 +129,10 @@ _REAL_PROSE = {
         "unusual traffic that might be from state-sponsored hackers and a security firm said hackers "
         "used the platform to try to steal user data."
     ),
+    "for just a moment (cnbc, head, id 78699)": (
+        "For just a moment, mentally fast-forward ahead 12 months and imagine that it's now the end of "
+        "2014. As you look back on the year, what do you hope will have happened at work?"
+    ),
     "just a moment (cnbc, deep)": (
         "ANDY JASSY: A lot of them. Thanks for having me.\nSORKIN: It's very nice to have you here and "
         "I want to talk about your letter in just a moment because it is a major piece of the news."
