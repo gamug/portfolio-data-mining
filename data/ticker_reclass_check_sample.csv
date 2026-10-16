@@ -29,7 +29,7 @@ id,url,ticker,company,domain,source,match_mode,stratum,stratum_size,label,labele
 341086,https://www.cnbc.com/2026/05/29/tech-download-photonics-nvidia-ai-bottleneck.html,NVDA,Nvidia,cnbc.com,sitemap,accept,accept/sitemap,88350,yes,hand,
 60777,https://seekingalpha.com/article/4933404-cresud-still-cheap-after-argentinas-reforms,A,Agilent Technologies,seekingalpha.com,ddg,reject,reject/ddg,1118,no,hand,
 355367,https://www.cnbc.com/2022/06/28/ubs-downgrades-ebay-and-farfetch-to-neutral-on-rising-recession-risks.html,ON,ON Semiconductor,cnbc.com,sitemap,reject,reject/sitemap,323863,no,hand,
-82690,https://seekingalpha.com/article/4755139-ares-capital-2024-q4-results-earnings-call-presentation,ARE,Alexandria Real Estate Equities,seekingalpha.com,ddg,reject,reject/ddg,1118,,,no
+82690,https://seekingalpha.com/article/4755139-ares-capital-2024-q4-results-earnings-call-presentation,ARE,Alexandria Real Estate Equities,seekingalpha.com,ddg,reject,reject/ddg,1118,no,hand,no
 124965,https://www.cnbc.com/2025/05/09/espn-flagship-streaming-app-to-be-named-espn.html,APP,AppLovin,cnbc.com,ddg,reject,reject/ddg,1118,no,hand,
 168664,https://www.cnbc.com/2014/05/19/cisco-chief-urges-obama-to-curb-nsa-surveillance-activity.html,CSCO,Cisco,cnbc.com,sitemap,accept,accept/sitemap,88350,yes,hand,
 308065,https://seekingalpha.com/article/4933756-dividend-announcements-july-18minus-24-2026,L,Loews Corporation,seekingalpha.com,ddg,reject,reject/ddg,1118,no,hand,
