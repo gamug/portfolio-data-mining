@@ -308,7 +308,7 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       `fetch_status = 'ok'` (so `accept` rows only) and never sees `reject` ones
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
-- [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot
+- [x] **T-060** Content-quality gate on `articles`, so a login wall, bot
       challenge or empty body can never reach `portfolio-nlp`. Today the only
       protection is the extractor's length check (`thin_content`) plus
       `fetch_status`; checked 2026-10-15 every wall seen in the labeling sheet
@@ -323,6 +323,13 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       Separately report the duplicate-processing finding (302,512 distinct
       bodies among 459,112 `ok` rows) so `T-055`/`T-056c` can decide to attribute
       each URL once. → quality of what step 4 hands over.
+      **Done:** `extractor.parse.is_wall_page` (13 phrases, matched in the first 300 characters of a body of 200 words or
+      more, anywhere in a shorter one, so the CNBC "just a moment" prose is not a wall) is wired into
+      `classify_and_build_article`: a wall that passes the length check is stored `failed`, so `--retry-failed`
+      retries it and it is never `ok`. `scripts/audit_article_quality.py` is the read-only per-domain audit of the
+      `ok` rows (walls, under the word floor, duplicate bodies; exit 1 on a wall). Run 2026-10-16 on the real
+      `urls.db` after the re-tag: 93,224 `ok` rows on 3 domains, 0 walls, 0 under the floor. The duplicate-body
+      finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 754.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
@@ -357,7 +364,7 @@ Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is ope
 
 Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open: `T-057` and
 `T-058` are done (the corpus is re-tagged and quarantined, the hand-off is posted, so `portfolio-nlp` is
-unblocked and no longer waits on this repo); `T-059` (close-out) and `T-060` (content-quality gate) remain.
+unblocked and no longer waits on this repo); `T-060` (content-quality gate) is done; `T-059` (close-out) remains.
 
 Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
 maintainer decides when. `portfolio-nlp` does not wait on it.

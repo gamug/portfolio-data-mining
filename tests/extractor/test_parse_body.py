@@ -3,6 +3,7 @@ from extractor.parse import (
     extract_body_text,
     is_probably_paywalled,
     is_thin_content,
+    is_wall_page,
     word_count,
 )
 
@@ -73,3 +74,27 @@ def test_detect_language_identifies_english() -> None:
 
 def test_detect_language_returns_none_for_empty_text() -> None:
     assert detect_language("") is None
+
+
+# --- wall detector (T-060) ---
+
+_PROSE = "Shares rose as analysts weighed the results. " * 30  # well over 200 words
+
+
+def test_wall_phrase_at_the_start_of_a_long_body_is_a_wall() -> None:
+    assert is_wall_page("Just a moment... " + _PROSE)
+    assert is_wall_page("Security Verification\nVerify you are human. " + _PROSE)
+
+
+def test_wall_phrase_deep_in_a_long_article_is_not_a_wall() -> None:
+    prose = _PROSE + "Wait just a moment, the CEO said, before the unusual traffic of buyers."
+    assert not is_wall_page(prose)  # the CNBC false positives: normal prose, not a challenge page
+
+
+def test_wall_phrase_anywhere_in_a_short_body_is_a_wall() -> None:
+    assert is_wall_page(("Headlines of the day. " * 10) + "Sign in to continue reading.")
+
+
+def test_an_ordinary_article_is_not_a_wall() -> None:
+    assert not is_wall_page(_PROSE)
+    assert not is_wall_page("")

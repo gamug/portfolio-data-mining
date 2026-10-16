@@ -25,6 +25,28 @@ PAYWALL_MARKERS = (
 
 MIN_WORDS_FOR_FULL_CONTENT = 80
 
+# Login walls, bot challenges and subscribe prompts served with a 200 and a body long enough to
+# pass the length check (T-060). Matched case-insensitively on the start of the extracted body, or
+# anywhere in a short one: a real article that quotes "just a moment" or "CAPTCHA" deep in its
+# prose is not a wall, a challenge page *starts* with its message.
+WALL_PHRASES = (
+    "security verification",
+    "just a moment",
+    "unusual traffic",
+    "verify you are a human",
+    "verify you are human",
+    "are you a robot",
+    "checking your browser",
+    "enable javascript and cookies",
+    "access denied",
+    "sign in to continue",
+    "log in to continue",
+    "create a free account to continue",
+    "subscribe to continue",
+)
+WALL_HEAD_CHARS = 300
+WALL_SHORT_WORDS = 200
+
 
 def extract_body_text(html: str) -> str:
     """Extract main article text, stripped of nav/ads/boilerplate."""
@@ -38,6 +60,13 @@ def word_count(text: str) -> int:
 
 def is_thin_content(text: str, min_words: int = MIN_WORDS_FOR_FULL_CONTENT) -> bool:
     return word_count(text) < min_words
+
+
+def is_wall_page(text: str) -> bool:
+    """True when the extracted body is a login wall / bot challenge / subscribe prompt."""
+    lowered = text.lower()
+    scope = lowered if word_count(text) < WALL_SHORT_WORDS else lowered[:WALL_HEAD_CHARS]
+    return any(phrase in scope for phrase in WALL_PHRASES)
 
 
 def is_probably_paywalled(html: str, domain: str) -> bool:

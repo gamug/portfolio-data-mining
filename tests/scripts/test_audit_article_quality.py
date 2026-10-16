@@ -1,0 +1,55 @@
+"""The read-only article-quality audit (T-060)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+from data_mining.db import connect
+from data_mining.schema import apply_schema
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from audit_article_quality import audit, main
+
+_PROSE = "Shares rose as analysts weighed the results. " * 30
+
+
+def _db(tmp_path: Path) -> Path:
+    path = tmp_path / "urls.db"
+    con = connect(str(path))
+    apply_schema(con)
+    rows = [
+        (1, _PROSE, "ok"),
+        (2, _PROSE, "ok"),  # the same body twice
+        (3, "Just a moment... " + _PROSE, "ok"),  # a wall stored as ok
+        (4, "short", "ok"),
+        (5, "Just a moment...", "failed"),  # not ok: ignored
+    ]
+    for i, body, status in rows:
+        con.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, discovered_at)"
+            " VALUES (?, ?, 'cnbc.com', 'Apple', 'AAPL', 'sitemap', '2026-01-01')",
+            (i, f"https://cnbc.com/{i}"),
+        )
+        con.execute(
+            "INSERT INTO articles (id, source_domain, body_text, fetch_status)"
+            " VALUES (?, 'cnbc.com', ?, ?)",
+            (i, body, status),
+        )
+    con.commit()
+    con.close()
+    return path
+
+
+def test_audit_counts_ok_rows_per_domain(tmp_path: Path) -> None:
+    assert audit(_db(tmp_path))["cnbc.com"] == {
+        "ok": 4,
+        "walls": 1,
+        "under_floor": 1,
+        "duplicate_bodies": 1,
+    }
+
+
+def test_main_exits_1_when_a_wall_is_stored_as_ok(tmp_path: Path) -> None:
+    assert main(["--db", str(_db(tmp_path))]) == 1

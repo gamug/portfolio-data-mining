@@ -225,6 +225,17 @@ non-company hits are `NOISE` (by article id). The rows are quarantined, not dele
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
 
+## Content-quality gate (T-060)
+
+`extractor.parse.is_wall_page` marks a login wall, bot challenge or subscribe prompt that passes the length
+check as `fetch_status = 'failed'` (never `ok`), so `--retry-failed` retries it. The phrases are matched in the
+first 300 characters of a body of 200 words or more, and anywhere in a shorter one. Audit the stored `ok` rows
+(read-only, per domain: walls, under the word floor, duplicate bodies; exit 1 on a wall):
+
+```bash
+PYTHONPATH=src uv run python scripts/audit_article_quality.py --db /path/to/urls.db
+```
+
 ## Testing
 
 ```bash

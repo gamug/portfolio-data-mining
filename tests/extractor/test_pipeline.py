@@ -108,3 +108,14 @@ def test_classify_http_error_status_is_failed_regardless_of_content() -> None:
 
     assert article["fetch_status"] == "failed"
     assert article["http_status_code"] == 404
+
+
+def test_a_long_wall_page_is_not_marked_ok() -> None:
+    html = "<html><body><article><p>Just a moment... " + "Please wait while we check. " * 40
+    html += "</p></article></body></html>"
+
+    article = classify_and_build_article(
+        ROW, html, http_status=200, gics_sector=None, gics_sub_industry=None, fetched_at="t"
+    )
+
+    assert article["fetch_status"] == "failed"
