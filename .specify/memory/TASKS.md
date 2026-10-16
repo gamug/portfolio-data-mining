@@ -77,7 +77,7 @@ Task IDs: `T-047`–`T-052` are intentionally unused here. `portfolio-nlp` alrea
 cites `T-053`–`T-059` for this work item (its Work item 15, PR
 `gamug/portfolio-nlp#102`), so the IDs were kept stable rather than renumbered
 after the fact; IDs are never reused, so they stay reserved. `T-060` (content-quality
-gate) and `T-062` (Work item 12, the matcher follow-up) were added later and are data-mining-only, so `portfolio-nlp` does not cite them.
+gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work item 11, the leaver prices) were added later and are data-mining-only, so `portfolio-nlp` does not cite them.
 
 - [x] **T-053** Commit a rerunnable, read-only audit under `scripts/` that
       reproduces the 2026-10-14 counts from `urls.db` per `(ticker,
