@@ -1254,14 +1254,24 @@ def _provenance(expectations_path: Path) -> dict[str, Any]:
 
 
 def _deletion_step(output_dir: Path) -> list[dict[str, str]]:
-    """The one procedure covering every copy (brief §6)."""
+    """The one procedure covering every copy (brief §6).
+
+    Every entry here is a POSIX shell recipe (`rm -rf`, `test ! -e`) for the
+    user to run themselves, on whichever machine that copy actually lives on
+    -- not necessarily this one. `output_dir` is rendered with
+    `.as_posix()` rather than `str()` so the recipe is always a valid POSIX
+    path regardless of what host generated this manifest (this repo's own
+    pipeline always runs inside the Linux devcontainer, but this function
+    shouldn't assume its caller does).
+    """
     scratch = FEASIBILITY_SCRATCH
+    output_dir_posix = output_dir.as_posix()
     return [
         {
             "copy": "this machine's private folder",
-            "path": str(output_dir),
-            "command": f"rm -rf {output_dir}",
-            "check": f"test ! -e {output_dir}",
+            "path": output_dir_posix,
+            "command": f"rm -rf {output_dir_posix}",
+            "check": f"test ! -e {output_dir_posix}",
         },
         {
             "copy": "T-100's machine, if different",
