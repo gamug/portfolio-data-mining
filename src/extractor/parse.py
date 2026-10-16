@@ -6,6 +6,7 @@ preferred over trafilatura's own metadata guesses or an LLM.
 """
 
 import json
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -25,27 +26,32 @@ PAYWALL_MARKERS = (
 
 MIN_WORDS_FOR_FULL_CONTENT = 80
 
-# Login walls, bot challenges and subscribe prompts served with a 200 and a body long enough to
-# pass the length check (T-060). Matched case-insensitively on the start of the extracted body, or
-# anywhere in a short one: a real article that quotes "just a moment" or "CAPTCHA" deep in its
-# prose is not a wall, a challenge page *starts* with its message.
-WALL_PHRASES = (
+# Pages served with a 200 and a body long enough to pass the length check that are not the article
+# (T-060). Matched case-insensitively in the *first* `WALL_HEAD_CHARS` characters of the extracted
+# body only: a page that is a wall starts with its own message, while a real article that quotes
+# "just a moment" or "unusual traffic" does so in its prose.
+# A bot challenge is transient, so it is `failed` (`--retry-failed` retries it); a login or
+# subscribe prompt is gated content that a retry does not change, so it is `paywalled`.
+# Whole-word matches: real CNBC articles open with "just a momentary blip" and "investigating unusual
+# traffic that might be from hackers", which a substring or a bare "unusual traffic" would flag.
+CHALLENGE_PHRASES = (
     "security verification",
     "just a moment",
-    "unusual traffic",
+    "unusual traffic from your",
     "verify you are a human",
     "verify you are human",
     "are you a robot",
     "checking your browser",
     "enable javascript and cookies",
     "access denied",
+)
+GATE_PHRASES = (
     "sign in to continue",
     "log in to continue",
     "create a free account to continue",
     "subscribe to continue",
 )
 WALL_HEAD_CHARS = 300
-WALL_SHORT_WORDS = 200
 
 
 def extract_body_text(html: str) -> str:
@@ -62,11 +68,24 @@ def is_thin_content(text: str, min_words: int = MIN_WORDS_FOR_FULL_CONTENT) -> b
     return word_count(text) < min_words
 
 
+def _has_phrase(head: str, phrases: tuple[str, ...]) -> bool:
+    return any(re.search(rf"\b{re.escape(phrase)}\b", head) for phrase in phrases)
+
+
+def wall_kind(text: str) -> str | None:
+    """`fetch_status` for a wall page: `failed` (bot challenge), `paywalled` (login / subscribe
+    prompt), or None when the body is an article."""
+    head = text[:WALL_HEAD_CHARS].lower()
+    if _has_phrase(head, CHALLENGE_PHRASES):
+        return "failed"
+    if _has_phrase(head, GATE_PHRASES):
+        return "paywalled"
+    return None
+
+
 def is_wall_page(text: str) -> bool:
     """True when the extracted body is a login wall / bot challenge / subscribe prompt."""
-    lowered = text.lower()
-    scope = lowered if word_count(text) < WALL_SHORT_WORDS else lowered[:WALL_HEAD_CHARS]
-    return any(phrase in scope for phrase in WALL_PHRASES)
+    return wall_kind(text) is not None
 
 
 def is_probably_paywalled(html: str, domain: str) -> bool:

@@ -15,7 +15,7 @@ from extractor.parse import (
     extract_jsonld_article,
     is_probably_paywalled,
     is_thin_content,
-    is_wall_page,
+    wall_kind,
     word_count,
 )
 from extractor.scheduler import DomainScheduler
@@ -52,8 +52,10 @@ def classify_and_build_article(
         fetch_status = "paywalled"
     elif is_thin_content(body_text):
         fetch_status = "thin_content"
-    elif is_wall_page(body_text):
-        fetch_status = "failed"  # a wall served as a 200: retried with --retry-failed, never `ok`
+    elif wall := wall_kind(body_text):
+        fetch_status = (
+            wall  # a wall served as a 200 is never `ok` (challenge: failed, gate: paywalled)
+        )
     else:
         fetch_status = "ok"
 

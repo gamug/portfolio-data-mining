@@ -10,7 +10,7 @@ from data_mining.schema import apply_schema
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from audit_article_quality import audit, main
+from audit_article_quality import audit, main, wall_ids
 
 _PROSE = "Shares rose as analysts weighed the results. " * 30
 
@@ -53,3 +53,22 @@ def test_audit_counts_ok_rows_per_domain(tmp_path: Path) -> None:
 
 def test_main_exits_1_when_a_wall_is_stored_as_ok(tmp_path: Path) -> None:
     assert main(["--db", str(_db(tmp_path))]) == 1
+
+
+def test_main_exits_1_when_an_ok_row_is_under_the_floor(tmp_path: Path) -> None:
+    path = _db(tmp_path)
+    con = connect(str(path))
+    con.execute("UPDATE articles SET body_text = ? WHERE id = 3", (_PROSE,))  # no wall left
+    con.commit()
+    con.close()
+
+    assert audit(path)["cnbc.com"]["walls"] == 0
+    assert main(["--db", str(path)]) == 1  # row 4 is still "short"
+
+
+def test_wall_ids_lists_only_ok_walls(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    path = _db(tmp_path)
+
+    assert wall_ids(path) == [3]  # row 5 is a wall but `failed`
+    assert main(["--db", str(path), "--list"]) == 1
+    assert capsys.readouterr().out.strip() == "3"

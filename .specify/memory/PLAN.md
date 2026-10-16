@@ -768,7 +768,7 @@ bot-challenge and empty bodies seen in the labeling sheet are all rows with
 `failed`/`thin_content`), so no wall has propagated. The `ft.com`,
 `investing.com`, `nasdaq.com` and `stocktwits.com` rows are 100% non-`ok` (no
 article body at all). The remaining risk is a wall page that passes as `ok`
-because only the length is checked; `T-060` closed it (the extractor now rejects wall phrases, and `scripts/audit_article_quality.py` audits the `ok` rows).
+because only the length is checked; `T-060` closed it (the extractor now stores a wall as `failed` (challenge) or `paywalled` (login prompt), and `scripts/audit_article_quality.py` audits the `ok` rows).
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the

@@ -323,13 +323,18 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       Separately report the duplicate-processing finding (302,512 distinct
       bodies among 459,112 `ok` rows) so `T-055`/`T-056c` can decide to attribute
       each URL once. → quality of what step 4 hands over.
-      **Done:** `extractor.parse.is_wall_page` (13 phrases, matched in the first 300 characters of a body of 200 words or
-      more, anywhere in a shorter one, so the CNBC "just a moment" prose is not a wall) is wired into
-      `classify_and_build_article`: a wall that passes the length check is stored `failed`, so `--retry-failed`
-      retries it and it is never `ok`. `scripts/audit_article_quality.py` is the read-only per-domain audit of the
-      `ok` rows (walls, under the word floor, duplicate bodies; exit 1 on a wall). Run 2026-10-16 on the real
-      `urls.db` after the re-tag: 93,224 `ok` rows on 3 domains, 0 walls, 0 under the floor. The duplicate-body
-      finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 754.
+      **Done:** `extractor.parse.wall_kind` looks for whole-word wall phrases in the first 300 characters of the
+      body only. A bot challenge (`Security Verification`, `Just a moment`, ...) is stored `failed` (transient:
+      `--retry-failed` retries it), a login or subscribe prompt `paywalled` (gated: not retried); neither is `ok`.
+      A scan of all 481,332 real bodies (2026-10-16) found the real walls (ft.com `Security Verification`, 578
+      `failed` + 198 quarantined) and two head false positives a substring rule would have flagged ("just a
+      momentary blip", "investigating unusual traffic that might be from hackers"), so the phrases are whole-word
+      and `unusual traffic` needs `from your`; the real excerpts are fixtures in `test_parse_body.py`.
+      `scripts/audit_article_quality.py` is the read-only per-domain audit of the `ok` rows (walls, under the
+      word floor, duplicate bodies; hashed, `--list` prints wall ids; exit 1 on a wall or an under-floor row; it
+      does not cover quarantined rows). Run on the real `urls.db`: 93,224 `ok` rows on 3 domains, 0 walls, 0 under
+      the floor. The duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory).
+      Tests: 767.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`

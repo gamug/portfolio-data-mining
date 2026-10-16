@@ -119,3 +119,14 @@ def test_a_long_wall_page_is_not_marked_ok() -> None:
     )
 
     assert article["fetch_status"] == "failed"
+
+
+def test_a_long_login_prompt_page_is_paywalled_not_ok() -> None:
+    html = "<html><body><article><p>Sign in to continue reading. " + "Members only content. " * 40
+    html += "</p></article></body></html>"
+
+    article = classify_and_build_article(
+        ROW, html, http_status=200, gics_sector=None, gics_sub_industry=None, fetched_at="t"
+    )
+
+    assert article["fetch_status"] == "paywalled"
