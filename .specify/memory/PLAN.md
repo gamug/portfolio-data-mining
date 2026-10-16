@@ -1051,21 +1051,28 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
 - The re-tag dry run reports before/after counts per ticker and per source,
   and the real run leaves a restorable backup (done: `urls.pre-retag.db`).
 - **Accepted recall loss (T-057 real run):** the frozen rule rejects some pairs whose full
-  company name is in the URL, so they are quarantined, not deleted. **Cause:** the name is
-  normalized with its suffix removed (`KLA Corporation` becomes `kla`, `Southern Company` becomes
-  `southern`); a name under 4 characters (`MIN_NAME`) or in `STOPWORDS` is not evidence by itself,
-  and the `weak_first_word` fallback has the same length floor, so the pair is `reject`, not
-  `review` (`matching.py`). **Known:** a scan of the removed list for the full name as a URL slug
-  finds **at least 28** of 325,423 (`KLAC` 15, `SO` 11, `DG` 1, `IFF` 1; committed in
-  `data/retag_known_false_rejects.csv`, pinned by `test_known_false_rejects.py`); the hand-check
-  row 302365 is one of them, which is why the `reject` check passed at its limit. **Estimated:**
-  the scan finds one shape only. The hand check had 1 of 40 `reject` pairs correct (2.5%, Wilson 95%
-  interval 0.4%-12.9%), i.e. roughly 1,400 to 42,000 of the 325,423 (point estimate about 8,100); a
-  40-row sample cannot say more. The rule is not changed here (it would move every PLAN figure and
-  the frozen samples); `portfolio-nlp` is told not to purge the known ones (T-058 comment). A
-  matcher fix (for example `review` when the full normalized name is in the text) is a follow-up
-  task: it re-classes those rows with a targeted pass (the re-tag only touches rows with
-  `match_reason IS NULL`) and `release_articles`.
+  company name is in the URL, so they are quarantined, not deleted. **Three causes**
+  (`_name_reason`, `matching.py`): (1) the name is short or an ordinary word once its suffix is
+  removed (`KLA Corporation` becomes `kla`, under `MIN_NAME`; `Southern Company` becomes `southern`;
+  `News Corp` becomes `news`, both in `STOPWORDS`), and the `weak_first_word` fallback has the same
+  floor, so the pair is `reject`, not `review`; (2) a possessive, which URLs write as a trailing
+  `s` (`bank-of-americas`, `dollar-generals`, `trade-desks`), so the whole-word match fails; (3) an
+  `&` in the name that URLs drop (`International Flavors & Fragrances` is searched as `… and
+  fragrances`). **Known (lower bound):** `scripts/known_false_rejects.py` scans the removed list for
+  the name as whole words of the URL path (with and without suffix, `&`, trailing `s`) and finds
+  **at least 433 pairs on 234 URLs** (`NWSA` 201 and `NWS` 199, the same News Corp articles under
+  both tickers; `KLAC` 15; `SO` 11; `BAC` 4; `DG`, `IFF`, `TTD` 1 each), committed in
+  `data/retag_known_false_rejects.csv` and pinned by `tests/scripts/test_known_false_rejects.py`.
+  Hits for `BBY`, `ON`, `T`, `TGT` were read and are not the company, so they are left out
+  (`NOISE`). The hand-check row 302365 is one of the KLAC pairs, which is why the `reject` check
+  passed at its limit. **Estimated:** the scan finds one shape only. The hand check had 1 of 40
+  `reject` pairs correct (2.5%, Wilson 95% interval 0.4%-12.9%), i.e. roughly 1,400 to 42,000 of the
+  325,423 (point estimate about 8,100); a 40-row sample cannot say more, so 433 is about a twentieth
+  of the point estimate. The rule is not changed here (it would move every PLAN figure and the
+  frozen samples); `portfolio-nlp` is told not to purge the known ones (T-058 comment). A matcher
+  fix (for example `review` when the full normalized name is in the text, with a possessive and
+  `&` normalization) is a follow-up task: it re-classes those rows with a targeted pass (the re-tag
+  only touches rows with `match_reason IS NULL`) and `release_articles`.
 - `portfolio-nlp` confirms wrong-company rows no longer reach its pending
   queries.
 - `ruff check`, `ruff format --check`, `mypy`, `pytest` clean; `SPEC.md` §13
