@@ -46,8 +46,10 @@ re-running them produces the same result.
 A body that is a wall rather than an article (`extractor.parse.wall_kind`, T-060) is classified from the first 300
 characters: a bot challenge ("Just a moment", "Security Verification", ...) is `failed` (transient, so
 `--retry-failed` retries it, and one that never clears is retried on every such run), a login or subscribe
-prompt is `paywalled` (gated, not retried). "Just a moment" and "Access denied" count only at the very start of the body (as whole words), so "Please wait. Just a moment..." is not caught; the other phrases count anywhere in those 300 characters. A phrase deeper in an article's prose is not a wall. Walls are
-read with HTTP 200, so `failed` with `http_status_code` 200 means a challenge page, not a network error.
+prompt is `paywalled` (gated, not retried). "Just a moment" and "Access denied" count only at the very start of
+the body (as whole words), so "Please wait. Just a moment..." is not caught; the other phrases count anywhere in
+those 300 characters. A phrase deeper in an article's prose is not a wall. Walls are read with HTTP 200, so
+`failed` with `http_status_code` 200 means a challenge page, not a network error.
 
 `cli/news_crawler_cli.py` (was `news-crawler/run_extraction.py`, then briefly
 `apps/news_crawler_extract.py` during the initial consolidation) lives in `cli/` rather
