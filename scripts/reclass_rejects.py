@@ -88,6 +88,11 @@ _TO_RELEASE = (
 )
 
 
+def _is_quarantined(row: sqlite3.Row) -> bool:
+    """The row has an article, and that article is held back (or carries a stale previous status)."""
+    return row["fetch_status"] == "quarantined" or row["prev_fetch_status"] is not None
+
+
 def report(con: sqlite3.Connection, promotions: list[Promotion]) -> dict[str, object]:
     """What `--apply` would do, read from the database: the discovery status of the promoted rows
     (a `skipped` one goes back to `pending`), the tickers, and the sync's predicted
@@ -98,7 +103,7 @@ def report(con: sqlite3.Connection, promotions: list[Promotion]) -> dict[str, ob
     info = {
         r["id"]: r
         for r in con.execute(
-            "SELECT d.id, d.status, d.ticker, a.fetch_status FROM discovered_urls d"  # noqa: S608
+            "SELECT d.id, d.status, d.ticker, a.fetch_status, a.prev_fetch_status FROM discovered_urls d"  # noqa: S608
             f" LEFT JOIN articles a ON a.id = d.id WHERE d.id IN ({marks})",
             list(ids),
         )
@@ -118,7 +123,7 @@ def report(con: sqlite3.Connection, promotions: list[Promotion]) -> dict[str, ob
         "top_tickers": dict(Counter(info[i]["ticker"] for i in ids).most_common(TOP_TICKERS)),
         "predicted_sync": {
             "quarantined": len(to_quarantine - accepted),
-            "released": len(to_release | {i for i in accepted if i in info}),
+            "released": len(to_release | {i for i in accepted if _is_quarantined(info[i])}),
         },
         "api_rejects_left_alone": api_rejects,
     }

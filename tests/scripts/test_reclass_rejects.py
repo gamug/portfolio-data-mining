@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from data_mining.db import connect
+from data_mining.matching import Match
 from data_mining.quarantine import quarantine_articles
 from data_mining.schema import apply_schema, run_migrations
 
@@ -245,3 +246,37 @@ def test_the_t057_sheet_is_not_its_own_earlier_sample() -> None:
     assert sheet.name == "ticker_retag_check_sample.csv"
     ids = {i for i in validation._read_ids(sheet)}
     assert ids  # the sheet exists and is excluded from a fresh draw
+
+
+def test_the_predicted_sync_counts_only_articles_that_exist_and_are_held_back(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Rows promoted to `accept`: id 1 has a quarantined article (released), id 3 has no article,
+    id 5 has an `ok` article that is not quarantined (neither is released); the prediction is what
+    the apply then prints."""
+    with sqlite3.connect(db_file) as con:
+        con.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, discovered_at,"
+            " status, match_class, match_reason) VALUES (5, 'https://x.com/kla-other', 'x.com',"
+            " 'KLA Corporation', 'KLAC', 'sitemap', 'now', 'fetched', 'reject', 'none')"
+        )
+        con.execute("INSERT INTO articles (id, fetch_status) VALUES (5, 'ok')")
+    monkeypatch.setattr(
+        reclass,
+        "classify",
+        lambda url, *_a, **_k: Match(
+            "accept" if "x.com/kla" in url or "bank" in url else "reject", "t"
+        ),
+    )
+
+    reclass.main(["--db", str(db_file)])
+    predicted = json.loads(capsys.readouterr().out)["predicted_sync"]
+    assert predicted == {"quarantined": 0, "released": 1}
+
+    reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+    assert capsys.readouterr().out.strip().splitlines()[-1] == (
+        "promoted 3 rows; quarantined 0, released 1"
+    )
