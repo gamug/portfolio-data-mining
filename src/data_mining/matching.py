@@ -43,6 +43,7 @@ WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
 
 MIN_NAME = 4
 MIN_WORDS = 2  # a loose name match spans two words or more, or the name is distinctive
+MIN_WORD_CHARS = 2  # ... and each of its words has at least two characters
 MIN_TICKER = 3
 MIN_SHORT_TICKER = 2
 
@@ -93,8 +94,9 @@ _SUFFIX = re.compile(
 
 # Names whose plural the slug spells like a possessive but is an ordinary phrase (read by hand in the
 # real data, PLAN Work item 12: `best-buys` is a list of picks, not Best Buy, and
-# `on-semiconductors` is a plural, not ON Semiconductor).
-PLURAL_PHRASES = frozenset({"best buy", "on semiconductor"})
+# `on-semiconductors` is a plural, not ON Semiconductor, and `target-corporations` is a noun phrase, not
+# Target Corporation).
+PLURAL_PHRASES = frozenset({"best buy", "on semiconductor", "target corporation"})
 _CAMEL_TAIL = re.compile(
     r"(?<=[a-z])(?:Corp|Co)$"
 )  # PepsiCo, KeyCorp: a capital tail on a lower-case letter
@@ -179,8 +181,14 @@ def _kept_name(company: str) -> str:
 
 
 def _spelled_enough(form: str) -> bool:
-    """A form is safe to look for on its own: two words or more, or one distinctive word."""
-    return len(form.split()) >= MIN_WORDS or (len(form) >= MIN_NAME and form not in STOPWORDS)
+    """A form is safe to look for on its own: two words or more, or one distinctive word.
+
+    Every word needs at least two characters: the ``&``-dropped form of ``AT&T`` is ``at t``, which is
+    two words but not a spelling of the company (``…fund-manager-at-t-rowe-price…``)."""
+    words = form.split()
+    if any(len(w) < MIN_WORD_CHARS for w in words):
+        return False
+    return len(words) >= MIN_WORDS or (len(form) >= MIN_NAME and form not in STOPWORDS)
 
 
 def _loose_name(company: str, text: str) -> bool:

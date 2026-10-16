@@ -288,6 +288,11 @@ def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) 
         ("https://x.com/best-apples-for-pies", "Apple Inc.", "AAPL"),
         ("https://x.com/student-visas-explained", "Visa Inc.", "V"),
         ("https://x.com/tariffs-on-semiconductors-hit-asia", "ON Semiconductor", "ON"),
+        (
+            "https://x.com/new-rules-would-target-corporations-that-waste-time",
+            "Target Corporation",
+            "TGT",
+        ),
     ],
 )
 def test_a_trailing_s_in_the_url_is_not_read_as_the_company(
@@ -318,3 +323,62 @@ def test_the_camel_case_tail_cuts_only_pepsico_and_keycorp() -> None:
     cut = [n for n in CO_ENDING_NAMES if matching._CAMEL_TAIL.search(n)]
 
     assert cut == ["KeyCorp", "PepsiCo"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://x.com/top-tech-fund-manager-at-t-rowe-price-gives-picks",
+        "https://x.com/united-airlines-we-can-see-the-light-at-t",
+        "https://x.com/jim-cramer-looks-at-t-mobiles-record-iphone-sales",
+    ],
+)
+def test_the_letters_of_a_dropped_ampersand_are_not_a_spelling_of_the_company(url: str) -> None:
+    assert cls(url, "", "AT&T", "T") == "reject"
+
+
+def test_the_exact_spelling_of_a_name_with_single_letters_is_still_accepted() -> None:
+    assert classify("https://x.com/at-and-t-earnings", "", "AT&T", "T") == matching.Match(
+        "accept", "name"
+    )
+
+
+# The 22 names of the real universe (506 company names in `urls.db`) with a one-letter word in a form
+# the loose rule would look for (`at t`, `m t bank`, `moody s`, `j m smucker`): none of those forms may
+# count. A name added to the universe later is not in this list: re-scan when it changes.
+SINGLE_LETTER_NAMES = [
+    "Arthur J. Gallagher & Co.",
+    "A. O. Smith",
+    "Casey's",
+    "C.H. Robinson",
+    "D. R. Horton",
+    "Domino's",
+    "Estée Lauder Companies (The)",
+    "W. W. Grainger",
+    "J.B. Hunt",
+    "Lowe's",
+    "McDonald's",
+    "Moody's Corporation",
+    "M&T Bank",
+    "O'Reilly Automotive",
+    "PG&E Corporation",
+    "J.M. Smucker Company (The)",
+    "S&P Global",
+    "AT&T",
+    "T-Mobile US",
+    "T. Rowe Price",
+    "U.S. Bancorp",
+    "W. R. Berkley Corporation",
+]
+
+
+def test_no_loose_form_of_a_name_with_single_letters_counts() -> None:
+    for company in SINGLE_LETTER_NAMES:
+        forms = {
+            matching.full_name(company),
+            matching.full_name(company).replace(" and ", " "),
+            matching._kept_name(company),
+        }
+        single = [f for f in forms if any(len(w) < 2 for w in f.split())]
+        assert single, company  # the list is of names that have such a form
+        assert not any(matching._spelled_enough(f) for f in single), company
