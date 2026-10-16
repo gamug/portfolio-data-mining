@@ -308,7 +308,7 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       `fetch_status = 'ok'` (so `accept` rows only) and never sees `reject` ones
       (unblocks its Work item 15 development and its re-measurement on the
       cleaned data); close `portfolio-nlp` `T-128`. → step 5.
-- [ ] **T-060** Content-quality gate on `articles`, so a login wall, bot
+- [x] **T-060** Content-quality gate on `articles`, so a login wall, bot
       challenge or empty body can never reach `portfolio-nlp`. Today the only
       protection is the extractor's length check (`thin_content`) plus
       `fetch_status`; checked 2026-10-15 every wall seen in the labeling sheet
@@ -323,6 +323,26 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       Separately report the duplicate-processing finding (302,512 distinct
       bodies among 459,112 `ok` rows) so `T-055`/`T-056c` can decide to attribute
       each URL once. → quality of what step 4 hands over.
+      **Done:** `extractor.parse.wall_kind` looks for whole-word wall phrases in the first 300 characters of the
+      body only. A bot challenge (`Security Verification`, `Just a moment`, ...) is stored `failed` (transient:
+      `--retry-failed` retries it), a login or subscribe prompt `paywalled` (gated: not retried); neither is `ok`.
+      `scripts/audit_article_quality.py --by-status` ran the final detector over all 481,332 real bodies
+      (2026-10-16): `failed` 578 hits of 9,634, `quarantined` 198 of 376,718, `ok` 0 of 93,224, `thin_content` 0 of
+      1,756. It also prints the hits per `source_domain`: all 776 are `ft.com` (`Security Verification`, 38 words
+      each). Those pages were already `failed` (HTTP 403) and at fetch time are `thin_content` (under 80 words), so
+      they never reach `wall_kind` in the pipeline: on the real corpus the gate changed no stored row. It is
+      preventive, for a wall long enough to pass the length check.
+      Evidence: the challenge phrases are validated on those 776 pages; the four login/subscribe phrases are
+      unvalidated on real data (the corpus has no `paywalled` wall example), only by synthetic tests.
+      The scan also found three head false positives that shaped the rules: "just a *momentary* blip",
+      "investigating unusual traffic that might be from hackers" and a quarantined CNBC article (id 78699) opening
+      "For just a moment, mentally fast-forward...". So phrases are whole-word, `unusual traffic` needs
+      `from your`, and `just a moment` / `access denied` count only at the very start of the body, as whole words
+      ("Just a momentary..." is not a wall). The real excerpts are fixtures in `test_parse_body.py`.
+      The audit (read-only, per domain: walls, under the word floor, hashed duplicate bodies; `--list` prints wall
+      ids; exit 1 on a wall or an under-floor row) also covers rows quarantined from `ok` (`held`, `held walls`),
+      since a release restores `ok`. Real `urls.db`: 93,224 `ok` + 365,888 held rows, 0 walls, 0 under the floor.
+      The duplicate-body finding stays reported, not acted on (it is `T-055`/`T-056c` territory). Tests: 777.
 - [ ] **T-059** Close-out: `SPEC.md` §13 item 10 annotated and FR-014 moved from planned to done,
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
@@ -357,7 +377,7 @@ Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is ope
 
 Work item 10 (`T-053`–`T-060`, wrong-company tagging, requested by `portfolio-nlp`) is open: `T-057` and
 `T-058` are done (the corpus is re-tagged and quarantined, the hand-off is posted, so `portfolio-nlp` is
-unblocked and no longer waits on this repo); `T-059` (close-out) and `T-060` (content-quality gate) remain.
+unblocked and no longer waits on this repo); `T-060` (content-quality gate) is done; `T-059` (close-out) remains.
 
 Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
 maintainer decides when. `portfolio-nlp` does not wait on it.
