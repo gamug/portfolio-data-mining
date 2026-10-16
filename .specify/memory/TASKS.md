@@ -66,7 +66,7 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, origin: Work item 10 real run)
 
-- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher, so the maintainer schedules it)*
+- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher; scheduled by the maintainer 2026-10-16)*
       Fix the full-name false rejects: at least 433 `reject` pairs on 234 URLs whose URL spells the company
       out (`data/retag_known_false_rejects.csv`, `PLAN.md` Work item 10 "Accepted recall loss"). Three causes in
       `matching._name_reason`: a name that is short or a stopword once the suffix is removed (`kla`, `southern`, `news`),
@@ -91,8 +91,9 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
-maintainer decides when. `portfolio-nlp` does not wait on it.
+Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in progress (scheduled 2026-10-16):
+matcher and `scripts/reclass_rejects.py` are written, the hand-check sheet is drawn and unlabeled, the real
+re-class run and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

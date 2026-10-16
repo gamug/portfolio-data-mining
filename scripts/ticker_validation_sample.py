@@ -126,6 +126,7 @@ FINAL_COUNTS = {"accept": 60, "reject": 40}
 EARLIER_SAMPLES = (
     Path(__file__).resolve().parents[1] / DEFAULT_SAMPLE,
     Path(__file__).resolve().parents[1] / DEFAULT_OUT,
+    Path(__file__).resolve().parents[1] / FINAL_OUT,  # the T-057 sheet; a T-062 draw is fresh of it
 )
 MAX_ACCEPT_WRONG = 5
 MAX_REJECT_CORRECT = 1
@@ -202,7 +203,13 @@ def check_sheet(sheet_path: Path, db_path: Path) -> list[str]:
     ids = [r["id"] for r in rows]
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         problems.append(f"duplicated ids: {dupes[:5]}")
-    earlier = {i for path in EARLIER_SAMPLES if path.is_file() for i in _read_ids(path)}
+    earlier = {
+        i
+        for path in EARLIER_SAMPLES
+        if path.is_file()
+        and path.resolve() != sheet_path.resolve()  # a sheet is not its own earlier
+        for i in _read_ids(path)
+    }
     if reused := sorted(set(ids) & earlier):
         problems.append(
             f"{len(reused)} id(s) already in an earlier sample, not fresh: {reused[:5]}"
@@ -241,8 +248,12 @@ def main(argv: list[str] | None = None) -> int:
         print("error: urls.db or the existing sample not found", file=sys.stderr)
         return 1
     excluded = [existing]
-    if args.final:  # the rule is frozen: skip every pair either earlier sample used
-        excluded.append(Path(DEFAULT_OUT))
+    if (
+        args.final
+    ):  # skip every pair any earlier sample used (the T-057 sheet too, for the T-062 draw)
+        excluded.extend(
+            Path(p) for p in (DEFAULT_OUT, FINAL_OUT) if Path(p) != Path(args.out or "")
+        )
     exclude: set[str] = set()
     for path in excluded:
         if not path.is_file():

@@ -1138,7 +1138,7 @@ dropped.
 
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, T-062)
 
-**Status: open, not scheduled (maintainer decides; found by the Work item 10 real run, 2026-10-15).**
+**Status: in progress (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). Done in code: `matching._loose_name` makes a full name the URL spells loosely (suffix kept, trailing `s`, `&` dropped, two words or more or a distinctive name) `review`/`loose_name`, never `reject`; all 433 known false rejects are `review`, `score_ticker_rules.py --check` figures are unchanged (the samples hold none of them); `scripts/reclass_rejects.py` (dry run by default; a dry run on the real `urls.db` finds 458 promotions, all `review`, none `accept`, so no article is released) re-classes the `reject` rows; the fresh sheet is drawn at `data/ticker_reclass_check_sample.csv`, unlabeled. Still open: the maintainer's labels and the `--verdict` check, `reclass_rejects.py --apply` on the real database (with the backup), and the `portfolio-nlp` hand-off with the new counts.**
 **Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` +
 `NWSA`, `KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1) whose URL carries the company's full name, and the
 hand check estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, scope and the
@@ -1156,8 +1156,7 @@ Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in 
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
-open but not scheduled and `portfolio-nlp` does not wait on it, so it takes no priority over other work until the
-maintainer schedules it.
+in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
