@@ -593,7 +593,7 @@ and paces serial requests (Technological stock #6).
 
 ## Work item 10 — News collector: stop tagging articles with the wrong company (code + data, T-053–T-060)
 
-**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-059`–`T-060` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
+**Status: open. `T-053`–`T-055` done (rule and targets approved 2026-10-15); `T-056` done (`a`, `b`, `c`; rows discovered before T-056c are stored `accept` without a reason, the T-057 re-tag reclassifies them); `T-057` done (real re-tag run 2026-10-15, hand check passed); `T-058` done (hand-off posted on portfolio-nlp PR #102); `T-060` done (wall detector in the extractor and a per-domain audit); `T-059` pending; the matcher gap the real run exposed (at least 433 false rejects) is the successor Work item 12 / `T-062`, open and maintainer-scheduled, not part of this item's close-out; the maintainer confirmed the `T-056b` schema changes and the `T-057` quarantine shape (`articles.prev_fetch_status`, `fetch_status = 'quarantined'`) (constitution #10) on 2026-10-15; T-057's tooling is PR #61.**
 
 **Why**: Requested by `portfolio-nlp` (its Work item 15, `T-128`; decided
 2026-10-14; see `gamug/portfolio-nlp#102` — the cross-repo task IDs cited
@@ -768,7 +768,7 @@ bot-challenge and empty bodies seen in the labeling sheet are all rows with
 `failed`/`thin_content`), so no wall has propagated. The `ft.com`,
 `investing.com`, `nasdaq.com` and `stocktwits.com` rows are 100% non-`ok` (no
 article body at all). The remaining risk is a wall page that passes as `ok`
-because only the length is checked, tracked as `T-060`.
+because only the length is checked; `T-060` closed it (the extractor now stores a wall as `failed` (challenge) or `paywalled` (login prompt), and `scripts/audit_article_quality.py` audits the `ok` rows).
 
 Counts are from the local `urls.db` copy as of 2026-10-14. The 30 articles
 hand-read in `portfolio-nlp` suggested roughly two thirds were not about the
