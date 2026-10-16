@@ -1086,7 +1086,7 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
 
 ## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (code + data, cross-repo origin, T-061)
 
-**Status: closed 2026-10-16 (PR #62, approved; awaiting merge); task moved to `CHANGELOG.md`.**
+**Status: closed 2026-10-16 (PR #62, merged); task moved to `CHANGELOG.md`.**
 
 **Why**: `portfolio-financial-analysis` (its `T-100` full-universe run, raised by
 `T-153` parts 2–3; request `gamug/portfolio-financial-analysis/docs/upstream_requests/data_mining_leaver_prices.md`)

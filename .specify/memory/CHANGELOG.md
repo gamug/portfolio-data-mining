@@ -653,12 +653,13 @@ gate) and `T-062` (Work item 12, the matcher follow-up; `T-061` belongs to Work 
       (regenerate them with `retag_urls.py --out` on a copy of the backup if lost; the known false rejects are committed).
       FR-014 is "implemented with the known recall gap in `T-062`", not "done". `T-062` is its own Work item 12 (PLAN), so item 10 closes
       here and the `CHANGELOG.md` entry names `T-062` as the open successor. → acceptance criteria.
-      **Done 2026-10-16:** `SPEC.md` FR-014 reads "implemented with the known recall gap in `T-062`" and §13 item 10 records the
-      outcome; `docs/modules/news-collector.md` and `news-crawler.md` describe the class columns, the quarantine and the T-060
-      gate; both architecture artifacts reconciled (content only, titles unchanged). Item 10 moved here with `T-062` (Work item 12)
-      named as its open successor. PR #64 had been merged into the already-merged `T-057` branch, so `T-060` reached `master`
-      only with this close-out PR. **Maintainer decisions, proposed here and for the maintainer to confirm:** keep
-      `urls.pre-retag.db` until `T-062`'s targeted re-class pass is checked (it is the only way back to the pre-re-tag
+      **Done 2026-10-16** (PR #65): `SPEC.md` FR-014 reads "implemented with the known recall gap in `T-062`" and §13 item 10
+      records the outcome; `docs/modules/news-collector.md` and `news-crawler.md` were checked and are already current (the class
+      columns, the quarantine and the T-060 gate were documented by PRs #59–#61 and #64). Both architecture artifacts are
+      reconciled, content only, titles unchanged: Portfolio Data Mining (v26) and Portfolio Thesis (v35). Item 10 moved here
+      with `T-062` (Work item 12) named as its open successor. PR #64 had been merged into the already-merged `T-057` branch,
+      so `T-060` reached `master` only with PR #65. **Maintainer decisions, proposed here and for the maintainer to confirm:**
+      keep `urls.pre-retag.db` until `T-062`'s targeted re-class pass is checked (it is the only way back to the pre-re-tag
       `fetch_status`), then delete it; the maintainer holds the git-ignored `data/retag/` lists (`retag_urls.py --out` on a copy
       of the backup regenerates them).
 
@@ -673,7 +674,7 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       note to `.env.example`; amend the constitution (Technological stock #8, 1.8.0) and `SPEC.md`
       FR-015/§2.1/§11/§12; run the fetch into `/workspaces/thesis/data/private/tiingo/`; delete
       `/tmp/tiingo_feasibility/` once the file passes §4. → `PLAN.md` Work item 11. **Done
-      2026-10-16** (PR #62, approved; awaiting merge): 33 lines, **44,989** rows, **20** trimmed,
+      2026-10-16** (PR #62, merged): 33 lines, **44,989** rows, **20** trimmed,
       **37** missing sessions, **442** dividend rows, **1** split row; the file's sha256 is
       `d6ef4052aac37fa1c1b584e0653c0e3abc3ff690bd12e64ed40a2ec8a7589179` (unchanged across the
       fix-round re-run); the calendar reproduces report §2's expected count for all 35 lines;
