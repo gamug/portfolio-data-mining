@@ -290,10 +290,11 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       481,332 rows re-tagged (accept 104,614 / review 51,295 / reject 325,423), 376,718 articles quarantined, lists in
       `data/retag/` (git-ignored: `removed_articles.csv` 325,423, `review_quarantine.csv` 51,295, `retag_summary.json`). Label vocabulary is `yes`/`no`/`unclear`.
       The one `reject` row labeled `yes` (id 302365, KLAC `kla-corporation-…-earnings-call-presentation`) is a rule gap, not a
-      one-off: the shipped rule rejects every pair of that shape, so the check passed at its limit. A scan of the removed list for the
-      company's full name in the URL slug finds 28 such false rejects (`KLAC` 15, `SO` 11, `DG` 1, `IFF` 1; ids in
-      `data/retag/known_false_rejects.csv`), quarantined not deleted, accepted as a recall loss in `PLAN.md` and reported to
-      `portfolio-nlp` as "do not purge". Real `urls.db`: `PRAGMA integrity_check` ok, `foreign_key_check` empty.
+      one-off: the shipped rule rejects every pair of that shape (the name loses its suffix, `kla` is under `MIN_NAME`, `southern` is a stopword,
+      and there is no `review` fallback), so the check passed at its limit. A scan of the removed list for the full name in the URL slug finds
+      **at least 28** false rejects (`KLAC` 15, `SO` 11, `DG` 1, `IFF` 1; committed in `data/retag_known_false_rejects.csv`), quarantined
+      not deleted; the hand check estimates 2.5% of the `reject` class (95% interval 0.4%-12.9%). Accepted as a recall loss in `PLAN.md`,
+      reported to `portfolio-nlp` as "do not purge". Real `urls.db`: `PRAGMA integrity_check` ok, `foreign_key_check` empty.
 - [x] **T-058** *(done 2026-10-15: hand-off comment on `portfolio-nlp` PR #102 with counts, lists and the selection)* Hand off: tell `portfolio-nlp` the corrected corpus is ready, with the
       list of removed article ids (it needs them to clean its existing results
       and `sector_summary` — its T-131) and the quarantined `review` pairs
@@ -324,8 +325,8 @@ gate) was added later and is data-mining-only, so `portfolio-nlp` does not cite 
       `docs/modules/news-collector.md` updated, both architecture artifacts
       reconciled (never renamed), then move this work item to `CHANGELOG.md`
       (constitution AI behavior #12). Also: decide how long `urls.pre-retag.db` (next to `urls.db` in
-      `/workspaces/thesis/data/`) is kept, and who holds the git-ignored `data/retag/` lists and
-      `known_false_rejects.csv` (regenerate them from `retag_urls.py --out` on a copy if lost). → acceptance criteria.
+      `/workspaces/thesis/data/`) is kept, and who holds the git-ignored `data/retag/` lists
+      (regenerate them with `retag_urls.py --out` on a copy of the backup if lost; the 28 known false rejects are committed). → acceptance criteria.
 
 ## Status
 

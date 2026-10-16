@@ -1,0 +1,29 @@
+article_id,ticker,company,url,match_class,match_reason,prev_fetch_status
+190147,DG,Dollar General,https://www.cnbc.com/2016/08/25/discount-retailer-dollar-generals-sales-miss-estimates.html,reject,none,ok
+288255,IFF,International Flavors & Fragrances,https://www.cnbc.com/2022/01/20/carl-icahn-owns-4percent-stake-in-international-flavors-fragrances-sources-say.html,reject,none,ok
+302362,KLAC,KLA Corporation,https://seekingalpha.com/article/4527226-kla-corporation-2022-q4-results-earnings-call-presentation,reject,none,failed
+302364,KLAC,KLA Corporation,https://seekingalpha.com/article/4572802-kla-corporation-2023-q2-results-earnings-call-presentation,reject,none,failed
+302365,KLAC,KLA Corporation,https://seekingalpha.com/article/4620857-kla-corporation-2023-q4-results-earnings-call-presentation,reject,none,failed
+302366,KLAC,KLA Corporation,https://seekingalpha.com/article/4596927-kla-corporation-2023-q3-results-earnings-call-presentation,reject,none,failed
+302372,KLAC,KLA Corporation,https://seekingalpha.com/article/4643557-kla-corporation-2024-q1-results-earnings-call-presentation,reject,none,failed
+302374,KLAC,KLA Corporation,https://seekingalpha.com/article/4706334-kla-corporation-2024-q4-results-earnings-call-presentation,reject,none,thin_content
+302375,KLAC,KLA Corporation,https://seekingalpha.com/article/4665165-kla-corporation-2024-q2-results-earnings-call-presentation,reject,none,failed
+302376,KLAC,KLA Corporation,https://seekingalpha.com/article/4807290-kla-corporation-2025-q4-results-earnings-call-presentation,reject,none,failed
+302377,KLAC,KLA Corporation,https://seekingalpha.com/article/4753652-kla-corporation-2025-q2-results-earnings-call-presentation,reject,none,failed
+302378,KLAC,KLA Corporation,https://seekingalpha.com/article/4780180-kla-corporation-2025-q3-results-earnings-call-presentation,reject,none,failed
+302384,KLAC,KLA Corporation,https://seekingalpha.com/article/4835134-kla-corporation-2026-q1-results-earnings-call-presentation,reject,none,failed
+302385,KLAC,KLA Corporation,https://seekingalpha.com/article/4915308-kla-corporation-dominant-moat-solid-growth-rich-valuation,reject,none,failed
+302386,KLAC,KLA Corporation,https://seekingalpha.com/article/4926562-kla-corporation-2026-q4-results-earnings-call-presentation,reject,none,thin_content
+302387,KLAC,KLA Corporation,https://seekingalpha.com/article/4864222-kla-corporation-2026-q2-results-earnings-call-presentation,reject,none,failed
+302388,KLAC,KLA Corporation,https://seekingalpha.com/article/4896158-kla-corporation-2026-q3-results-earnings-call-presentation,reject,none,failed
+433271,SO,Southern Company,https://www.cnbc.com/2024/06/27/us-needs-major-nuclear-power-expansion-southern-company-ceo-says.html,reject,none,ok
+434263,SO,Southern Company,https://www.cnbc.com/2017/08/16/ceos-face-a-false-choice-on-whether-or-not-to-stick-with-trump-says-southern-company-ceo.html,reject,none,ok
+434360,SO,Southern Company,https://www.cnbc.com/2017/03/28/like-the-new-epa-chief-southern-companys-ceo-doesnt-see-co2-as-main-reason-for-climate-change.html,reject,none,ok
+435117,SO,Southern Company,https://www.cnbc.com/2012/10/10/southern-company-helping-whooping-crane-followers-track-flight-progress-as-operation-migrations-annual-journey-is-under-way.html,reject,none,ok
+435123,SO,Southern Company,https://www.cnbc.com/2012/10/09/southern-company-third-quarter-earnings-to-be-released-oct-31.html,reject,none,ok
+435134,SO,Southern Company,https://www.cnbc.com/2012/10/04/southern-company-earns-prestigious-gold-award-for-innovative-employee-training-program.html,reject,none,ok
+435333,SO,Southern Company,https://www.cnbc.com/2011/06/27/is-southern-company-the-way-to-get-defensive.html,reject,none,ok
+435354,SO,Southern Company,https://www.cnbc.com/2011/05/16/stocks-to-watch-american-eagle-southern-company-and-more.html,reject,none,ok
+435444,SO,Southern Company,https://www.cnbc.com/2007/05/09/your-questions-about-the-southern-company-moodys.html,reject,none,ok
+435809,SO,Southern Company,https://seekingalpha.com/article/4933752-southern-company-and-duke-energy-utilities-with-long-term-potential,reject,none,ok
+435813,SO,Southern Company,https://seekingalpha.com/article/4933752-southern-company-and-duke-energy-utilities-with-long-term-potential?source=feed_all_articles,reject,none,ok
