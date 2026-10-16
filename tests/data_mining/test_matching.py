@@ -297,7 +297,8 @@ def test_a_trailing_s_in_the_url_is_not_read_as_the_company(
 
 
 # The 11 names of the real universe (506 company names in `urls.db`) whose last word ends in "co" or
-# "corp": the camel-case rule must cut exactly two of them.
+# "corp": the camel-case rule must cut exactly two of them. A name added to the universe later is not
+# in this list: re-scan the company names of `urls.db` for a capital `Co`/`Corp` tail when it changes.
 CO_ENDING_NAMES = [
     "Costco",
     "Cisco",
