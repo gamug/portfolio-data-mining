@@ -1058,7 +1058,7 @@ Direction for the per-company matcher, to be confirmed against step 1's data:
 
 ## Work item 11 — Fetch the Tiingo prices for the 33 leaver lines into a private local file (code + data, cross-repo origin, T-061)
 
-**Status: in progress. `T-061` active.**
+**Status: closed 2026-10-16 (PR #62, approved; awaiting merge); task moved to `CHANGELOG.md`.**
 
 **Why**: `portfolio-financial-analysis` (its `T-100` full-universe run, raised by
 `T-153` parts 2–3; request `gamug/portfolio-financial-analysis/docs/upstream_requests/data_mining_leaver_prices.md`)
@@ -1109,13 +1109,12 @@ dropped.
 
 ## Sequencing
 
-Work items 3, 4, 5, 6, 7 and 9 are closed (merged or verified; tasks in `CHANGELOG.md`). Work
+Work items 3, 4, 5, 6, 7, 9 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) is open;
 `portfolio-nlp`'s Work item 15 development waits on it, so it takes priority over any new work,
-alongside the already-active Work item 8. Work item 11 (Tiingo leaver prices, `T-061`, requested
-by `portfolio-financial-analysis`) is open; it is an independent, one-off data fetch.
-Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
-item is accepted (Non-goals above) and not touched by this plan.
+alongside the already-active Work item 8. Otherwise there is no ordering constraint from the rest
+of the backlog, since every other `SPEC.md` §13 item is accepted (Non-goals above) and not touched
+by this plan.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
