@@ -95,7 +95,7 @@ Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is ope
 Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in progress (scheduled 2026-10-16):
 matcher and `scripts/reclass_rejects.py` are written and rehearsed on a copy of the real database (apply, second
 apply, revert), the hand-check sheet passes for the shipped rule, and the `loose_name` precision sample is
-labeled except 4 refreshed rows. The real re-class run (437 promotions, all `review`) and the `portfolio-nlp`
+fully labeled (News Corp 10 of 10, the rest 20 of 20). The real re-class run (437 promotions, all `review`) and the `portfolio-nlp`
 hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
