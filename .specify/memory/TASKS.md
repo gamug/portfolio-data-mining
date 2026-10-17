@@ -86,18 +86,22 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 ## Work item 13 — Release the News Corp pairs the loose-name rule held back (code + data, origin: Work item 12 decision)
 
 - [ ] **T-063** *(Work item 13; follows T-062's real re-class run; changes the matcher and a real-data release; scheduled by the maintainer 2026-10-16)*
-      Make the 402 News Corp pairs (`NWS` 200, `NWSA` 202; 202 distinct URLs) `accept` and release their articles:
-      add `NWS` and `NWSA` `("news corp", "news corps")` to `matching.ALIASES` (hit = `accept`/`alias`, so new rows are
-      right at discovery); teach `scripts/reclass_rejects.py` `--from-class review` (default `reject`) so the audited pass
-      promotes the `review`/`loose_name` rows that now classify `accept` and `sync_quarantine` releases their articles;
-      run `audit_article_quality.py` on the articles to be released first (a wall, under-floor or duplicate body stays
-      quarantined and is listed). The other 35 promoted pairs stay `review`. Acceptance: alias tests (the 202 slug forms
-      accept, another `news` company unchanged), `known_false_rejects.py --check` and its test updated,
-      `score_ticker_rules.py --check` re-measured and PLAN figures re-frozen if they move, a dry run on the real database
-      with the exact number of articles released and the audit result, a rehearsal on a copy (apply, second apply,
-      revert) equal to the dry run, the real run by the maintainer's go-ahead with a new backup, and `portfolio-nlp`
-      told the number of articles it gains before the run. No schema change (constitution #10 does not apply);
-      constitution #11/#12 at close.
+      Make the News Corp pairs (402 on 2026-10-17: `NWS` 200, `NWSA` 202; 202 distinct URLs) `accept` and release their
+      articles: add `NWS` and `NWSA` `("news corp", "news corps")` to `matching.ALIASES` (hit = `accept`/`alias`); teach
+      `scripts/reclass_rejects.py` `--from-class review` (default `reject`): the dry run predicts the release, the pass
+      leaves `review` every pair whose article is a wall or under the word floor (same tests as
+      `audit_article_quality.py`, listed in the report and the summary), the post-conditions check that the `ok`
+      articles grew by exactly the prediction and are readable through `attach(read_only=True)`, `--revert` takes a
+      `review` to `accept` list and re-quarantines the articles. Both share classes are released by default (202 bodies
+      are copies); the dry run prints the numbers and the maintainer decides on them. The other 35 promoted pairs stay
+      `review`. Acceptance: alias tests (the 202 slug forms accept, another `news` company unchanged),
+      `known_false_rejects.py --check` and its test updated (400 `accept` / 33 `review` of 433), `score_ticker_rules.py
+      --check` re-measured and PLAN figures re-frozen if they move, tests for the hold, the prediction, the revert and
+      the scope, a dry run on the real database with the exact release count, the held pairs and the audit result, a
+      rehearsal on a copy (apply, second apply, revert) equal to the dry run, the real run by the maintainer's go-ahead
+      with a new backup (one stop of the collector with T-062's run if the code is merged first), and `portfolio-nlp`
+      told the number of articles it gains (and how many are copies) before the run. No schema change (constitution
+      #10 does not apply); constitution #11/#12 at close.
 
 ## Status
 

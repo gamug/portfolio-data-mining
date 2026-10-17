@@ -1222,21 +1222,53 @@ one of the 202 URLs contains the literal `news-corp` (19 as the possessive `news
 file were read and all are about News Corp, and the maintainer's hand sample is 10 of 10 (95% lower bound 72%).
 The other 35 pairs (`KLAC` 16, `SO` 11, `BAC` 4, `DG`/`IFF`/`PEP`/`TTD` 1; sample 20 of 20, lower bound 84%) stay
 `review`; this item does not touch them (the maintainer may extend it later).
-**What:** (1) the matcher's existing mechanism for a name a company is also known by, `matching.ALIASES`
-(`WMT` `wal mart`, `META` `facebook`), gets `NWS` and `NWSA` `("news corp", "news corps")`: a hit is `accept` with reason
-`alias`, so new collector rows are tagged right at discovery and not only after a re-class. (2) `reclass_rejects.py`
-learns `--from-class review` (default `reject`) so the same audited pass (dry run, backup, audit list, `--revert`,
-fingerprint guard) promotes the `review`/`loose_name` rows that now classify `accept`; `sync_quarantine` then releases
-their articles. (3) Before the release, `audit_article_quality.py` (T-060) is run on the articles to be released: a wall,
-an under-floor or a duplicate body stays quarantined and is listed (releasing restores the previous status, which was
-`ok` for most). (4) `portfolio-nlp` is told how many articles it gains before the real run.
-**Acceptance:** `ALIASES` has the two entries with tests (the 202 slug forms are `accept`/`alias`; another company
-whose name contains `news` stays as it was); `known_false_rejects.py --check` and its test are updated (the News Corp
-rows are `accept`, the rest `review`); `score_ticker_rules.py --check` is re-measured and the PLAN figures re-frozen
-if they move; the dry run on the real database reports the exact number of articles released and the audit result;
-a rehearsal on a copy (apply, second apply, revert) matches the dry run; the real run is done by the maintainer's go-ahead
-with a new backup; the released articles are readable (`ok`) and `portfolio-nlp` has the number. No schema change
-(constitution #10 does not apply). Constitution #11 and #12 apply at close.
+**What:**
+1. **Alias.** `matching.ALIASES` gets `NWS` and `NWSA` `("news corp", "news corps")` (as `WMT` `wal mart`, `META`
+   `facebook`): a hit is `accept` / `alias`, so new collector rows are right at discovery. Simulated on the 433 known
+   false rejects: 400 `accept` / `alias` (`NWS` 199, `NWSA` 201), 33 `review`.
+2. **The audited pass.** `reclass_rejects.py --from-class review` (default `reject`) promotes the `review` /
+   `loose_name` rows that now classify `accept`. A release is by class: `sync_quarantine` releases every article whose
+   pair is `accept` (`release_articles` puts back `prev_fetch_status`), so a pair that must stay held must stay `review`.
+3. **What a release changes in the checks** (T-062's checks assume that nothing readable moves). The dry run prints the
+   predicted release (articles whose pair is promoted and whose `prev_fetch_status` is `ok`) and `predicted_sync` as
+   `released N`; the post-condition checks that the `ok` articles grew by exactly that number (T-062: 0), that no listed
+   pair is still `review`, and that every released article is readable through `Database.attach(read_only=True)`;
+   `--revert` accepts a `review` to `accept` list (validated as before: columns, unique ids, each row a promotion from
+   `--from-class`, same ticker and url as the database, pair-checked) and puts the articles back to `quarantined`
+   (`quarantine_articles`), its post-condition checks the `ok` articles fell by the released number; the fingerprint, the
+   run summary and the reader check read the new class. Each is a test, and the rehearsal checks all three (apply,
+   second apply, revert), as for T-062.
+4. **Walls and short bodies stay held.** The audit tools are read-only and release nothing, so the pass does the
+   exclusion itself: with `--from-class review` the dry run applies the audit's tests (`extractor.parse.wall_kind`,
+   `MIN_WORDS_FOR_FULL_CONTENT`, the same as `audit_article_quality.py`) to the body of each candidate article whose
+   `prev_fetch_status` is `ok`, lists every pair that fails (id, ticker, url, reason) and **leaves it `review`**, so
+   `sync_quarantine` does not release it. The report and the run summary carry the held list; the acceptance below says
+   how many are expected.
+5. **Scope.** The pass applies only the candidates the aliases make `accept`: the dry run reports the exact number of
+   pairs (402 on the real file of 2026-10-17, or the number found then, with the reason for any difference), the pairs
+   held by step 4 and the articles released, and `--apply` refuses when its plan differs from the fingerprint of the dry
+   run (the existing guard). The other 35 pairs stay `review`: after the run `review` / `loose_name` is 35 plus the
+   pairs held by step 4.
+6. **Two share classes, one body.** `NWS` and `NWSA` are one company, so each of the 202 URLs has two pairs and two
+   stored copies of one body (the audit counts them as `duplicate_bodies`; nothing holds them, as for `GOOG` /
+   `GOOGL`). **Default: both pairs are released** (a duplicate is a copy the collector stored once per tagged ticker,
+   not a bad body). The dry run prints the readable set growth as `N articles, of which D bodies already readable for
+   the other share class`, and `portfolio-nlp` is told both numbers: the readable set grows by up to 402, 202 of them
+   copies of another ticker's body. If the maintainer wants one share class only, the alias goes to one ticker and the
+   count halves; this is decided on the dry run's numbers, before the real run.
+7. **Hand-off and window.** `portfolio-nlp` is told how many articles it gains before the real run. The real run
+   stops the collector and the crawler like T-062's: if the T-063 code is merged before T-062's run, one stop can do
+   both (the alias then already applies to the rows the collector adds); after it, a second stop is needed, with the
+   same checklist.
+**Acceptance:** `ALIASES` has the two entries with tests (the 202 slug forms are `accept` / `alias`; another company
+whose name contains `news` stays as it was); `known_false_rejects.py --check` and its test are updated (of the 433 rows,
+**400 `accept` / `alias` (News Corp) and 33 `review`**); `score_ticker_rules.py --check` is re-measured and the PLAN
+figures re-frozen if they move; tests for steps 2 to 5 (wall and short body held and listed, predicted release equals
+the `ok` growth, revert round trip, scope refusal); the dry run on the real database reports the exact number of
+articles released, the pairs held and why, and the audit result (walls among the 402: 0, or each listed and left
+`review`); a rehearsal on a copy (apply, second apply, revert) equals the dry run; the real run is done by the
+maintainer's go-ahead with a new backup; the released articles are readable (`ok`) and `portfolio-nlp` has the number.
+No schema change (constitution #10 does not apply). Constitution #11 and #12 apply at close.
 
 ## Sequencing
 
