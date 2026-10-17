@@ -586,7 +586,7 @@ def test_a_leftover_partial_list_blocks_a_run_and_cannot_be_reverted(
                 str(listing),
             ]
         )
-    assert (
+    with pytest.raises(SystemExit, match="partial"):
         reclass.main(
             [
                 "--db",
@@ -597,8 +597,6 @@ def test_a_leftover_partial_list_blocks_a_run_and_cannot_be_reverted(
                 str(tmp_path / "r.db"),
             ]
         )
-        == 1
-    )
     assert _rows(db_file)[1][0] == "reject"
 
 
@@ -707,3 +705,177 @@ def test_a_clean_apply_and_revert_report_no_problem(
         == 0
     )
     assert "POST-CONDITION FAILED" not in capsys.readouterr().err
+
+
+def _list_with(tmp_path: Path, rows: list[dict[str, str]]) -> Path:
+    path = tmp_path / "given.csv"
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=reclass.LIST_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def _entry(id_: object = 1, **over: str) -> dict[str, str]:
+    base = {
+        "id": str(id_),
+        "article_id": "",
+        "ticker": "KLAC",
+        "company": "KLA Corporation",
+        "url": "u",
+        "old_class": "reject",
+        "old_reason": "none",
+        "new_class": "review",
+        "new_reason": "loose_name",
+        "old_status": "fetched",
+        "new_status": "fetched",
+        "article_fetch_status": "",
+    }
+    return {**base, **over}
+
+
+def _revert(db_file: Path, tmp_path: Path, listing: Path) -> int:
+    return reclass.main(
+        ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
+    )
+
+
+def test_a_list_of_the_wrong_shape_stops_before_any_backup(db_file: Path, tmp_path: Path) -> None:
+    bad = tmp_path / "bad.csv"
+    bad.write_text("id,foo\n1,2\n")
+    before = _rows(db_file)
+
+    with pytest.raises(SystemExit, match="not an audit list from this script"):
+        _revert(db_file, tmp_path, bad)
+
+    assert not (tmp_path / "r.db").exists() and _rows(db_file) == before
+
+
+def test_a_list_naming_an_id_the_database_does_not_have_stops_before_any_backup(
+    db_file: Path, tmp_path: Path
+) -> None:
+    listing = _list_with(tmp_path, [_entry(1), _entry(999)])
+    before = _rows(db_file)
+
+    with pytest.raises(SystemExit, match=r"1 id\(s\) not in urls.db"):
+        _revert(db_file, tmp_path, listing)
+
+    assert not (tmp_path / "r.db").exists() and _rows(db_file) == before  # not even row 1 touched
+
+
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    [
+        ([_entry(1, id="x")], "is not an integer"),
+        ([_entry(1, old_class="review", new_class="reject")], "is not a promotion"),
+        ([_entry(1, old_class="nope")], "is not a promotion"),
+        ([_entry(1, new_reason="")], "a reason or status is empty"),
+        ([_entry(1), _entry(1)], "duplicated ids"),
+    ],
+)
+def test_a_list_that_is_not_a_recorded_promotion_is_refused(
+    db_file: Path, tmp_path: Path, rows: list[dict[str, str]], message: str
+) -> None:
+    with pytest.raises(SystemExit, match=message):
+        _revert(db_file, tmp_path, _list_with(tmp_path, rows))
+    assert not (tmp_path / "r.db").exists()
+
+
+def test_apply_and_revert_cannot_be_given_together_and_revert_takes_no_list(
+    db_file: Path, tmp_path: Path
+) -> None:
+    listing = _list_with(tmp_path, [_entry(1)])
+    base = ["--db", str(db_file), "--backup", str(tmp_path / "b.db")]
+
+    with pytest.raises(SystemExit) as both:
+        reclass.main([*base, "--apply", "--revert", str(listing)])
+    with pytest.raises(SystemExit) as with_list:
+        reclass.main([*base, "--revert", str(listing), "--list", str(tmp_path / "x.csv")])
+
+    assert both.value.code == 2 and with_list.value.code == 2
+    assert not (tmp_path / "b.db").exists()
+
+
+def test_a_revert_that_finds_every_row_changed_since_says_zero_not_success(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing = tmp_path / "audit.csv"
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+    with sqlite3.connect(db_file) as con:  # a person re-classed both promoted rows meanwhile
+        con.execute("UPDATE discovered_urls SET match_reason = 'hand' WHERE id IN (1, 3)")
+    capsys.readouterr()
+
+    assert _revert(db_file, tmp_path, listing) == 0
+
+    assert "reverted 0 of 2 listed rows (2 changed since and left alone)" in capsys.readouterr().out
+    assert _rows(db_file)[1][:2] == ("review", "hand")
+
+
+def test_the_operator_mistakes_that_used_to_be_tracebacks_are_one_line_errors(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert reclass.main(["--db", str(tmp_path / "typo.db")]) == 1
+    assert "does not exist" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit, match="cannot read the audit list"):
+        _revert(db_file, tmp_path, tmp_path / "missing.csv")
+
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    with pytest.raises(SystemExit, match="cannot create or use the backup directory"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(blocker / "b.db"),
+                "--list",
+                str(tmp_path / "l.csv"),
+            ]
+        )
+    assert _rows(db_file)[1][0] == "reject" and not (tmp_path / "l.csv").exists()
+
+
+def test_the_wal_is_truncated_at_the_end_of_a_run_and_a_held_reader_only_delays_it(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A reader on an older portfolio-common refuses a non-empty `-wal`. A reader that is open while
+    the run writes keeps frames in the log (the precondition), the end-of-run checkpoint reports that it
+    could not truncate, and once the reader closes the same checkpoint empties the log."""
+    wal = db_file.with_name(db_file.name + "-wal")
+    reader = sqlite3.connect(db_file, isolation_level=None)
+    reader.execute("PRAGMA journal_mode=WAL")
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()  # holds a read snapshot
+
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 0
+    err = capsys.readouterr().err
+    assert wal.exists() and wal.stat().st_size > 0  # the reader kept the frames in the log
+    assert "a reader holds the WAL" in err
+
+    reader.execute("ROLLBACK")
+    reader.close()
+    reclass._checkpoint(db_file)
+    assert not wal.exists() or wal.stat().st_size == 0
+    assert "checkpoint: WAL truncated" in capsys.readouterr().err
+
+
+def test_a_run_with_no_reader_leaves_the_wal_empty(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 0
+    wal = db_file.with_name(db_file.name + "-wal")
+
+    assert not wal.exists() or wal.stat().st_size == 0
+    assert "checkpoint: WAL truncated" in capsys.readouterr().err

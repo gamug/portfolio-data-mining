@@ -272,6 +272,64 @@ def _discard_list(path: Path) -> None:
         _partial(path).unlink()
 
 
+def _load_list(path: Path) -> list[dict[str, str]]:
+    """The rows of an audit list file; exit when it is partial, unreadable or has other columns."""
+    if path.name.endswith(PARTIAL_SUFFIX):
+        raise SystemExit(
+            f"{path} is partial (the run never committed); there is nothing to revert."
+        )
+    try:
+        with path.open(newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            header = reader.fieldnames or []
+            rows = list(reader)
+    except OSError as exc:
+        raise SystemExit(f"cannot read the audit list {path}: {exc}.") from exc
+    if set(header) != set(LIST_FIELDS):
+        raise SystemExit(
+            f"{path} is not an audit list from this script: columns {header}, expected {LIST_FIELDS}."
+        )
+    return rows
+
+
+def _row_problems(rows: list[dict[str, str]]) -> tuple[list[int], list[str]]:
+    """The integer ids of the rows and one line per row that is not a recorded promotion."""
+    ids: list[int] = []
+    problems: list[str] = []
+    for n, r in enumerate(rows, 2):  # line numbers as in the file
+        try:
+            ids.append(int(r["id"]))
+        except ValueError:
+            problems.append(f"line {n}: id {r['id']!r} is not an integer")
+            continue
+        old, new = r["old_class"], r["new_class"]
+        if old not in CLASS_RANK or new not in CLASS_RANK or CLASS_RANK[old] >= CLASS_RANK[new]:
+            problems.append(f"line {n}: class {old!r} -> {new!r} is not a promotion")
+        if not all(r[k] for k in ("old_reason", "new_reason", "old_status", "new_status")):
+            problems.append(f"line {n}: a reason or status is empty")
+    return ids, problems
+
+
+def _read_list(path: Path, db_path: Path) -> list[dict[str, str]]:
+    """Read and validate an audit list before anything is touched (fingerprint, idle check, backup):
+    exit with every kind of problem found, one line each, when it is not a list this script wrote for this
+    database. Nothing is written."""
+    rows = _load_list(path)
+    ids, problems = _row_problems(rows)
+    if dupes := sorted({i for i in ids if ids.count(i) > 1}):
+        problems.append(f"duplicated ids: {dupes[:5]}")
+    with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
+        missing = sorted(set(ids) - set(_rows_of(con, ids)))
+    if missing:
+        problems.append(
+            f"{len(missing)} id(s) not in {db_path.name} (a list from another database?): {missing[:5]}"
+        )
+    if problems:
+        shown = "\n  ".join(problems[:10])
+        raise SystemExit(f"the audit list {path} is not valid; nothing was written:\n  {shown}")
+    return rows
+
+
 def _warn_live_writer(db_path: Path) -> None:
     """Warn (not fail) when the database looks like a process is writing to it."""
     wal = db_path.with_name(db_path.name + "-wal")
@@ -315,8 +373,13 @@ def _backup(db_path: Path, backup: Path, expected: Fingerprint) -> str:
     needed = int(
         (db_path.stat().st_size + (wal.stat().st_size if wal.exists() else 0)) * BACKUP_HEADROOM
     )
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    free = shutil.disk_usage(backup.resolve().parent).free
+    try:
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(backup.resolve().parent).free
+    except OSError as exc:
+        raise SystemExit(
+            f"cannot create or use the backup directory {backup.parent}: {exc}."
+        ) from exc
     if free < needed:
         raise SystemExit(f"not enough disk for the backup: {needed} bytes needed, {free} free.")
     try:
@@ -466,16 +529,32 @@ def _verify_apply(
     return problems
 
 
+def _holding(db_path: Path, rows: list[dict[str, str]]) -> int:
+    """How many listed rows still hold what the run wrote (the ones a revert will put back)."""
+    with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
+        current = _rows_of(con, [int(r["id"]) for r in rows])
+    return sum(
+        1
+        for r in rows
+        if int(r["id"]) in current
+        and (current[int(r["id"])]["match_class"], current[int(r["id"])]["match_reason"])
+        == (r["new_class"], r["new_reason"])
+    )
+
+
 def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
     """After `revert`: no listed row still holds what the run wrote, and no `accept` pair keeps a
     quarantined article."""
     problems: list[str] = []
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
         current = _rows_of(con, [int(r["id"]) for r in rows])
+        if gone := [r["id"] for r in rows if int(r["id"]) not in current]:
+            problems.append(f"{len(gone)} listed id(s) are no longer in the database: {gone[:5]}")
         left = [
             r["id"]
             for r in rows
-            if (current[int(r["id"])]["match_class"], current[int(r["id"])]["match_reason"])
+            if int(r["id"]) in current
+            and (current[int(r["id"])]["match_class"], current[int(r["id"])]["match_reason"])
             == (r["new_class"], r["new_reason"])
         ]
         if left:
@@ -483,6 +562,29 @@ def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
         if held := _held_accepts(con):
             problems.append(f"{held} `accept` pair(s) still have a quarantined article")
     return problems
+
+
+def _checkpoint(db_path: Path) -> None:
+    """Leave the database checkpointed: the last connection to close after a run is read-only (the
+    verification) and cannot fold the WAL into the file, so `-wal` would stay non-empty and a reader
+    on an older `portfolio-common` refuses to attach. `TRUNCATE` empties it; a reader holding the log
+    only delays that, which is reported, not an error."""
+    try:
+        with closing(sqlite3.connect(db_path, timeout=0, isolation_level=None)) as con:
+            busy, log, done = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    except sqlite3.OperationalError as exc:
+        print(
+            f"warning: could not checkpoint the WAL ({exc}); it will clear when readers close.",
+            file=sys.stderr,
+        )
+        return
+    if busy:
+        print(
+            "warning: a reader holds the WAL, so it was not truncated; it will clear later.",
+            file=sys.stderr,
+        )
+    else:
+        print(f"checkpoint: WAL truncated ({done} of {log} frames folded in)", file=sys.stderr)
 
 
 def _report_problems(problems: list[str], what: str) -> int:
@@ -496,20 +598,32 @@ def _report_problems(problems: list[str], what: str) -> int:
     return 1
 
 
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point."""
+def _parse(argv: list[str] | None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--db", default=resolve_db_path())
-    ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--revert", type=Path, metavar="LIST", help="undo a run from its audit list")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--revert", type=Path, metavar="LIST", help="undo a run from its audit list")
     ap.add_argument("--backup", type=Path)
     ap.add_argument(
-        "--list", type=Path, default=Path(DEFAULT_LIST), help="audit list `--apply` writes"
+        "--list", type=Path, help=f"audit list `--apply` writes (default {DEFAULT_LIST})"
     )
     args = ap.parse_args(argv)
+    if args.revert and args.list:
+        ap.error("--list is for --apply; --revert reads the list it is given")
+    args.list = args.list or Path(DEFAULT_LIST)
+    return args
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point."""
+    args = _parse(argv)
     db_path = Path(args.db)
+    if not db_path.is_file():
+        print(f"error: the database {db_path} does not exist (pass --db PATH)", file=sys.stderr)
+        return 1
     if args.revert:
         return _revert_main(db_path, args)
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
@@ -523,6 +637,17 @@ def main(argv: list[str] | None = None) -> int:
     print(json.dumps({"promotions": len(promotions), **summarize(promotions), **details}, indent=2))
     if not args.apply:
         return 0
+    return _apply_main(db_path, args, expected, promotions, details, audit)
+
+
+def _apply_main(
+    db_path: Path,
+    args: argparse.Namespace,
+    expected: Fingerprint,
+    promotions: list[Promotion],
+    details: dict[str, object],
+    audit: list[dict[str, object]],
+) -> int:
     if args.backup is not None and args.backup.exists():
         print("error: --backup names a file that exists; pick a new path", file=sys.stderr)
         return 1
@@ -553,18 +678,14 @@ def main(argv: list[str] | None = None) -> int:
     with _stage("verify"):
         predicted = cast(dict[str, int], details["predicted_sync"])
         problems = _verify_apply(db_path, promotions, expected, result, predicted)
+    _checkpoint(db_path)
     return _report_problems(problems, "--apply") if problems else 0
 
 
 def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
-    if args.revert.name.endswith(PARTIAL_SUFFIX):
-        print(
-            "error: that audit list is partial (the run never committed); nothing to revert",
-            file=sys.stderr,
-        )
-        return 1
-    with args.revert.open(newline="", encoding="utf-8") as fh:
-        rows = list(csv.DictReader(fh))
+    rows = _read_list(
+        args.revert, db_path
+    )  # validated before the fingerprint, the lock and the backup
     if args.backup is None or args.backup.exists():
         print("error: --revert needs --backup PATH naming a new file", file=sys.stderr)
         return 1
@@ -578,11 +699,16 @@ def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
     with _stage("backup, check and sha256"):
         sha = _backup(db_path, args.backup, expected)
     print(f"backup {args.backup} sha256 {sha}")
+    holding = _holding(db_path, rows)
     with _stage("revert and sync"):
         quarantined, released = revert(db_path, rows, expected)
-    print(f"reverted from {len(rows)} listed rows; quarantined {quarantined}, released {released}")
+    print(
+        f"reverted {holding} of {len(rows)} listed rows ({len(rows) - holding} changed since and "
+        f"left alone); quarantined {quarantined}, released {released}"
+    )
     with _stage("verify"):
         problems = _verify_revert(db_path, rows)
+    _checkpoint(db_path)
     return _report_problems(problems, "--revert") if problems else 0
 
 
