@@ -95,7 +95,7 @@ _SUFFIX = re.compile(
 # Names whose plural the slug spells like a possessive but is an ordinary phrase (read by hand in the
 # real data, PLAN Work item 12: `best-buys` is a list of picks, not Best Buy, and
 # `on-semiconductors` is a plural, not ON Semiconductor, and `target-corporations` is a noun phrase, not
-# Target Corporation).
+# Target Corporation). Owner: whoever changes the company universe re-scans for new names of this shape.
 PLURAL_PHRASES = frozenset({"best buy", "on semiconductor", "target corporation"})
 _CAMEL_TAIL = re.compile(
     r"(?<=[a-z])(?:Corp|Co)$"

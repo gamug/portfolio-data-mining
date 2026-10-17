@@ -245,7 +245,7 @@ PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --revert da
 The dry run is read-only and prints `promotions`, `by_class`, `by_reason`,
 `by_status` (the discovery status of the promoted rows), `skipped_back_to_pending`,
 `promoted_with_a_quarantined_article`, `top_tickers`, `predicted_sync` (`quarantined`, `released`: what the
-sync will print) and `api_rejects_left_alone`. The first dry run on the real file is slow (about 3 minutes: it
+sync will print) and `api_rejects_left_alone`. The first dry run on the real file is slow (3 to 6 minutes, 5.3 measured on 2026-10-17: it
 sits on the mounted drive and is read cold); a second one is fast because the pages are cached, so do not
 conclude it hung. `--apply` needs a backup path that does not exist and refuses a
 busy database, a disk that cannot hold the copy, an existing or unwritable audit list, and a database whose
@@ -254,11 +254,32 @@ copy (fingerprint, `quick_check`) and prints its SHA-256, and warns when `-wal` 
 collector and the crawler first. It writes the audit list as `reclass_promoted.csv.partial` and renames it to
 `data/retag/reclass_promoted.csv` (git-ignored; `--list` to move it) only once the promotions are committed, so a
 run that aborts leaves no list and a crash after the commit leaves it; `--revert LIST` puts back the old class,
-reason and status of the rows that still hold what the run wrote, then syncs (and refuses a `.partial` list).
+reason and status of the rows that still hold what the run wrote, then syncs. `--revert` validates its list before it
+touches anything (the columns of this script's list, integer and unique ids, each row a promotion, every id present in
+the database **as the same pair** (ticker and url equal; the `UPDATE` repeats that condition); a `.partial` list is
+refused) and prints how many of the listed rows its `UPDATE`s changed; `--apply` and `--revert`
+are mutually exclusive, and a mistyped `--db`, a file that is not a database, an unusable backup directory or a missing list is a one-line error.
 After the update and the sync, `--apply` and `--revert` read the database back and exit 1, with
 `POST-CONDITION FAILED` lines, if it is not as planned: the rows per class moved by exactly the promotions, none of
-them still `reject`, the sync did what the dry run predicted, no `accept` pair keeps a quarantined article (a revert:
-no listed row still holds what the run wrote). If the process dies between the promotions and the
+them still `reject`, the `UPDATE`s changed exactly the planned rows, the sync did what the dry run predicted, no `accept`
+pair keeps a quarantined article, and the articles `portfolio-nlp` reads (`fetch_status = 'ok'`) changed by exactly the
+change the dry run predicted (`predicted_ok_articles_delta`: 0 when no pair becomes `accept`, which is the claim that a
+run of `review` promotions changes nothing a consumer reads). A revert: no listed row still holds what the run wrote and the
+`ok` articles changed by what the revert implies. Both modes then truncate the
+WAL and finish with a **reader check**: the file is attached read-only through `Database.attach(read_only=True)` of the
+`portfolio-common` installed there, the pairs are counted against the fingerprint, and the line
+`reader check: attach(read_only=True) ok, N rows, M readable articles (portfolio-common X)` is printed (it counts the
+`ok` articles through the attach and compares them with a direct count). That is the failure that made `urls.db`
+unreachable for `portfolio-nlp` while it was in WAL mode, so a run that leaves it in a state a reader refuses ends with
+`POST-CONDITION FAILED` and exit 1. The remedy printed depends on the kind of failure: a data problem says how to undo
+(`--revert` with the real list and backup paths; for a revert run, to restore the backup only if nothing has run since), a
+reader problem says the data is as planned and to checkpoint with every reader stopped (`sqlite3 FILE "PRAGMA
+wal_checkpoint(TRUNCATE);"`) or `uv sync` to `portfolio-common` >= 1.2.2, with no revert needed. Both modes also write
+`reclass_apply_summary_<time>.json` / `reclass_revert_summary_<time>.json` next to the list (`--summary` to move it; it
+never overwrites): database, `portfolio-common` version, the state before and after (pairs, articles, rows per class,
+`ok` articles), the rows changed, the predicted and actual sync, the backup path and SHA-256, the list path and rows,
+the post-conditions with their problems, the reader check and the duration of each stage; the backup, list and summary
+paths are printed absolute. If the process dies between the promotions and the
 sync, `--apply` again (no backup is asked for when nothing is left to promote) runs the sync.
 
 **What the idle check can see.** `--apply` opens a write transaction before it copies anything and refuses when
@@ -271,15 +292,31 @@ API (`apps/news_collector_api.py`, port 8001), any `discover` run of the collect
 
 The order matters: `matching.classify` runs in the collector at discovery, and the queue upsert only promotes a
 class. A collector or crawler restarted after the apply with the **old** code writes the same pairs as `reject` and
-`skipped` again and undoes the fix. Time to allow: about **12 minutes** for `--apply` on the real file (measured on a copy
-on the same mounted drive, cold: fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
-5.5 minutes, update and sync 2 minutes, verify 1 minute), about 10 minutes for `--revert` (backup 6.5 minutes), and
-up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). Do not stop it because it is
-quiet: each stage prints when it ends. After an apply the `-wal` file is not empty until SQLite checkpoints it, so the
-"writer may be running" warning on the next run is expected then.
+`skipped` again and undoes the fix. Time to allow: **12 to 17 minutes** for `--apply` on the real file, plan for 20 (measured on copies on the same
+mounted drive, cold: 697 s and 1,030 s; fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
+5.5 minutes, update and sync 2 minutes, verify 1 minute in the first), about 10 to 12 minutes for `--revert`
+(backup 6.5 minutes), and up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). The
+spread is the shared drive. Do not stop a run because it is quiet: each stage prints when it ends, and a run killed
+inside the backup leaves a partial file that the next run refuses until it is moved. Both modes end with
+`PRAGMA wal_checkpoint(TRUNCATE)`: the last connection to close is the read-only verification, which cannot fold the log
+into the file, and a reader on `portfolio-common` 1.2.1 refuses a database whose `-wal` is not empty (1.2.2 refuses
+only a non-empty `-wal` with no `-shm`). If a reader holds the log the run says so and the log clears when it closes.
 
-1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
-   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs; same environment as the script).
+**Rehearse first** (once, with the collector running or not; it never writes to the real file):
+`PYTHONPATH=src uv run python scripts/rehearse_reclass.py --real-db /workspaces/thesis/data/urls.db --workdir
+/workspaces/thesis/data/rehearsal --lock-test --articles`. It needs about 9 GB free on the **same drive** (it refuses a
+directory on another filesystem), copies the database with SQLite's online backup, then runs a second writer holding the
+lock (apply must refuse), apply with a backup, the `-wal`/`-shm` state, a second apply (writes nothing), revert, and the
+`EXCEPT` comparison with the pristine copy, prints a Markdown report, writes `rehearsal_report.json`, asserts the real
+file's size and mtime are unchanged, removes its copies (`--keep` to keep them) and exits 1 if any check fails. It takes
+about 50 minutes with `--articles`.
+
+0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
+   50 minutes, and never writes to the real file.
+1. The PR is merged (**without squash**, or rebase PR #67 onto master afterwards, so it does not show the whole T-062
+   history) and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
+   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
+   `portfolio-common 1.2.2`; same environment as the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
 3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
@@ -287,14 +324,22 @@ quiet: each stage prints when it ends. After an apply the `-wal` file is not emp
 4. Apply with a new backup name:
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup
    /workspaces/thesis/data/url_cat_backup.db --list data/retag/reclass_promoted.csv`. On screen: the stage lines
-   (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0` and exit 0
-   with no `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
+   (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0`, `checkpoint: WAL
+   truncated …` (stderr), `reader check: attach(read_only=True) ok, N rows, M readable articles (portfolio-common 1.2.2)`, `run summary …` and exit
+   0 with no `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
    committed and how to revert).
-5. Record the backup's SHA-256 and who keeps the backup and `data/retag/reclass_promoted.csv`. Expected figures,
-   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986,
+5. Keep `reclass_apply_summary_<time>.json` (next to the list; it holds the backup's SHA-256, the counts, the reader check
+   and the stage times) with the backup and `data/retag/reclass_promoted.csv`, and say who keeps them. Expected figures,
+   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986 (the real file reads 325,423 on 2026-10-17),
    `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
    unchanged.
-6. Restart the collector and the crawler with the merged code, and check one new row is classed by the new matcher.
+6. Restart the collector and the crawler with the merged code and check the deployed matcher. At once, read-only:
+   `PYTHONPATH=src uv run python -c "from data_mining.matching import classify; print(classify('https://x.com/kla-corporation-q4',
+   '', 'KLA Corporation', 'KLAC'))"` must print `review` / `loose_name` (it proves the code, not the data). Once the
+   collector has discovered new rows (the `sqlite3` CLI is not installed on this machine, so Python):
+   `python3 -c "import sqlite3; c = sqlite3.connect('file:/workspaces/thesis/data/urls.db?mode=ro', uri=True);
+   print(*c.execute('SELECT id, ticker, match_class, match_reason, url FROM discovered_urls ORDER BY id DESC LIMIT 20'),
+   sep='\\n')"`; a new row whose URL spells the full company name is `review` / `loose_name`, not `reject`.
 7. Rollback: `--revert data/retag/reclass_promoted.csv --backup NEW.db` puts back the class, reason and status of the
    rows that still hold what the run wrote. Restoring `url_cat_backup.db` instead also discards every row the collector and
    crawler wrote after the backup, so use it only if nothing has run since.
