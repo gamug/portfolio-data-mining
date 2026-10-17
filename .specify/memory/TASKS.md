@@ -83,31 +83,6 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
       (no schema change). Tooling for that sheet: add `data/ticker_retag_check_sample.csv` to `EARLIER_SAMPLES` and to the
       `--final` exclusions in `ticker_validation_sample.py`, and draw with `--final --out <new path>` (the default output is the T-057 sheet and must not be overwritten).
 
-## Work item 13 — Release the News Corp pairs the loose-name rule held back (code + data, origin: Work item 12 decision)
-
-- [ ] **T-063** *(Work item 13; **blocked until the maintainer answers the Decision paragraph of Work item 13**: release
-      all, hold all for the NER check, or release the uncontested ones, the proposal; follows T-062's real re-class run;
-      changes the matcher and a real-data release; scheduled by the maintainer 2026-10-16)* Make the News Corp pairs
-      (413 on 2026-10-17: 402 `review` and 11 `reject`; 210 URLs) `accept` and release their articles, except the
-      contested ones (a URL naming another ticker's company: 84 pairs on 42 URLs; and 4 pairs on 2 roundup URLs) that
-      wait for `portfolio-nlp`'s NER check under the maintainer's doubt rule: add `NWS` and `NWSA` `("news corp", "news
-      corps", "news corporation")` to `matching.ALIASES` (hit = `accept`/`alias`); teach `scripts/reclass_rejects.py`
-      `--from-class` (`reject`, `review` or both; default `reject`): the dry run predicts the release, the pass leaves
-      as it was every pair whose article is a contested URL, a roundup, a wall or under the word floor (measured
-      2026-10-17: no wall and none under the floor among the 413) (same tests as `audit_article_quality.py`, listed in
-      the report and the summary), the post-conditions check that the `ok` articles grew by exactly the prediction and
-      are readable through `attach(read_only=True)`, `--revert` takes a list to `accept` from `review` or `reject` and
-      re-quarantines the articles. Both share classes are released by default (half of the articles are copies of the other class's body); the dry run
-      prints the numbers and the maintainer decides on them. The other 35 promoted pairs stay `review`. Acceptance:
-      alias tests (the 413 slug pairs accept, the legal name pinned, another `news` company unchanged), `known_false_rejects.py --check` and
-      its test updated (400 `accept` / 33 `review` of 433), `score_ticker_rules.py --check` re-measured and PLAN figures
-      re-frozen if they move, tests for the hold, the prediction, the revert and the scope, a dry run on the real
-      database with the exact release count, the held pairs and the audit result, a rehearsal on a copy (apply, second
-      apply, revert) equal to the dry run, the real run by the maintainer's go-ahead with a new backup (one stop of the
-      collector with T-062's run if the code is merged first), and `portfolio-nlp` told the number of articles it gains
-      (and how many are copies) before the run. No schema change (constitution #10 does not apply); constitution #11/#12
-      at close.
-
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10 and 11 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -115,7 +90,7 @@ Closed Work items 3, 4, 5, 6, 7, 9, 10 and 11 are in `CHANGELOG.md` (Work item 5
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
 Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
 Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its open successor is Work item 12);
-Work item 11, `T-061`, closed 2026-10-16 in PR #62).
+Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 13, `T-063`, closed 2026-10-17 by decision, no code).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
@@ -124,9 +99,6 @@ matcher, `scripts/reclass_rejects.py` and `scripts/rehearse_reclass.py` are writ
 same-mount copy of the real database (apply, second apply, revert, comparison); the hand-check sheet passes for the
 shipped rule and the `loose_name` precision sample is fully labeled (News Corp 10 of 10, the rest 20 of 20). The real
 re-class run (437 promotions, all `review`) and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
-
-Work item 13 (`T-063`, release the News Corp pairs to `accept`) is scheduled (2026-10-16) and starts after Work item 12's
-real re-class run.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

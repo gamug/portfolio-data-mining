@@ -690,3 +690,11 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       committed tests, `membership_span` per stint + ANSS `declared_exception` + K's spin-off note in
       the manifest, and a trim-reason-class comparison.
 
+## Work item 13 — The News Corp pairs wait for the NER check (decision)
+
+- [x] **T-063** *(superseded 2026-10-17 by the maintainer's decision, option B; no code)* The proposal was to release
+      the News Corp pairs (`NWS`, `NWSA`; 413 pairs on 210 URLs, 402 `review` and 11 `reject`) to `accept` with an alias,
+      a `--from-class` pass and holds for walls, contested URLs and roundups. On the evidence (10 of 10 hand sample,
+      lower bound 72%; 42 URLs naming another company; 18 of 20 on the developer's read) the maintainer chose to hold
+      them all for `portfolio-nlp`'s future NER check, under the rule that doubtful tags are left to it. Nothing is
+      built or released; the measurements and the open question about 11 legal-name pairs are in `PLAN.md` Work item 13.
