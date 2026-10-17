@@ -311,6 +311,8 @@ lock (apply must refuse), apply with a backup, the `-wal`/`-shm` state, a second
 file's size and mtime are unchanged, removes its copies (`--keep` to keep them) and exits 1 if any check fails. It takes
 about 50 minutes with `--articles`.
 
+0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
+   50 minutes, and never writes to the real file.
 1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
    `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
    `portfolio-common 1.2.2`; same environment as the script).
@@ -327,7 +329,7 @@ about 50 minutes with `--articles`.
    committed and how to revert).
 5. Keep `reclass_apply_summary_<time>.json` (next to the list; it holds the backup's SHA-256, the counts, the reader check
    and the stage times) with the backup and `data/retag/reclass_promoted.csv`, and say who keeps them. Expected figures,
-   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986,
+   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986 (the real file reads 325,423 on 2026-10-17),
    `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
    unchanged.
 6. Restart the collector and the crawler with the merged code, and check one new row is classed by the new matcher.

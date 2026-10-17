@@ -1191,13 +1191,23 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   and `portfolio-nlp` reads only `fetch_status = 'ok'`; the run checks that count (predicted change 0). What moves is
   the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-16:**
   release the News Corp pairs in a follow-up (`T-063`, Work item 13); the other 35 stay `review`.
-- **Known gap** (read-only, 2026-10-16): 438 of the 324,981 `reject` rows left after the rule have a distinctive
+- **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
+  rule promotes 437, so `reject` is **324,986** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
-  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`); not fixed here, below the T-057 hand check's resolution.
+  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). The 438 was not re-measured after the fix; it can differ by at most the 5
+  pairs the fix put back to `reject` (`AT&T`, `target-corporations`). Not fixed here, below the T-057 hand check's
+  resolution.
+- **Owner of the hand-read lists:** `matching.PLURAL_PHRASES` and the camel-tail names are re-scanned by whoever changes
+  the company universe (a new two-word name that is also a plural noun is read as a spelling and lands in `review`,
+  which is harmless for the quarantine but raises the false rate of `loose_name`). The re-scan is part of the
+  universe-change task, and `loose_name_precision.py sample` re-measures the rate.
 - **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed,
   `uv sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then
   the close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
   artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; `T-063` starts after that.
+- **Scripts after the run (maintainer decides):** recommended: keep `reclass_rejects.py` (`--revert` is the rollback) and
+  `rehearse_reclass.py` until `T-063` is merged, since it reuses the audit list and the same guards; remove both and
+  their tests in the `T-063` close-out commit. The audit list, the run summary and the backup are the record.
 
 ## Sequencing
 
