@@ -336,9 +336,10 @@ about 50 minutes with `--articles`.
 6. Restart the collector and the crawler with the merged code and check the deployed matcher. At once, read-only:
    `PYTHONPATH=src uv run python -c "from data_mining.matching import classify; print(classify('https://x.com/kla-corporation-q4',
    '', 'KLA Corporation', 'KLAC'))"` must print `review` / `loose_name` (it proves the code, not the data). Once the
-   collector has discovered new rows: `sqlite3 -readonly /workspaces/thesis/data/urls.db "SELECT id, ticker,
-   match_class, match_reason, url FROM discovered_urls ORDER BY id DESC LIMIT 20"`; a new row whose URL spells the full
-   company name is `review` / `loose_name`, not `reject`.
+   collector has discovered new rows (the `sqlite3` CLI is not installed on this machine, so Python):
+   `python3 -c "import sqlite3; c = sqlite3.connect('file:/workspaces/thesis/data/urls.db?mode=ro', uri=True);
+   print(*c.execute('SELECT id, ticker, match_class, match_reason, url FROM discovered_urls ORDER BY id DESC LIMIT 20'),
+   sep='\\n')"`; a new row whose URL spells the full company name is `review` / `loose_name`, not `reject`.
 7. Rollback: `--revert data/retag/reclass_promoted.csv --backup NEW.db` puts back the class, reason and status of the
    rows that still hold what the run wrote. Restoring `url_cat_backup.db` instead also discards every row the collector and
    crawler wrote after the backup, so use it only if nothing has run since.
