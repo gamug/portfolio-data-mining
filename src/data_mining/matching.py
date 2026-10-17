@@ -195,7 +195,8 @@ def _loose_name(company: str, text: str) -> bool:
     """The company's name as a URL spells it, a weaker sign than the exact name (``review``).
 
     Spellings the exact check misses (PLAN Work item 12): the name with its corporate suffix kept
-    (``kla-corporation``, ``southern-company``, ``news-corp``), the name with the ``and`` of an ``&``
+    (``kla-corporation``, ``southern-company``, ``news-corp``), a trailing ``Corp`` spelled out
+    (``news-corporation``), the name with the ``and`` of an ``&``
     dropped (``flavors-fragrances``), and the brand of a camel-case name (``pepsi`` for ``PepsiCo``;
     only a capital ``Co``/``Corp`` tail counts, so ``Costco`` and ``Cisco`` are not cut). A trailing
     ``s`` of a possessive is read (``news-corps-dual-class``, ``bank-of-americas-ceo``; 45 of the 433
@@ -207,7 +208,9 @@ def _loose_name(company: str, text: str) -> bool:
     flat_text = flat(text)
     name = full_name(company)
     brand = flat(_CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())).strip()
-    forms = {name, name.replace(" and ", " "), _kept_name(company), brand}
+    kept = _kept_name(company)
+    legal = re.sub(r" corp$", " corporation", kept)  # News Corp: `news-corporation-shares-pop`
+    forms = {name, name.replace(" and ", " "), kept, legal, brand}
     for form in forms:
         if not form or not _spelled_enough(form):
             continue
