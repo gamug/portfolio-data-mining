@@ -85,11 +85,13 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 ## Work item 13 — Release the News Corp pairs the loose-name rule held back (code + data, origin: Work item 12 decision)
 
-- [ ] **T-063** *(Work item 13; follows T-062's real re-class run; changes the matcher and a real-data release; scheduled by the maintainer 2026-10-16)*
-      Make the News Corp pairs (402 on 2026-10-17: `NWS` 200, `NWSA` 202; 202 distinct URLs) `accept` and release their
-      articles: add `NWS` and `NWSA` `("news corp", "news corps")` to `matching.ALIASES` (hit = `accept`/`alias`); teach
-      `scripts/reclass_rejects.py` `--from-class review` (default `reject`): the dry run predicts the release, the pass
-      leaves `review` every pair whose article is a wall or under the word floor (same tests as
+- [ ] **T-063** *(Work item 13; **blocked until the maintainer answers the Decision paragraph of Work item 13**: release all, hold all for the NER check, or release the uncontested ones, the proposal; follows T-062's real re-class run; changes the matcher and a real-data release; scheduled by the maintainer 2026-10-16)*
+      Make the News Corp pairs (413 on 2026-10-17: 402 `review` and 11 `reject`; 210 URLs) `accept` and release their
+      articles, except the contested ones (a URL naming another ticker's company: 84 pairs on 42 URLs) that wait for
+      `portfolio-nlp`'s NER check under the maintainer's doubt rule: add `NWS` and `NWSA`
+      `("news corp", "news corps", "news corporation")` to `matching.ALIASES` (hit = `accept`/`alias`); teach
+      `scripts/reclass_rejects.py` `--from-class` (`reject`, `review` or both; default `reject`): the dry run predicts the release, the pass
+      leaves as it was every pair whose article is a contested URL, a wall or under the word floor (same tests as
       `audit_article_quality.py`, listed in the report and the summary), the post-conditions check that the `ok`
       articles grew by exactly the prediction and are readable through `attach(read_only=True)`, `--revert` takes a
       `review` to `accept` list and re-quarantines the articles. Both share classes are released by default (202 bodies
