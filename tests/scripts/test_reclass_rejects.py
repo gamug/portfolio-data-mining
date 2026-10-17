@@ -43,6 +43,7 @@ ROWS = [
 
 @pytest.fixture(autouse=True)
 def _audit_list_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)  # a relative default (list, summary) never lands in the repository
     monkeypatch.setattr(reclass, "DEFAULT_LIST", str(tmp_path / "audit" / "list.csv"))
 
 
@@ -209,12 +210,13 @@ def test_a_crash_between_the_commit_and_the_sync_is_finished_by_a_rerun_without_
     def crash(_db: object) -> tuple[int, int]:
         raise RuntimeError("killed")
 
+    real_sync_quarantine = reclass.sync_quarantine
     monkeypatch.setattr(reclass, "sync_quarantine", crash)
     with pytest.raises(RuntimeError):
         reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
     assert _rows(db_file)[1][:2] == ("review", "loose_name")  # promotions are in
 
-    monkeypatch.undo()
+    monkeypatch.setattr(reclass, "sync_quarantine", real_sync_quarantine)
     assert (
         reclass.main(["--db", str(db_file), "--apply"]) == 0
     )  # nothing to promote: no backup needed
@@ -521,7 +523,9 @@ def test_an_aborted_apply_leaves_no_list_and_the_rerun_with_the_same_list_works(
         )
     assert not listing.exists() and not reclass._partial(listing).exists()
 
-    monkeypatch.undo()  # the writer is stopped; the operator retries with the same list path
+    monkeypatch.setattr(
+        reclass, "_backup", real_backup
+    )  # the writer is stopped: retry, same list path
     assert (
         reclass.main(
             [
@@ -621,7 +625,8 @@ def test_apply_fails_loudly_when_the_sync_did_not_release_what_the_dry_run_predi
     assert code == 1
     assert "the sync did (quarantined, released) = (0, 0), the dry run predicted (0, 1)" in err
     assert "1 `accept` pair(s) still have a quarantined article" in err
-    assert "--revert LIST" in err
+    assert "--revert " in err and "--backup <a new path>" in err
+    assert "the backup taken before the run is" in err
 
 
 def test_apply_fails_loudly_when_a_promotion_was_not_written(
@@ -935,7 +940,10 @@ def test_the_reader_check_attaches_read_only_and_reports_the_library_version(
     assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 0
 
     out = capsys.readouterr().out
-    assert "reader check: attach(read_only=True) ok, 4 rows (portfolio-common " in out
+    assert (
+        "reader check: attach(read_only=True) ok, 4 rows, 0 readable articles (portfolio-common "
+        in out
+    )
 
 
 def test_a_database_a_reader_refuses_fails_the_reader_check(tmp_path: Path) -> None:
@@ -945,14 +953,15 @@ def test_a_database_a_reader_refuses_fails_the_reader_check(tmp_path: Path) -> N
         con.execute("CREATE TABLE discovered_urls (id INTEGER)")
     path.with_name("orphan.db-wal").write_bytes(b"x" * 64)
 
-    problems = reclass._reader_check(path, ((0, None), (0, None), (), ()))
+    problems, info = reclass._reader_check(path, ((0, None), (0, None), (), ()), 0)
 
+    assert info["ok"] is False and "orphaned write-ahead log" in str(info["error"])
     assert len(problems) == 1 and "a reader cannot attach orphan.db read-only" in problems[0]
     assert "orphaned write-ahead log" in problems[0]
 
 
 def test_the_reader_check_notices_a_different_row_count(db_file: Path) -> None:
-    problems = reclass._reader_check(db_file, ((999, 999), (0, None), (), ()))
+    problems, _ = reclass._reader_check(db_file, ((999, 999), (0, None), (), ()), 0)
 
     assert problems == ["the reader sees 4 pairs, the fingerprint had 999"]
 
@@ -979,8 +988,8 @@ def test_the_updates_must_change_exactly_the_planned_rows(db_file: Path) -> None
         expected = reclass._fingerprint(con)
     promotions = [(1, "review", "loose_name"), (3, "review", "loose_name")]
 
-    problems = reclass._verify_apply(
-        db_file, promotions, expected, (0, 0, 1), {"quarantined": 0, "released": 0}
+    problems, _ = reclass._verify_apply(
+        db_file, promotions, expected, (0, 0, 1), {"quarantined": 0, "released": 0}, 0, 0
     )
 
     assert "the updates changed 1 row(s), the plan had 2" in problems
@@ -1006,3 +1015,242 @@ def test_the_checkpoint_says_so_when_the_database_is_not_in_wal_mode(
     reclass._checkpoint(path)
 
     assert "not in WAL mode, nothing to truncate" in capsys.readouterr().err
+
+
+def _refuse_attach(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(self: object, *_a: object, **_k: object) -> None:
+        raise RuntimeError("orphaned write-ahead log")
+
+    monkeypatch.setattr(reclass.Database, "attach", refuse)
+
+
+def test_a_reader_failure_gets_the_reader_advice_and_no_revert(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _refuse_attach(monkeypatch)
+
+    code = reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "the data is as planned" in err and "wal_checkpoint(TRUNCATE)" in err
+    assert "portfolio-common >= 1.2.2" in err and "No revert is needed" in err
+    assert "--revert " not in err  # reverting does not fix a file a reader refuses
+    assert str(db_file.resolve()) in err  # the real path, not a placeholder
+
+
+def test_a_data_failure_on_apply_names_the_real_list_and_backup(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _accepting(monkeypatch)
+    monkeypatch.setattr(reclass, "_sync", lambda _db: (0, 0))
+    listing, backup = tmp_path / "audit.csv", tmp_path / "b.db"
+
+    reclass.main(["--db", str(db_file), "--apply", "--backup", str(backup), "--list", str(listing)])
+
+    err = capsys.readouterr().err
+    assert f"--revert {listing.resolve()} --backup <a new path>" in err
+    assert f"the backup taken before the run is {backup.resolve()}" in err
+    assert "readable by a reader" not in err  # a data problem is not a reader problem
+
+
+def test_a_data_failure_on_a_revert_points_to_the_backup_not_to_another_revert(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    listing = tmp_path / "audit.csv"
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+    monkeypatch.setattr(reclass, "revert", lambda *_a, **_k: (0, 0, 0))
+    capsys.readouterr()
+    backup = tmp_path / "r.db"
+
+    reclass.main(["--db", str(db_file), "--revert", str(listing), "--backup", str(backup)])
+
+    err = capsys.readouterr().err
+    assert f"the backup taken before it is {backup.resolve()}" in err
+    assert "restore it only if nothing has run since" in err
+    assert "--revert " + str(listing.resolve()) not in err
+
+
+def _summary_files(directory: Path) -> list[Path]:
+    return sorted(directory.glob("reclass_*_summary_*.json"))
+
+
+def test_a_run_writes_a_summary_with_what_the_handoff_needs(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    listing, backup = tmp_path / "out" / "audit.csv", tmp_path / "b.db"
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--apply", "--backup", str(backup), "--list", str(listing)]
+        )
+        == 0
+    )
+    (summary,) = _summary_files(tmp_path / "out")
+    data = json.loads(summary.read_text())
+
+    assert data["mode"] == "apply" and data["promotions"] == 2 and data["rows_changed"] == 2
+    assert data["backup"]["path"] == str(backup.resolve()) and len(data["backup"]["sha256"]) == 64
+    assert data["audit_list"] == {"path": str(listing.resolve()), "rows": 2}
+    assert data["before"]["classes"]["reject"] == data["after"]["classes"]["reject"] + 2
+    assert data["postconditions"] == {"ok": True, "problems": []}
+    assert data["reader_check"]["ok"] is True and data["reader_check"]["portfolio_common"]
+    assert {"fingerprint", "plan", "backup, check and sha256", "apply and sync", "verify"} <= set(
+        data["stage_seconds"]
+    )
+    out = capsys.readouterr().out
+    assert f"audit list {listing.resolve()} (2 rows)" in out and f"run summary {summary}" in out
+
+
+def test_the_summary_is_written_even_when_a_post_condition_fails_and_carries_the_problems(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _accepting(monkeypatch)
+    monkeypatch.setattr(reclass, "_sync", lambda _db: (0, 0))
+
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 1
+
+    (summary,) = _summary_files(tmp_path / "audit")
+    data = json.loads(summary.read_text())
+    assert data["postconditions"]["ok"] is False and data["postconditions"]["problems"]
+
+
+def test_an_existing_summary_stops_the_run_before_the_backup(db_file: Path, tmp_path: Path) -> None:
+    kept = tmp_path / "kept.json"
+    kept.write_text("custody")
+
+    with pytest.raises(SystemExit, match=r"run summary .* exists"):
+        reclass.main(
+            [
+                "--db",
+                str(db_file),
+                "--apply",
+                "--backup",
+                str(tmp_path / "b.db"),
+                "--summary",
+                str(kept),
+            ]
+        )
+
+    assert kept.read_text() == "custody" and not (tmp_path / "b.db").exists()
+    assert _rows(db_file)[1][0] == "reject"
+
+
+def test_a_recovery_apply_gets_its_own_summary_not_a_collision(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def crash(_db: object) -> tuple[int, int]:
+        raise RuntimeError("killed")
+
+    real_sync = reclass._sync
+    monkeypatch.setattr(reclass, "_sync", crash)
+    with pytest.raises(RuntimeError):
+        reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+    monkeypatch.setattr(reclass, "_sync", real_sync)
+
+    assert reclass.main(["--db", str(db_file), "--apply"]) == 0  # nothing left: only the sync
+    assert (
+        len(_summary_files(tmp_path / "audit")) == 1
+    )  # the crashed run wrote none; the recovery one
+
+
+def test_releasing_a_quarantined_ok_article_is_predicted_and_checked(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Row 1's article was `ok` before it was quarantined: promoting it to `accept` makes
+    portfolio-nlp's readable set one larger, the dry run says +1 and the run confirms it."""
+    _accepting(monkeypatch)
+    reclass.main(["--db", str(db_file)])
+    dry = json.loads(capsys.readouterr().out)
+    assert dry["ok_articles"] == 0 and dry["predicted_ok_articles_delta"] == 1
+
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 0
+
+    (summary,) = _summary_files(tmp_path / "audit")
+    data = json.loads(summary.read_text())
+    assert (data["before"]["ok_articles"], data["after"]["ok_articles"]) == (0, 1)
+    assert data["reader_check"]["readable_articles"] == 1
+
+
+def test_apply_fails_when_it_quarantines_an_ok_article_nobody_planned(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with sqlite3.connect(db_file) as con:  # an untouched `accept` pair whose article is readable
+        con.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, discovered_at,"
+            " status, match_class, match_reason) VALUES (6, 'https://x.com/fine', 'x.com', 'F', 'F',"
+            " 'sitemap', 'now', 'fetched', 'accept', 'name')"
+        )
+        con.execute("INSERT INTO articles (id, fetch_status) VALUES (6, 'ok')")
+    real_sync = reclass._sync
+
+    def sync_then_a_bug(db_path: Path) -> tuple[int, int]:
+        result = real_sync(db_path)
+        with sqlite3.connect(db_path) as con:
+            con.execute("UPDATE articles SET fetch_status = 'quarantined' WHERE id = 6")
+        return result
+
+    monkeypatch.setattr(reclass, "_sync", sync_then_a_bug)
+
+    code = reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert (
+        "the articles portfolio-nlp reads (ok) went 1 -> 0, the dry run predicted a change of 0"
+        in err
+    )
+
+
+def test_reverting_an_accept_expects_its_ok_article_to_be_quarantined_again(
+    db_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _accepting(monkeypatch)
+    listing = tmp_path / "audit.csv"
+    reclass.main(
+        [
+            "--db",
+            str(db_file),
+            "--apply",
+            "--backup",
+            str(tmp_path / "b.db"),
+            "--list",
+            str(listing),
+        ]
+    )
+
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
+        )
+        == 0
+    )
+
+    (summary,) = [p for p in _summary_files(tmp_path) if "revert" in p.name]
+    data = json.loads(summary.read_text())
+    assert data["expected_ok_articles_delta"] == -1
+    assert (data["before"]["ok_articles"], data["after"]["ok_articles"]) == (1, 0)

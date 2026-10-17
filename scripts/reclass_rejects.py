@@ -46,6 +46,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import closing, contextmanager
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -80,14 +81,19 @@ LIVE_WRITER_SECONDS = 60
 PARTIAL_SUFFIX = ".partial"
 
 
+_DURATIONS: dict[str, float] = {}  # stage name -> seconds, for the run summary
+
+
 @contextmanager
 def _stage(name: str) -> Iterator[None]:
-    """Print how long a stage took (stderr), so a slow step of the real run is seen as it happens."""
+    """Print how long a stage took (stderr), so a slow step of the real run is seen as it happens, and
+    keep it for the run summary."""
     start = time.monotonic()
     try:
         yield
     finally:
-        print(f"stage {name}: {time.monotonic() - start:.1f}s", file=sys.stderr)
+        _DURATIONS[name] = round(time.monotonic() - start, 1)
+        print(f"stage {name}: {_DURATIONS[name]:.1f}s", file=sys.stderr)
 
 
 def _fingerprint(con: sqlite3.Connection) -> Fingerprint:
@@ -142,13 +148,21 @@ def summarize(promotions: list[Promotion]) -> dict[str, dict[str, int]]:
 
 
 _TO_QUARANTINE = (
-    "SELECT id FROM articles WHERE (fetch_status IS NULL OR fetch_status != 'quarantined')"
+    "SELECT id, fetch_status FROM articles"
+    " WHERE (fetch_status IS NULL OR fetch_status != 'quarantined')"
     " AND id IN (SELECT id FROM discovered_urls WHERE match_class != 'accept')"
 )
 _TO_RELEASE = (
-    "SELECT id FROM articles WHERE (fetch_status = 'quarantined' OR prev_fetch_status IS NOT NULL)"
+    "SELECT id, fetch_status, prev_fetch_status FROM articles"
+    " WHERE (fetch_status = 'quarantined' OR prev_fetch_status IS NOT NULL)"
     " AND id IN (SELECT id FROM discovered_urls WHERE match_class = 'accept')"
 )
+
+
+def _ok_articles(con: sqlite3.Connection) -> int:
+    """Articles `portfolio-nlp` reads (`fetch_status = 'ok'`): the set the run must not change by
+    accident."""
+    return int(con.execute("SELECT COUNT(*) FROM articles WHERE fetch_status = 'ok'").fetchone()[0])
 
 
 def _is_quarantined(row: sqlite3.Row) -> bool:
@@ -178,9 +192,14 @@ def report(con: sqlite3.Connection, promotions: list[Promotion]) -> dict[str, ob
     `(quarantined, released)`, which the apply's own line must equal."""
     ids = {p[0]: p[1] for p in promotions}
     info = _rows_of(con, list(ids))
-    to_quarantine = {r[0] for r in con.execute(_TO_QUARANTINE)}
-    to_release = {r[0] for r in con.execute(_TO_RELEASE)}
+    to_quarantine = {r[0]: r[1] for r in con.execute(_TO_QUARANTINE)}  # id -> fetch_status
+    to_release = {r[0]: (r[1], r[2]) for r in con.execute(_TO_RELEASE)}  # id -> (status, prev)
     accepted = {i for i, cls in ids.items() if cls == "accept"}
+    for i in accepted:
+        if _is_quarantined(info[i]):
+            to_release.setdefault(i, (info[i]["fetch_status"], info[i]["prev_fetch_status"]))
+    quarantined_ok = sum(1 for i, st in to_quarantine.items() if i not in accepted and st == "ok")
+    released_ok = sum(1 for st, prev in to_release.values() if st == "quarantined" and prev == "ok")
     api_rejects = con.execute(
         "SELECT COUNT(*) FROM discovered_urls WHERE match_class = 'reject' AND source = 'api'"
     ).fetchone()[0]
@@ -192,9 +211,11 @@ def report(con: sqlite3.Connection, promotions: list[Promotion]) -> dict[str, ob
         ),
         "top_tickers": dict(Counter(info[i]["ticker"] for i in ids).most_common(TOP_TICKERS)),
         "predicted_sync": {
-            "quarantined": len(to_quarantine - accepted),
-            "released": len(to_release | {i for i in accepted if _is_quarantined(info[i])}),
+            "quarantined": len(set(to_quarantine) - accepted),
+            "released": len(to_release),
         },
+        "ok_articles": _ok_articles(con),
+        "predicted_ok_articles_delta": released_ok - quarantined_ok,
         "api_rejects_left_alone": api_rejects,
     }
 
@@ -530,16 +551,20 @@ def _verify_apply(
     expected: Fingerprint,
     result: tuple[int, int, int],
     predicted: dict[str, int],
-) -> list[str]:
-    """Read the database back after `apply` and list what does not hold (empty when all does): the
-    `UPDATE`s changed exactly the planned rows, the rows per class moved by exactly the promotions,
-    none of them is still `reject`, the sync printed what the dry run predicted, and no `accept` pair
-    keeps a quarantined article."""
+    ok_before: int,
+    ok_delta: int,
+) -> tuple[list[str], dict[str, object]]:
+    """Read the database back after `apply`. Returns what does not hold (empty when all does) and the
+    state after: the `UPDATE`s changed exactly the planned rows, the rows per class moved by exactly the
+    promotions, none of them is still `reject`, the sync printed what the dry run predicted, no
+    `accept` pair keeps a quarantined article, and the articles `portfolio-nlp` reads (`ok`) changed
+    by exactly what the dry run predicted (nothing, when no pair becomes `accept`)."""
     problems: list[str] = []
     if result[2] != len(promotions):
         problems.append(f"the updates changed {result[2]} row(s), the plan had {len(promotions)}")
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
-        now = _class_counts(_fingerprint(con))
+        after_fp = _fingerprint(con)
+        now = _class_counts(after_fp)
         want: Counter[str] = Counter(_class_counts(expected))
         for _, cls, _ in promotions:
             want["reject"] -= 1
@@ -553,17 +578,44 @@ def _verify_apply(
             problems.append(f"{still} promoted row(s) are still `reject`")
         if held := _held_accepts(con):
             problems.append(f"{held} `accept` pair(s) still have a quarantined article")
+        ok_after = _ok_articles(con)
     if result[:2] != (predicted["quarantined"], predicted["released"]):
         problems.append(
             f"the sync did (quarantined, released) = {result[:2]}, the dry run predicted "
             f"({predicted['quarantined']}, {predicted['released']})"
         )
-    return problems
+    if ok_after - ok_before != ok_delta:
+        problems.append(
+            f"the articles portfolio-nlp reads (ok) went {ok_before} -> {ok_after}, "
+            f"the dry run predicted a change of {ok_delta}"
+        )
+    return problems, {
+        "pairs": cast(tuple[int, int], after_fp[0])[0],
+        "articles": cast(tuple[int, int], after_fp[1])[0],
+        "classes": now,
+        "ok_articles": ok_after,
+    }
 
 
-def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
-    """After `revert`: no listed row still holds what the run wrote, and no `accept` pair keeps a
-    quarantined article."""
+def _revert_ok_delta(rows: list[dict[str, str]], current: dict[int, sqlite3.Row]) -> int:
+    """The change a revert will make to the `ok` articles: a listed row that is `accept` and still
+    holds what the run wrote goes back to a lower class, so the sync quarantines its `ok` article."""
+    return -sum(
+        1
+        for r in rows
+        if int(r["id"]) in current
+        and r["new_class"] == "accept"
+        and (current[int(r["id"])]["match_class"], current[int(r["id"])]["match_reason"])
+        == (r["new_class"], r["new_reason"])
+        and current[int(r["id"])]["fetch_status"] == "ok"
+    )
+
+
+def _verify_revert(
+    db_path: Path, rows: list[dict[str, str]], ok_before: int, ok_delta: int
+) -> tuple[list[str], dict[str, object]]:
+    """After `revert`: no listed row still holds what the run wrote, no `accept` pair keeps a
+    quarantined article, and the `ok` articles changed by exactly what the revert implies."""
     problems: list[str] = []
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
         current = _rows_of(con, [int(r["id"]) for r in rows])
@@ -580,7 +632,14 @@ def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
             problems.append(f"{len(left)} listed row(s) still hold what the run wrote: {left[:5]}")
         if held := _held_accepts(con):
             problems.append(f"{held} `accept` pair(s) still have a quarantined article")
-    return problems
+        ok_after = _ok_articles(con)
+        classes = _class_counts(_fingerprint(con))
+    if ok_after - ok_before != ok_delta:
+        problems.append(
+            f"the articles portfolio-nlp reads (ok) went {ok_before} -> {ok_after}, "
+            f"a revert should change them by {ok_delta}"
+        )
+    return problems, {"classes": classes, "ok_articles": ok_after}
 
 
 def _library_version() -> str:
@@ -590,25 +649,43 @@ def _library_version() -> str:
         return "unknown"
 
 
-def _reader_check(db_path: Path, expected: Fingerprint) -> list[str]:
+def _reader_check(
+    db_path: Path, expected: Fingerprint, ok_articles: int
+) -> tuple[list[str], dict[str, object]]:
     """Attach the file read-only the way `portfolio-nlp` does (`Database.attach(read_only=True)` of the
-    `portfolio-common` installed here), count the pairs and compare with the fingerprint's row count.
-    This is the failure that made `urls.db` unreachable while it was in WAL mode, so a run that leaves
-    the file in a state a reader refuses must not print success."""
+    `portfolio-common` installed here), count the pairs and the readable (`ok`) articles through that
+    attach and compare them with the fingerprint and the post-run count. This is the failure that made
+    `urls.db` unreachable while it was in WAL mode, so a run that leaves the file in a state a reader
+    refuses must not print success."""
     rows = cast(tuple[int, int], expected[0])[0]
     version = _library_version()
+    info: dict[str, object] = {"portfolio_common": version, "ok": False}
     try:
         with closing(Database.connect(":memory:")) as db:
             db.attach(db_path, "urls", read_only=True)
             seen = db.execute("SELECT COUNT(*) FROM urls.discovered_urls").fetchone()[0]
+            readable = db.execute(
+                "SELECT COUNT(*) FROM urls.articles WHERE fetch_status = 'ok'"
+            ).fetchone()[0]
     except (RuntimeError, sqlite3.Error) as exc:
+        info["error"] = str(exc)
         return [
             f"a reader cannot attach {db_path.name} read-only (portfolio-common {version}): {exc}"
-        ]
-    print(f"reader check: attach(read_only=True) ok, {seen} rows (portfolio-common {version})")
+        ], info
+    print(
+        f"reader check: attach(read_only=True) ok, {seen} rows, {readable} readable articles "
+        f"(portfolio-common {version})"
+    )
+    info.update(pairs=seen, readable_articles=readable)
+    problems = []
     if seen != rows:
-        return [f"the reader sees {seen} pairs, the fingerprint had {rows}"]
-    return []
+        problems.append(f"the reader sees {seen} pairs, the fingerprint had {rows}")
+    if readable != ok_articles:
+        problems.append(
+            f"the reader sees {readable} readable articles, a direct count gave {ok_articles}"
+        )
+    info["ok"] = not problems
+    return problems, info
 
 
 def _not_a_database(db_path: Path) -> str | None:
@@ -647,15 +724,79 @@ def _checkpoint(db_path: Path) -> None:
         print(f"checkpoint: WAL truncated ({done} of {log} frames folded in)", file=sys.stderr)
 
 
-def _report_problems(problems: list[str], what: str) -> int:
-    for problem in problems:
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _summary_path(explicit: Path | None, anchor: Path, mode: str) -> Path:
+    """Where the run summary goes: `--summary`, or next to the audit list (git-ignored `data/retag/`)
+    under a name with the run's time, so a recovery run never collides with the first one's record."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    return (explicit or anchor.parent / f"reclass_{mode}_summary_{stamp}.json").resolve()
+
+
+def _check_summary(path: Path) -> None:
+    """Exit before the backup when the summary exists (custody) or its place is not writable."""
+    if path.exists():
+        raise SystemExit(f"the run summary {path} exists; move it or pass another --summary.")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        writable = os.access(path.parent, os.W_OK)
+    except OSError as exc:
+        raise SystemExit(f"cannot write the run summary {path}: {exc}.") from exc
+    if not writable:
+        raise SystemExit(f"cannot write the run summary {path}: directory not writable.")
+
+
+def _write_summary(path: Path, summary: dict[str, object]) -> None:
+    """The record of the run for the hand-off and the plan (the counterpart of `retag_summary.json`);
+    written whether or not the post-conditions held, with the problems in it."""
+    summary["finished_at"] = _now()
+    summary["stage_seconds"] = dict(_DURATIONS)
+    path.write_text(json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    print(f"run summary {path}")
+
+
+def _finish(
+    data_problems: list[str],
+    reader_problems: list[str],
+    what: str,
+    db_path: Path,
+    backup: Path | None,
+    listing: Path,
+) -> int:
+    """Print the problems by kind with the remedy that fits each, and return the exit code. A data
+    problem means the database is not as planned; a reader problem means the data is as planned but
+    the file is not readable by a reader, which a revert does not fix."""
+    for problem in data_problems + reader_problems:
         print(f"POST-CONDITION FAILED: {problem}", file=sys.stderr)
-    print(
-        f"error: {what} did not leave the database as planned; the changes are committed. "
-        "Check the lines above, then `--revert LIST --backup NEW` if needed.",
-        file=sys.stderr,
-    )
-    return 1
+    if data_problems and what == "--apply":
+        print(
+            "error: --apply did not leave the database as planned; the changes are committed. "
+            f"To undo them: --revert {listing.resolve()} --backup <a new path> "
+            f"(the backup taken before the run is {backup.resolve() if backup else 'none: nothing to promote'}).",
+            file=sys.stderr,
+        )
+    elif data_problems:
+        print(
+            "error: --revert did not complete as planned; the backup taken before it is "
+            f"{backup.resolve() if backup else 'unknown'}; restore it only if nothing has run since.",
+            file=sys.stderr,
+        )
+    if reader_problems:
+        print(
+            "error: the file is not readable by a reader"
+            + (
+                " (and see the data problems above)"
+                if data_problems
+                else "; the data is as planned"
+            )
+            + f". With the collector and every reader stopped run: sqlite3 {db_path.resolve()} "
+            '"PRAGMA wal_checkpoint(TRUNCATE);" or `uv sync` to portfolio-common >= 1.2.2. '
+            "No revert is needed for this.",
+            file=sys.stderr,
+        )
+    return 1 if (data_problems or reader_problems) else 0
 
 
 def _parse(argv: list[str] | None) -> argparse.Namespace:
@@ -669,6 +810,11 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     ap.add_argument("--backup", type=Path)
     ap.add_argument(
         "--list", type=Path, help=f"audit list `--apply` writes (default {DEFAULT_LIST})"
+    )
+    ap.add_argument(
+        "--summary",
+        type=Path,
+        help="run summary (default: next to the audit list or the revert list)",
     )
     args = ap.parse_args(argv)
     if args.revert and args.list:
@@ -717,14 +863,18 @@ def _apply_main(
     if promotions and args.backup is None:
         print("error: --apply needs --backup PATH naming a new file", file=sys.stderr)
         return 1
+    summary_path = _summary_path(args.summary, args.list, "apply")
     if promotions:
         _check_list(args.list)  # before the copy: a missing list place must not cost a 2 GB backup
+    _check_summary(summary_path)
+    started = _now()
     _warn_live_writer(db_path)
     _check_idle(db_path)
+    sha = None
     if promotions and args.backup is not None:
         with _stage("backup, check and sha256"):
             sha = _backup(db_path, args.backup, expected)
-        print(f"backup {args.backup} sha256 {sha}")
+        print(f"backup {args.backup.resolve()} sha256 {sha}")
     on_commit = None
     if promotions:
         _write_list(args.list, audit)
@@ -736,14 +886,49 @@ def _apply_main(
         _discard_list(args.list)  # a list only describes changes that were committed
         raise
     if promotions:
-        print(f"audit list {args.list} ({len(audit)} rows)")
+        print(f"audit list {args.list.resolve()} ({len(audit)} rows)")
     print(f"promoted {result[2]} rows; quarantined {result[0]}, released {result[1]}")
     with _stage("verify"):
-        predicted = cast(dict[str, int], details["predicted_sync"])
-        problems = _verify_apply(db_path, promotions, expected, result, predicted)
+        problems, after = _verify_apply(
+            db_path,
+            promotions,
+            expected,
+            result,
+            cast(dict[str, int], details["predicted_sync"]),
+            cast(int, details["ok_articles"]),
+            cast(int, details["predicted_ok_articles_delta"]),
+        )
     _checkpoint(db_path)
-    problems += _reader_check(db_path, expected)
-    return _report_problems(problems, "--apply") if problems else 0
+    reader_problems, reader = _reader_check(db_path, expected, cast(int, after["ok_articles"]))
+    _write_summary(
+        summary_path,
+        {
+            "mode": "apply",
+            "started_at": started,
+            "database": {"path": str(db_path.resolve()), "bytes": db_path.stat().st_size},
+            "portfolio_common": _library_version(),
+            "before": {
+                "pairs": cast(tuple[int, int], expected[0])[0],
+                "articles": cast(tuple[int, int], expected[1])[0],
+                "classes": _class_counts(expected),
+                "ok_articles": details["ok_articles"],
+            },
+            "after": after,
+            "promotions": len(promotions),
+            "rows_changed": result[2],
+            "predicted_sync": details["predicted_sync"],
+            "sync": {"quarantined": result[0], "released": result[1]},
+            "predicted_ok_articles_delta": details["predicted_ok_articles_delta"],
+            "backup": {"path": str(args.backup.resolve()) if args.backup else None, "sha256": sha},
+            "audit_list": {
+                "path": str(args.list.resolve()) if promotions else None,
+                "rows": len(audit),
+            },
+            "postconditions": {"ok": not problems, "problems": problems},
+            "reader_check": {**reader, "problems": reader_problems},
+        },
+    )
+    return _finish(problems, reader_problems, "--apply", db_path, args.backup, args.list)
 
 
 def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
@@ -753,16 +938,21 @@ def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
     if args.backup is None or args.backup.exists():
         print("error: --revert needs --backup PATH naming a new file", file=sys.stderr)
         return 1
+    summary_path = _summary_path(args.summary, args.revert, "revert")
+    _check_summary(summary_path)
+    started = _now()
     with (
         closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con,
         _stage("fingerprint"),
     ):
         expected = _fingerprint(con)
+        ok_before = _ok_articles(con)
+        ok_delta = _revert_ok_delta(rows, _rows_of(con, [int(r["id"]) for r in rows]))
     _warn_live_writer(db_path)
     _check_idle(db_path)
     with _stage("backup, check and sha256"):
         sha = _backup(db_path, args.backup, expected)
-    print(f"backup {args.backup} sha256 {sha}")
+    print(f"backup {args.backup.resolve()} sha256 {sha}")
     with _stage("revert and sync"):
         quarantined, released, changed = revert(db_path, rows, expected)
     print(
@@ -770,10 +960,34 @@ def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
         f"left alone); quarantined {quarantined}, released {released}"
     )
     with _stage("verify"):
-        problems = _verify_revert(db_path, rows)
+        problems, after = _verify_revert(db_path, rows, ok_before, ok_delta)
     _checkpoint(db_path)
-    problems += _reader_check(db_path, expected)
-    return _report_problems(problems, "--revert") if problems else 0
+    reader_problems, reader = _reader_check(db_path, expected, cast(int, after["ok_articles"]))
+    _write_summary(
+        summary_path,
+        {
+            "mode": "revert",
+            "started_at": started,
+            "database": {"path": str(db_path.resolve()), "bytes": db_path.stat().st_size},
+            "portfolio_common": _library_version(),
+            "before": {
+                "pairs": cast(tuple[int, int], expected[0])[0],
+                "articles": cast(tuple[int, int], expected[1])[0],
+                "classes": _class_counts(expected),
+                "ok_articles": ok_before,
+            },
+            "after": after,
+            "listed_rows": len(rows),
+            "rows_changed": changed,
+            "sync": {"quarantined": quarantined, "released": released},
+            "expected_ok_articles_delta": ok_delta,
+            "backup": {"path": str(args.backup.resolve()), "sha256": sha},
+            "audit_list": {"path": str(args.revert.resolve()), "rows": len(rows)},
+            "postconditions": {"ok": not problems, "problems": problems},
+            "reader_check": {**reader, "problems": reader_problems},
+        },
+    )
+    return _finish(problems, reader_problems, "--revert", db_path, args.backup, args.revert)
 
 
 if __name__ == "__main__":
