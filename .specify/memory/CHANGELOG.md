@@ -697,4 +697,5 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       a `--from-class` pass and holds for walls, contested URLs and roundups. On the evidence (10 of 10 hand sample,
       lower bound 72%; 42 URLs naming another company; 18 of 20 on the developer's read) the maintainer chose to hold
       them all for `portfolio-nlp`'s future NER check, under the rule that doubtful tags are left to it. Nothing is
-      built or released; the measurements and the open question about 11 legal-name pairs are in `PLAN.md` Work item 13.
+      built or released; the measurements are in `PLAN.md` Work item 13. The 11 legal-name pairs (`news-corporation`)
+      were then read as `review` by the legal-name form of `T-062` (#70), so all 413 wait for the NER check.
