@@ -242,8 +242,8 @@ def test_the_dry_run_reports_status_tickers_and_the_sync_it_will_run(
     assert report["predicted_sync"] == {"quarantined": 0, "released": 0}
 
     reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
-    applied = capsys.readouterr().out.strip().splitlines()[-1]
-    assert applied == "promoted 2 rows; quarantined 0, released 0"
+    applied = capsys.readouterr().out.strip().splitlines()
+    assert "promoted 2 rows; quarantined 0, released 0" in applied
 
 
 def test_the_t057_sheet_is_not_its_own_earlier_sample() -> None:
@@ -285,9 +285,7 @@ def test_the_predicted_sync_counts_only_articles_that_exist_and_are_held_back(
     assert predicted == {"quarantined": 0, "released": 1}
 
     reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
-    assert capsys.readouterr().out.strip().splitlines()[-1] == (
-        "promoted 3 rows; quarantined 0, released 1"
-    )
+    assert "promoted 3 rows; quarantined 0, released 1" in capsys.readouterr().out.splitlines()
 
 
 def _articles(path: Path) -> dict[int, str]:
@@ -670,7 +668,7 @@ def test_revert_fails_loudly_when_a_listed_row_still_holds_what_the_run_wrote(
             str(listing),
         ]
     )
-    monkeypatch.setattr(reclass, "revert", lambda *_a, **_k: (0, 0))  # does nothing
+    monkeypatch.setattr(reclass, "revert", lambda *_a, **_k: (0, 0, 0))  # does nothing
 
     code = reclass.main(
         ["--db", str(db_file), "--revert", str(listing), "--backup", str(tmp_path / "r.db")]
@@ -722,7 +720,7 @@ def _entry(id_: object = 1, **over: str) -> dict[str, str]:
         "article_id": "",
         "ticker": "KLAC",
         "company": "KLA Corporation",
-        "url": "u",
+        "url": "https://x.com/kla-corporation-q4-results",
         "old_class": "reject",
         "old_reason": "none",
         "new_class": "review",
@@ -879,3 +877,132 @@ def test_a_run_with_no_reader_leaves_the_wal_empty(
 
     assert not wal.exists() or wal.stat().st_size == 0
     assert "checkpoint: WAL truncated" in capsys.readouterr().err
+
+
+def test_a_list_written_for_another_database_cannot_revert_an_unrelated_pair(
+    db_file: Path, tmp_path: Path
+) -> None:
+    """Same id, same class and reason, but another ticker and url: the pair is not the listed one."""
+    listing = _list_with(
+        tmp_path, [_entry(2, ticker="KLAC", url="https://x.com/kla-corporation-q4-results")]
+    )  # id 2 here is `ON`, `turn-on-the-tv`
+    with sqlite3.connect(db_file) as con:
+        con.execute(
+            "UPDATE discovered_urls SET match_class='review', match_reason='loose_name' WHERE id = 2"
+        )
+    before = _rows(db_file)
+
+    with pytest.raises(SystemExit, match=r"another pair in urls\.db"):
+        _revert(db_file, tmp_path, listing)
+
+    assert not (tmp_path / "r.db").exists() and _rows(db_file) == before
+
+
+def test_one_row_of_many_with_another_url_refuses_the_whole_list(
+    db_file: Path, tmp_path: Path
+) -> None:
+    listing = _list_with(
+        tmp_path, [_entry(1), _entry(3, ticker="BAC", url="https://elsewhere.com/other")]
+    )
+
+    with pytest.raises(SystemExit, match=r"1 id\(s\) are another pair"):
+        _revert(db_file, tmp_path, listing)
+
+
+def test_the_revert_update_itself_only_touches_the_listed_pair(
+    db_file: Path, tmp_path: Path
+) -> None:
+    """Even a list that skipped validation cannot revert a row whose ticker or url differ."""
+    with sqlite3.connect(db_file) as con:
+        con.execute(
+            "UPDATE discovered_urls SET match_class='review', match_reason='loose_name' WHERE id = 1"
+        )
+        expected = reclass._fingerprint(con)
+    wrong = _entry(1, url="https://elsewhere.com/other")
+    right = _entry(1)
+
+    assert reclass.revert(db_file, [wrong], expected)[2] == 0
+    assert _rows(db_file)[1][:2] == ("review", "loose_name")
+    with sqlite3.connect(db_file) as con:
+        expected = reclass._fingerprint(con)
+    assert reclass.revert(db_file, [right], expected)[2] == 1
+    assert _rows(db_file)[1][:2] == ("reject", "none")
+
+
+def test_the_reader_check_attaches_read_only_and_reports_the_library_version(
+    db_file: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")]) == 0
+
+    out = capsys.readouterr().out
+    assert "reader check: attach(read_only=True) ok, 4 rows (portfolio-common " in out
+
+
+def test_a_database_a_reader_refuses_fails_the_reader_check(tmp_path: Path) -> None:
+    """A non-empty `-wal` with no `-shm` is what the library's own preflight rejects."""
+    path = tmp_path / "orphan.db"
+    with sqlite3.connect(path) as con:
+        con.execute("CREATE TABLE discovered_urls (id INTEGER)")
+    path.with_name("orphan.db-wal").write_bytes(b"x" * 64)
+
+    problems = reclass._reader_check(path, ((0, None), (0, None), (), ()))
+
+    assert len(problems) == 1 and "a reader cannot attach orphan.db read-only" in problems[0]
+    assert "orphaned write-ahead log" in problems[0]
+
+
+def test_the_reader_check_notices_a_different_row_count(db_file: Path) -> None:
+    problems = reclass._reader_check(db_file, ((999, 999), (0, None), (), ()))
+
+    assert problems == ["the reader sees 4 pairs, the fingerprint had 999"]
+
+
+def test_apply_fails_loudly_when_a_reader_cannot_attach(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse(self: object, *_a: object, **_k: object) -> None:
+        raise RuntimeError("orphaned write-ahead log")
+
+    monkeypatch.setattr(reclass.Database, "attach", refuse)
+
+    code = reclass.main(["--db", str(db_file), "--apply", "--backup", str(tmp_path / "b.db")])
+
+    err = capsys.readouterr().err
+    assert code == 1 and "POST-CONDITION FAILED: a reader cannot attach" in err
+
+
+def test_the_updates_must_change_exactly_the_planned_rows(db_file: Path) -> None:
+    with sqlite3.connect(db_file) as con:
+        expected = reclass._fingerprint(con)
+    promotions = [(1, "review", "loose_name"), (3, "review", "loose_name")]
+
+    problems = reclass._verify_apply(
+        db_file, promotions, expected, (0, 0, 1), {"quarantined": 0, "released": 0}
+    )
+
+    assert "the updates changed 1 row(s), the plan had 2" in problems
+
+
+def test_a_file_that_is_not_a_sqlite_database_is_a_one_line_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    junk = tmp_path / "junk.db"
+    junk.write_text("this is not a sqlite file")
+
+    assert reclass.main(["--db", str(junk)]) == 1
+    assert "is not a readable SQLite database" in capsys.readouterr().err
+
+
+def test_the_checkpoint_says_so_when_the_database_is_not_in_wal_mode(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "plain.db"
+    with sqlite3.connect(path) as con:
+        con.execute("CREATE TABLE t (x)")
+
+    reclass._checkpoint(path)
+
+    assert "not in WAL mode, nothing to truncate" in capsys.readouterr().err

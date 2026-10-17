@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.metadata
 import json
 import os
 import shutil
@@ -48,6 +49,8 @@ from contextlib import closing, contextmanager
 from functools import partial
 from pathlib import Path
 from typing import cast
+
+from portfolio_common.db import Database
 
 from data_mining.db import connect, resolve_db_path
 from data_mining.matching import CLASS_RANK, classify
@@ -319,10 +322,22 @@ def _read_list(path: Path, db_path: Path) -> list[dict[str, str]]:
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         problems.append(f"duplicated ids: {dupes[:5]}")
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
-        missing = sorted(set(ids) - set(_rows_of(con, ids)))
-    if missing:
+        current = _rows_of(con, ids)
+    if missing := sorted(set(ids) - set(current)):
         problems.append(
             f"{len(missing)} id(s) not in {db_path.name} (a list from another database?): {missing[:5]}"
+        )
+    if other := [
+        r["id"]
+        for r in rows
+        if r["id"].isdigit()
+        and int(r["id"]) in current
+        and (current[int(r["id"])]["ticker"], current[int(r["id"])]["url"])
+        != (r["ticker"], r["url"])
+    ]:
+        problems.append(
+            f"{len(other)} id(s) are another pair in {db_path.name} (ticker or url differ; a list from "
+            f"another database?): {other[:5]}"
         )
     if problems:
         shown = "\n  ".join(problems[:10])
@@ -405,12 +420,13 @@ def _backup(db_path: Path, backup: Path, expected: Fingerprint) -> str:
 def _in_transaction(
     db_path: Path,
     expected: Fingerprint,
-    write: Callable[[sqlite3.Connection], None],
+    write: Callable[[sqlite3.Connection], int],
     on_commit: Callable[[], None] | None = None,
-) -> None:
+) -> int:
     """Run `write(con)` in one `BEGIN IMMEDIATE` transaction, after checking that the database is
     still what the plan saw (inside the write lock, so nothing can move between check and write).
-    `on_commit` runs right after the commit, before anything else can fail."""
+    `on_commit` runs right after the commit, before anything else can fail. Returns the number of rows
+    `write` changed (what the `UPDATE`s reported, not what the plan hoped)."""
     con = sqlite3.connect(db_path, timeout=0, isolation_level=None)
     try:
         con.execute("BEGIN IMMEDIATE")
@@ -419,12 +435,13 @@ def _in_transaction(
             raise SystemExit(
                 "the database changed since the plan was computed; nothing was written."
             )
-        write(con)
+        changed = write(con)
         con.execute("COMMIT")
     finally:
         con.close()
     if on_commit is not None:
         on_commit()
+    return changed
 
 
 def _sync(db_path: Path) -> tuple[int, int]:
@@ -442,47 +459,59 @@ def apply(
     promotions: list[Promotion],
     expected: Fingerprint,
     on_commit: Callable[[], None] | None = None,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Write the promotions in one transaction, then sync the quarantine. Returns
-    `(quarantined, released)` by the sync. Rolls back and writes nothing if the database is no
-    longer the `expected` fingerprint, checked inside the write lock."""
+    `(quarantined, released, changed)`: the sync's counts and the rows the `UPDATE`s changed. Rolls
+    back and writes nothing if the database is no longer the `expected` fingerprint, checked inside
+    the write lock."""
 
-    def write(con: sqlite3.Connection) -> None:
+    def write(con: sqlite3.Connection) -> int:
+        changed = 0
         for i, cls, reason in promotions:
-            con.execute(  # `AND match_class = 'reject'`: a row that moved meanwhile is left as it is
-                "UPDATE discovered_urls SET match_class = ?, match_reason = ?,"
-                " status = CASE WHEN status = 'skipped' THEN 'pending' ELSE status END"
-                " WHERE id = ? AND match_class = 'reject'",
-                (cls, reason, i),
+            changed += (
+                con.execute(  # `AND match_class = 'reject'`: a row that moved is left as it is
+                    "UPDATE discovered_urls SET match_class = ?, match_reason = ?,"
+                    " status = CASE WHEN status = 'skipped' THEN 'pending' ELSE status END"
+                    " WHERE id = ? AND match_class = 'reject'",
+                    (cls, reason, i),
+                ).rowcount
             )
+        return changed
 
-    _in_transaction(db_path, expected, write, on_commit)
-    return _sync(db_path)
+    changed = _in_transaction(db_path, expected, write, on_commit)
+    return (*_sync(db_path), changed)
 
 
-def revert(db_path: Path, rows: list[dict[str, str]], expected: Fingerprint) -> tuple[int, int]:
+def revert(
+    db_path: Path, rows: list[dict[str, str]], expected: Fingerprint
+) -> tuple[int, int, int]:
     """Undo a run from its audit list: a row returns to its old class, reason and status only if it
-    still holds what the run wrote; a row changed since is left alone. Then the quarantine sync."""
+    is the listed pair (id, ticker and url) and still holds what the run wrote; anything else is left
+    alone. Then the quarantine sync. Returns `(quarantined, released, changed)`."""
 
-    def write(con: sqlite3.Connection) -> None:
+    def write(con: sqlite3.Connection) -> int:
+        changed = 0
         for r in rows:
-            con.execute(
+            changed += con.execute(
                 "UPDATE discovered_urls SET match_class = ?, match_reason = ?,"
                 " status = CASE WHEN status = ? THEN ? ELSE status END"
-                " WHERE id = ? AND match_class = ? AND match_reason = ?",
+                " WHERE id = ? AND ticker = ? AND url = ? AND match_class = ? AND match_reason = ?",
                 (
                     r["old_class"],
                     r["old_reason"],
                     r["new_status"],
                     r["old_status"],
                     r["id"],
+                    r["ticker"],
+                    r["url"],
                     r["new_class"],
                     r["new_reason"],
                 ),
-            )
+            ).rowcount
+        return changed
 
-    _in_transaction(db_path, expected, write)
-    return _sync(db_path)
+    changed = _in_transaction(db_path, expected, write)
+    return (*_sync(db_path), changed)
 
 
 def _held_accepts(con: sqlite3.Connection) -> int:
@@ -499,13 +528,16 @@ def _verify_apply(
     db_path: Path,
     promotions: list[Promotion],
     expected: Fingerprint,
-    result: tuple[int, int],
+    result: tuple[int, int, int],
     predicted: dict[str, int],
 ) -> list[str]:
     """Read the database back after `apply` and list what does not hold (empty when all does): the
-    rows per class moved by exactly the promotions, none of them is still `reject`, the sync printed
-    what the dry run predicted, and no `accept` pair keeps a quarantined article."""
+    `UPDATE`s changed exactly the planned rows, the rows per class moved by exactly the promotions,
+    none of them is still `reject`, the sync printed what the dry run predicted, and no `accept` pair
+    keeps a quarantined article."""
     problems: list[str] = []
+    if result[2] != len(promotions):
+        problems.append(f"the updates changed {result[2]} row(s), the plan had {len(promotions)}")
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
         now = _class_counts(_fingerprint(con))
         want: Counter[str] = Counter(_class_counts(expected))
@@ -521,25 +553,12 @@ def _verify_apply(
             problems.append(f"{still} promoted row(s) are still `reject`")
         if held := _held_accepts(con):
             problems.append(f"{held} `accept` pair(s) still have a quarantined article")
-    if result != (predicted["quarantined"], predicted["released"]):
+    if result[:2] != (predicted["quarantined"], predicted["released"]):
         problems.append(
-            f"the sync did (quarantined, released) = {result}, the dry run predicted "
+            f"the sync did (quarantined, released) = {result[:2]}, the dry run predicted "
             f"({predicted['quarantined']}, {predicted['released']})"
         )
     return problems
-
-
-def _holding(db_path: Path, rows: list[dict[str, str]]) -> int:
-    """How many listed rows still hold what the run wrote (the ones a revert will put back)."""
-    with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
-        current = _rows_of(con, [int(r["id"]) for r in rows])
-    return sum(
-        1
-        for r in rows
-        if int(r["id"]) in current
-        and (current[int(r["id"])]["match_class"], current[int(r["id"])]["match_reason"])
-        == (r["new_class"], r["new_reason"])
-    )
 
 
 def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
@@ -564,6 +583,44 @@ def _verify_revert(db_path: Path, rows: list[dict[str, str]]) -> list[str]:
     return problems
 
 
+def _library_version() -> str:
+    try:
+        return importlib.metadata.version("portfolio-common")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
+def _reader_check(db_path: Path, expected: Fingerprint) -> list[str]:
+    """Attach the file read-only the way `portfolio-nlp` does (`Database.attach(read_only=True)` of the
+    `portfolio-common` installed here), count the pairs and compare with the fingerprint's row count.
+    This is the failure that made `urls.db` unreachable while it was in WAL mode, so a run that leaves
+    the file in a state a reader refuses must not print success."""
+    rows = cast(tuple[int, int], expected[0])[0]
+    version = _library_version()
+    try:
+        with closing(Database.connect(":memory:")) as db:
+            db.attach(db_path, "urls", read_only=True)
+            seen = db.execute("SELECT COUNT(*) FROM urls.discovered_urls").fetchone()[0]
+    except (RuntimeError, sqlite3.Error) as exc:
+        return [
+            f"a reader cannot attach {db_path.name} read-only (portfolio-common {version}): {exc}"
+        ]
+    print(f"reader check: attach(read_only=True) ok, {seen} rows (portfolio-common {version})")
+    if seen != rows:
+        return [f"the reader sees {seen} pairs, the fingerprint had {rows}"]
+    return []
+
+
+def _not_a_database(db_path: Path) -> str | None:
+    """A one-line reason when `db_path` cannot be read as a SQLite database, else None."""
+    try:
+        with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
+            con.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error as exc:
+        return f"{db_path} is not a readable SQLite database ({exc})"
+    return None
+
+
 def _checkpoint(db_path: Path) -> None:
     """Leave the database checkpointed: the last connection to close after a run is read-only (the
     verification) and cannot fold the WAL into the file, so `-wal` would stay non-empty and a reader
@@ -571,6 +628,9 @@ def _checkpoint(db_path: Path) -> None:
     only delays that, which is reported, not an error."""
     try:
         with closing(sqlite3.connect(db_path, timeout=0, isolation_level=None)) as con:
+            if con.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+                print("checkpoint: not in WAL mode, nothing to truncate", file=sys.stderr)
+                return
             busy, log, done = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     except sqlite3.OperationalError as exc:
         print(
@@ -624,6 +684,9 @@ def main(argv: list[str] | None = None) -> int:
     if not db_path.is_file():
         print(f"error: the database {db_path} does not exist (pass --db PATH)", file=sys.stderr)
         return 1
+    if reason := _not_a_database(db_path):
+        print(f"error: {reason}", file=sys.stderr)
+        return 1
     if args.revert:
         return _revert_main(db_path, args)
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
@@ -674,11 +737,12 @@ def _apply_main(
         raise
     if promotions:
         print(f"audit list {args.list} ({len(audit)} rows)")
-    print(f"promoted {len(promotions)} rows; quarantined {result[0]}, released {result[1]}")
+    print(f"promoted {result[2]} rows; quarantined {result[0]}, released {result[1]}")
     with _stage("verify"):
         predicted = cast(dict[str, int], details["predicted_sync"])
         problems = _verify_apply(db_path, promotions, expected, result, predicted)
     _checkpoint(db_path)
+    problems += _reader_check(db_path, expected)
     return _report_problems(problems, "--apply") if problems else 0
 
 
@@ -699,16 +763,16 @@ def _revert_main(db_path: Path, args: argparse.Namespace) -> int:
     with _stage("backup, check and sha256"):
         sha = _backup(db_path, args.backup, expected)
     print(f"backup {args.backup} sha256 {sha}")
-    holding = _holding(db_path, rows)
     with _stage("revert and sync"):
-        quarantined, released = revert(db_path, rows, expected)
+        quarantined, released, changed = revert(db_path, rows, expected)
     print(
-        f"reverted {holding} of {len(rows)} listed rows ({len(rows) - holding} changed since and "
+        f"reverted {changed} of {len(rows)} listed rows ({len(rows) - changed} changed since and "
         f"left alone); quarantined {quarantined}, released {released}"
     )
     with _stage("verify"):
         problems = _verify_revert(db_path, rows)
     _checkpoint(db_path)
+    problems += _reader_check(db_path, expected)
     return _report_problems(problems, "--revert") if problems else 0
 
 
