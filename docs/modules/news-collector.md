@@ -278,8 +278,8 @@ up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and v
 quiet: each stage prints when it ends. After an apply the `-wal` file is not empty until SQLite checkpoints it, so the
 "writer may be running" warning on the next run is expected then.
 
-1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, the
-   same environment as the script).
+1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
+   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs; same environment as the script).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
 3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
