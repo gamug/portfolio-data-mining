@@ -98,7 +98,7 @@ Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in prog
 matcher, `scripts/reclass_rejects.py` and `scripts/rehearse_reclass.py` are written; the run is rehearsed on a
 same-mount copy of the real database (apply, second apply, revert, comparison); the hand-check sheet passes for the
 shipped rule and the `loose_name` precision sample is fully labeled (News Corp 10 of 10, the rest 20 of 20). The real
-re-class run (437 promotions, all `review`) and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
+re-class run (448 promotions, all `review`; the legal-name form closed the News Corp gap) and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

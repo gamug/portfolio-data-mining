@@ -253,6 +253,13 @@ def test_explicit_forms_edges_and_cashtags_of_common_tickers(
         ("https://x.com/semiconductor-bank-of-americas-top-chip-stocks", "Bank of America", "BAC"),
         ("https://x.com/news-corps-dual-class-structure", "News Corp (Class B)", "NWS"),
         ("https://x.com/dollar-generals-sales-miss", "Dollar General", "DG"),
+        # a trailing `Corp` spelled out: 11 real News Corp pairs on 8 URLs were `reject`
+        ("https://x.com/news-corporation-shares-pop-4-percent", "News Corp (Class A)", "NWSA"),
+        (
+            "https://x.com/murdochs-son-may-signal-shift-at-news-corporation",
+            "News Corp (Class B)",
+            "NWS",
+        ),
     ],
 )
 def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
@@ -270,6 +277,16 @@ def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
         ("https://x.com/key-to-a-good-retirement", "KeyCorp", "KEY"),  # brand too short
         ("https://x.com/cis-outlook-2024", "Cisco", "CSCO"),  # no capital tail to cut
         ("https://x.com/sys-admin-tips", "Sysco", "SYY"),
+        (
+            "https://x.com/latest-news-corporation",
+            "KLA Corporation",
+            "KLAC",
+        ),  # `Corp` is only spelled out for a name that ends in it
+        (
+            "https://x.com/southern-corporation-ceo",
+            "Southern Company",
+            "SO",
+        ),  # no `company` -> `corporation` swap
     ],
 )
 def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) -> None:

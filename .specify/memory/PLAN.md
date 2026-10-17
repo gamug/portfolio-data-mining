@@ -1150,13 +1150,14 @@ same-mount copy and then done with a backup, and `portfolio-nlp` is told what ch
 **Status: in progress** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The
 code, the tests, the rehearsal and the hand checks are done; the real run and the hand-off are open.
 
-- **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never
-  `reject`: the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name
-  (`pepsi` for `PepsiCo`; only a capital `Co`/`Corp` tail is cut), and a slug's possessive `s` only for a name of two
-  words or more outside `PLURAL_PHRASES` (`best buy`, `on semiconductor`, `target corporation`). A form needs two words
-  or more, each of at least two characters, or one distinctive word, so `AT&T`'s `at t` never counts (22 real names with
-  a one-letter word are pinned in a test). All 433 known false rejects are `review` (45 depend on the possessive form,
-  38 of them News Corp); `score_ticker_rules.py --check` is unchanged.
+- **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never `reject`:
+  the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name (`pepsi` for
+  `PepsiCo`; only a capital `Co`/`Corp` tail is cut), a trailing `Corp` spelled out (`news-corporation`: 11 News Corp
+  pairs on 8 URLs, 2026-10-17), and a slug's possessive `s` only for a name of two words or more outside
+  `PLURAL_PHRASES` (`best buy`, `on semiconductor`, `target corporation`). A form needs two words or more, each of at
+  least two characters, or one distinctive word, so `AT&T`'s `at t` never counts (22 real names with a one-letter word
+  are pinned in a test). All 433 known false rejects are `review` (45 depend on the possessive form, 38 of them News
+  Corp); `score_ticker_rules.py --check` is unchanged.
 - **Tooling and guards.** `scripts/reclass_rejects.py`: dry run by default (status of the promoted rows, predicted sync
   and predicted change of the readable articles, top tickers, `api` rows); `--apply` needs a new `--backup` (checked:
   fingerprint, `quick_check`, SHA-256), refuses a `portfolio-common` older than 1.2.2 (before anything is written;
@@ -1171,53 +1172,49 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   failure prints the remedy that fits (data: how to undo; reader: checkpoint or `uv sync`, no revert). Each stage prints
   its duration. `scripts/rehearse_reclass.py` runs the whole sequence on a same-mount copy and reports.
   `ticker_validation_sample.py --refresh` and `loose_name_precision.py` keep the hand-check sheets current.
-- **Real-database evidence** (read-only, `urls.db`, 2026-10-16/17). Dry run: **437 promotions**, all `review`/`loose_name`,
-  none `accept`: 437 of 437 promoted articles are already quarantined, none is `skipped`, `api` has no `reject` row,
-  predicted sync 0 quarantined / 0 released (News Corp 402 pairs = 202 distinct URLs, `KLAC` 16, `SO` 11, `BAC` 4,
-  `DG`/`IFF`/`PEP`/`TTD` 1). Rehearsal with `rehearse_reclass.py` on a copy (2.3 GB) on the same mounted drive, commit
-  `417af01`, `portfolio-common` 1.2.2: 12 checks, all held. Apply
-  **965.2 s** (fingerprint 45.0 s, plan 61.9 s, report
-  141.5 s, backup + `quick_check` + SHA-256 370.7 s, update + sync
-  126.7 s, verify 138.9 s), `-wal` 0 bytes and `-shm`
-  present afterwards; a second apply wrote nothing (629.2 s);
-  revert **947.7 s**, `-wal` 0 bytes; the reverted copy equals the pristine one
-  (`EXCEPT` both ways: `discovered_urls` [0, 0], `articles` [0, 0]); a second writer
-  makes `--apply` refuse (`busy`, no backup, no list). Earlier rehearsals on the same mount took 697 s and 1,030 s for
-  the apply (the spread is the shared drive), so the runbook says 12 to 17 minutes and to plan for 20.
-- **Hand check and precision.** `data/ticker_reclass_check_sample.csv` passes the T-057 criterion for the shipped rule (2 of
-  60 `accept` wrong, 0 of 40 `reject` correct, 1 unclear). `loose_name` precision, the maintainer's labels on distinct
-  URLs: News Corp 10 of 10 (95% lower bound 72%; all 202 URLs contain the literal `news-corp`, the 201 slugs of the known
-  file were read), the other 35 pairs 20 of 20 (lower bound 84%; the one earlier `BAC` `no` was confirmed `yes`).
+- **Real-database evidence** (read-only, `urls.db`, 2026-10-17). Dry run: **448 promotions**, all `review`/`loose_name`,
+  none `accept`: 448 of 448 promoted articles are already quarantined (before quarantine `ok` 417, `failed` 25,
+  `thin_content` 6), none is `skipped`, `api` has no `reject` row, predicted sync 0 quarantined / 0 released, the `ok`
+  articles stay 93,224 (News Corp 413 pairs: `NWSA` 207, `NWS` 206, on 210 distinct URLs; `KLAC` 16, `SO` 11, `BAC` 4,
+  `DG`/`IFF`/`PEP`/`TTD` 1). Classes: `reject` 325,423 -> 324,975, `review` 51,295 -> 51,743, `accept` 104,614.
+  Rehearsal with `rehearse_reclass.py` on a copy (2.3 GB) on the same mounted drive, commit `ff51985`,
+  `portfolio-common` 1.2.2: 12 checks, all held. Apply **925.3 s** (fingerprint 46.9 s, plan 63.6 s, report 146.7 s,
+  backup + `quick_check` + SHA-256 346.0 s, update + sync 120.8 s, verify 130.6 s), `-wal` 0 bytes afterwards; a second
+  apply wrote nothing (581.3 s); revert **773.8 s**, `-wal` 0 bytes; the reverted copy equals the pristine one (`EXCEPT`
+  both ways: `discovered_urls` [0, 0], `articles` [0, 0]); a second writer makes `--apply` refuse (`busy`, no backup, no
+  list). Earlier rehearsals on the same mount took 697 s, 965 s and 1,030 s for the apply (the spread is the shared
+  drive), so the runbook says 12 to 17 minutes and to plan for 20.
+- **Hand check and precision.** `data/ticker_reclass_check_sample.csv` passes the T-057 criterion for the shipped rule
+  (2 of 60 `accept` wrong, 0 of 40 `reject` correct, 1 unclear). `loose_name` precision, the maintainer's labels on
+  distinct URLs: News Corp 10 of 10 (95% lower bound 72%; all 202 URLs contain the literal `news-corp`, the 201 slugs of
+  the known file were read), the other 35 pairs 20 of 20 (lower bound 84%; the one earlier `BAC` `no` was confirmed
+  `yes`). The 11 legal-name pairs (8 URLs) added on 2026-10-17 are in no hand sample yet: they are `review`, which is
+  the doubt class, and the maintainer may label the 8 URLs.
 - **What it changes for `portfolio-nlp`:** nothing it can read. A promoted pair is `review`, `review` stays quarantined
   and `portfolio-nlp` reads only `fetch_status = 'ok'`; the run checks that count (predicted change 0). What moves is
-  the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-17**
+  the labels (`reject` -448, `review` +448), which the hand-off must say. **Decided by the maintainer on 2026-10-17**
   (Work item 13): the News Corp pairs stay `review` for the NER check, as do the other 35; nothing is released after the
   run.
 - **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
-  rule promotes 437, so `reject` is **324,986** after the run, 325,423 before): 438 `reject` rows have a distinctive
+  rule promotes 448, so `reject` is **324,975** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
   real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). The 438 was not re-measured after the fix; it can differ by at most the 5
-  pairs the fix put back to `reject` (`AT&T`, `target-corporations`). Not fixed here, below the T-057 hand check's
-  resolution.
+  pairs the fix put back to `reject` (`AT&T`, `target-corporations`) and by the 11 legal-name pairs now promoted. Not
+  fixed here, below the T-057 hand check's resolution.
 - **Owner of the hand-read lists:** `matching.PLURAL_PHRASES` and the camel-tail names are re-scanned by whoever changes
   the company universe (a new two-word name that is also a plural noun is read as a spelling and lands in `review`,
   which is harmless for the quarantine but raises the false rate of `loose_name`). The re-scan is part of the
-  universe-change task, and `loose_name_precision.py sample` re-measures the rate. A second gap, found in Work item 13:
-  11 News Corp pairs on 8 URLs spell the legal name (`news-corporation` in the slug) and stay `reject`, so the NER check
-  would not see them; the loose-name rule does not read `news corporation` as `news corp`. Adding that form would make
-  them `review` (437 promotions become 448, with a new dry run and rehearsal); the maintainer decides before the real
-  run, and the figures of this item are frozen on 437 until then.
+  universe-change task, and `loose_name_precision.py sample` re-measures the rate. The legal-name gap found in Work item
+  13 (11 News Corp pairs on 8 URLs, `news-corporation` in the slug) is closed: the rule reads a trailing `Corp` spelled
+  out, the pairs are `review`, the figures of this item are on 448.
 - **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed, `uv
   sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then the
   close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
   artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; the News Corp pairs stay `review`
   for the NER check (Work item 13, closed by decision). The close-out also drops `T-063` from the docstrings of
   `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and checks that `SPEC.md` FR-014 (the
-  doubt rule, confirmed by the maintainer) still matches. **Gate:** PR #66 was merged without its last commit (807a442,
-  the runbook's step 6 with Python), which PR #67 carries, and the reader-problem remedy of the script still names the
-  `sqlite3` CLI (PR #69 fixes it), so the real run needs #67 and #69 merged first; and the real `--apply` waits for the
-  maintainer's answer on the 11 legal-name pairs (Known gap above: 437 or 448 promotions); the runbook in
-  `docs/modules/news-collector.md` is not changed for it.
+  doubt rule, confirmed by the maintainer) still matches. The runbook fixes (#67, #69) are merged; the real run needs
+  the legal-name PR merged first, because without it the run promotes 437, not 448.
 - **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep
   `reclass_rejects.py` is its `--revert` as the rollback of the run; recommended: keep both scripts until the maintainer
   has checked the run, then remove them with their tests in `T-062`'s close-out commit. The audit list, the run summary
@@ -1231,27 +1228,26 @@ confidence is in doubt, the pair stays `review` so that `portfolio-nlp` can take
 12's run; on the evidence below the maintainer chose to **hold them all for the NER check**. No alias, no script change,
 no release: the News Corp pairs stay what `T-062` makes them.
 **Decision record** (the rule itself is in `SPEC.md` FR-014).
-- **Why not release:** the pairs are 402 of `T-062`'s 437 promotions (`NWS` 200, `NWSA` 202; 202 distinct URLs; 400 from
-  the URL alone, 2 from the title). Every URL has the literal `news-corp`, but the maintainer's hand sample is 10 of 10
-  with a 95% lower bound of 72%, and 42 URLs (84 pairs) also name another tagged company (roundups, the FOX merger
-  stories, `dow-jones` stories). A developer read of 20 of the 168 uncontested URLs found 18 about News Corp and 2
-  multi-company lists (95% lower bound for 18 of 20: 70%).
+- **Why not release:** the pairs are 413 of `T-062`'s 448 promotions (`NWS` 206, `NWSA` 207; 210 distinct URLs; 402
+  `review` before the legal-name form, 11 added by it). Every URL has the literal `news-corp`, but the maintainer's hand
+  sample is 10 of 10 with a 95% lower bound of 72%, and 42 URLs (84 pairs) also name another tagged company (roundups,
+  the FOX merger stories, `dow-jones` stories). A developer read of 20 of the 168 uncontested URLs found 18 about News
+  Corp and 2 multi-company lists (95% lower bound for 18 of 20: 70%).
 - **What release would have changed** (measured read-only on 2026-10-17, the audit's own tests): the 413 News Corp pairs
-  with the slug (402 `review` + 11 `reject`; 210 URLs) have no wall and no body under the floor of 80 words; 400 articles
-  are `ok` before quarantine (200 distinct bodies, each stored for both share classes) and 13 would go back to `failed`
-  (9) or `thin_content` (4). Releasing all would have made 400 articles readable; the uncontested subset 314 (325 pairs).
-  The readable set therefore stays as `T-062` leaves it: nothing moves for `portfolio-nlp`.
-- **What the NER check inherits:** the 402 `review` pairs here and the 35 others from `T-062`; quarantined bodies are
+  with the slug (402 `review` + 11 `reject` before the legal-name form, all `review` after it; 210 URLs) have no wall
+  and no body under the floor of 80 words; 400 articles are `ok` before quarantine (200 distinct bodies, each stored for
+  both share classes) and 13 would go back to `failed` (9) or `thin_content` (4). Releasing all would have made 400
+  articles readable; the uncontested subset 314 (325 pairs). The readable set therefore stays as `T-062` leaves it:
+  nothing moves for `portfolio-nlp`.
+- **What the NER check inherits:** the 413 News Corp pairs here and the 35 others from `T-062`; quarantined bodies are
   kept. `GET /articles?fetch_status=quarantined` does not return the match class, so the check needs either a
   `match_class` filter on that endpoint or a read of `discovered_urls.match_class` through
   `Database.attach(read_only=True)`; that belongs to the NER work item and is not decided here. Until it exists,
   quarantine means "waiting for the check", not "excluded".
-- **Open (maintainer decides, not scheduled):** 11 News Corp pairs on 8 URLs spell the legal name (`news-corporation`
-  in the slug: Seeking Alpha transcripts, CNBC earnings stories) and stay `reject` after `T-062`, so the NER check would
-  not see them. The matcher's loose-name rule does not read `news corporation` as the company's `news corp`. Options:
-  add the legal-name form to the loose-name rule (they become `review`; it changes `T-062`'s run, 437 promotions would
-  become 448, and needs a new dry run and rehearsal) or accept the gap, as for the 438 pairs of Work item 12's known gap.
-  No other ticker has that slug in the database.
+- **Closed 2026-10-17 (the maintainer's doubt rule):** the 11 News Corp pairs on 8 URLs that spell the legal name
+  (`news-corporation` in the slug) were `reject`, out of reach of the NER check. `T-062` now reads a trailing `Corp`
+  spelled out as a loose name (`matching._loose_name`), so they are `review` like the other 402: the run promotes 448,
+  not 437. No other company changes (measured on the real `reject` rows).
 - **Nothing to build here:** `known_false_rejects.py --check` stays at its numbers; `reclass_rejects.py` keeps its
   `reject` → `review` scope.
 
