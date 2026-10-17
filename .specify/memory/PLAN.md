@@ -1212,8 +1212,10 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
   artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; the News Corp pairs stay `review`
   for the NER check (Work item 13, closed by decision). The close-out also drops `T-063` from the docstrings of
-  `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and records the doubt rule in `SPEC.md`
-  FR-014 if it is not there yet.
+  `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and checks that `SPEC.md` FR-014 (the
+  doubt rule, confirmed by the maintainer) still matches. **Gate:** the real `--apply` waits for the maintainer's answer
+  on the 11 legal-name pairs (Known gap above: 437 or 448 promotions); the runbook in `docs/modules/news-collector.md`
+  is not changed for it.
 - **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep
   `reclass_rejects.py` is its `--revert` as the rollback of the run; recommended: keep both scripts until the maintainer
   has checked the run, then remove them with their tests in `T-062`'s close-out commit. The audit list, the run summary
