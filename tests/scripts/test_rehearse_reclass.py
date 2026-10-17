@@ -1,4 +1,4 @@
-"""scripts/rehearse_reclass.py: the rehearsal of the real re-class run on a copy (T-062, T-063)."""
+"""scripts/rehearse_reclass.py: the rehearsal of the real re-class run on a copy (T-062)."""
 
 from __future__ import annotations
 

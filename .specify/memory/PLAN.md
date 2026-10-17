@@ -1147,8 +1147,7 @@ estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, sc
 re-measured and the figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, the real run is rehearsed on a
 same-mount copy and then done with a backup, and `portfolio-nlp` is told what changes for it. No schema change.
 
-**Status: in progress** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The
-code, the tests, the rehearsal and the hand checks are done; the real run and the hand-off are open.
+**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is delivered as `handoff-portfolio-nlp.md`.
 
 - **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never `reject`:
   the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name (`pepsi` for
@@ -1207,18 +1206,11 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   universe-change task, and `loose_name_precision.py sample` re-measures the rate. The legal-name gap found in Work item
   13 (11 News Corp pairs on 8 URLs, `news-corporation` in the slug) is closed: the rule reads a trailing `Corp` spelled
   out, the pairs are `review`, the figures of this item are on 448.
-- **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed, `uv
-  sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then the
-  close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
-  artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; the News Corp pairs stay `review`
-  for the NER check (Work item 13, closed by decision). The close-out also drops `T-063` from the docstrings of
-  `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and checks that `SPEC.md` FR-014 (the
-  doubt rule, confirmed by the maintainer) still matches. The runbook fixes (#67, #69) are merged; the real run needs
-  the legal-name PR merged first, because without it the run promotes 437, not 448.
-- **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep
-  `reclass_rejects.py` is its `--revert` as the rollback of the run; recommended: keep both scripts until the maintainer
-  has checked the run, then remove them with their tests in `T-062`'s close-out commit. The audit list, the run summary
-  and the backup are the record.
+- **Real run (2026-10-17, `urls.db`, collector and crawler stopped, `portfolio-common` 1.2.2, master `0c14a5a`).** Dry run **448 promotions** (all `review`/`loose_name`; `ok` 417, `failed` 25, `thin_content` 6 before quarantine; 448 of 448 articles already quarantined; predicted sync 0/0; 5 min). Apply 22 min 7 s on the shared drive (fingerprint 54.5 s, plan 77.6 s, report 168.0 s, backup + `quick_check` + SHA-256 402.6 s, update + sync 137.2 s, verify 150.9 s), backup `/workspaces/thesis/data/url_cat_backup.db` (SHA-256 `5cfb1b21…c8887`), audit list `data/retag/reclass_promoted.csv` (448 rows), summary `data/retag/reclass_apply_summary_20261017T232931362685Z.json`; post-conditions ok, rows changed 448, sync 0 quarantined / 0 released, WAL truncated, reader check `attach(read_only=True)` ok (481,332 pairs, 93,224 readable articles). Classes: `reject` 325,423 → **324,975**, `review` 51,295 → **51,743**, `accept` 104,614 unchanged, `loose_name` 448, `articles.fetch_status` unchanged (`ok` 93,224). Read back afterwards: no `accept` pair holds a quarantined article; `news-corporation` URLs are 13 `review` pairs; no `Coherent Corp.` or `Vistra Corp.` URL spells `corporation` yet. The first apply attempt of the same day wrote nothing: it refused because a leftover 2-row test file sat at the `--list` path (the script's refusal worked as designed; the file was moved to `data/retag/reclass_promoted.fixture-2026-10-16.csv`).
+- **Closed:** the follow-ups are the `portfolio-nlp` NER check on the `review` class (Work item 13; not built) and the known gap below. `SPEC.md` FR-014 matches (the doubt rule, and a loosely spelled full name is `review`, never `reject`). The architecture artifacts were reconciled in the close-out.
+- **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep `reclass_rejects.py` is its
+  `--revert` as the rollback of the run. The close-out keeps both scripts and their tests until the maintainer has checked
+  the run; removing them is a separate small commit. The audit list, the run summary and the backup are the record.
 
 ## Work item 13 — The News Corp pairs wait for the NER check (decision, T-063 closed without code)
 

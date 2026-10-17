@@ -227,6 +227,8 @@ before trusting a pass.
 
 ## Re-class the rejected pairs (T-062)
 
+**Done on 2026-10-17** on the real `urls.db`: 448 promotions (`reject` 325,423 → 324,975, `review` 51,295 → 51,743, `ok` articles unchanged at 93,224), backup `url_cat_backup.db`, audit list `data/retag/reclass_promoted.csv`, summary `reclass_apply_summary_20261017T232931362685Z.json`. The steps below are kept as the record and the rollback guide; a second `--apply` writes nothing. If `--apply` refuses because the audit list exists, move the old file or pass another `--list` (a leftover test file caused the first attempt's refusal).
+
 The matcher reads a name the URL spells loosely as `review` with reason `loose_name`, never `reject`: the
 name with its corporate suffix kept (`kla-corporation`, `news-corp`), with the `and` of an `&` dropped,
 the brand of a camel-case name (`pepsi` for `PepsiCo`; only a capital `Co`/`Corp` tail is cut, so `Costco`

@@ -690,6 +690,30 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       committed tests, `membership_span` per stint + ANSS `declared_exception` + K's spin-off note in
       the manifest, and a trim-reason-class comparison.
 
+## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, origin: Work item 10 real run)
+
+- [x] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher; scheduled by the maintainer 2026-10-16)*
+      Fix the full-name false rejects: at least 433 `reject` pairs on 234 URLs whose URL spells the company
+      out (`data/retag_known_false_rejects.csv`, `PLAN.md` Work item 10 "Accepted recall loss"). Three causes in
+      `matching._name_reason`: a name that is short or a stopword once the suffix is removed (`kla`, `southern`, `news`),
+      a possessive written as a trailing `s` (`bank-of-americas`), and an `&` the URL drops. Make a full-name hit at
+      least `review` (never `reject`), normalize the possessive and `&`, then re-class the quarantined rows with a
+      targeted pass (the re-tag only touches `match_reason IS NULL` rows), audited: dry run, verified backup, audit list,
+      `--revert`, a fingerprint guard, post-conditions (rows per class, the sync prediction, the readable `ok` articles) and
+      a read-only attach as `portfolio-nlp` does it, all in `scripts/reclass_rejects.py`, rehearsed on a same-mount copy with
+      `scripts/rehearse_reclass.py`; `release_articles` runs for any that become `accept`. Acceptance: the 433 rows are no longer `reject` (update `known_false_rejects.py --check` and
+      `tests/scripts/test_known_false_rejects.py`), `score_ticker_rules.py --check` is re-measured and `PLAN.md`'s figures
+      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told what changes for it:
+      the `reject` count falls and the `review` count rises by the promoted pairs, while the rows it can read do not change (a
+      promoted pair is `review`, so its article stays quarantined) unless the maintainer decides to release a subset to `accept`. Constitution AI behavior #10 does not apply
+      (no schema change). Tooling for that sheet: add `data/ticker_retag_check_sample.csv` to `EARLIER_SAMPLES` and to the
+      `--final` exclusions in `ticker_validation_sample.py`, and draw with `--final --out <new path>` (the default output is the T-057 sheet and must not be overwritten).
+      **Done 2026-10-17** (PRs #66, #67, #69, #70): the matcher reads a full name the URL spells loosely (suffix kept, `&`, possessive `s`,
+      camel-case brand, a trailing `Corp` spelled out) as `review`/`loose_name`; the audited real run promoted **448** pairs
+      (`reject` 325,423 → 324,975, `review` 51,295 → 51,743, `accept` and the readable `ok` articles unchanged, 93,224), with backup
+      `url_cat_backup.db`, audit list and run summary kept; `portfolio-nlp` hand-off delivered. Figures and timings: `PLAN.md` Work item 12.
+
+
 ## Work item 13 — The News Corp pairs wait for the NER check (decision)
 
 - [x] **T-063** *(superseded 2026-10-17 by the maintainer's decision, option B; no code)* The proposal was to release

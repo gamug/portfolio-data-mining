@@ -1,4 +1,4 @@
-"""Rehearse `reclass_rejects.py` on a copy of the real database before the real run (T-062, T-063).
+"""Rehearse `reclass_rejects.py` on a copy of the real database before the real run (T-062).
 
 The real run edits a 2 GB SQLite file on a mounted drive; what the unit tests prove on a five-row fixture is
 not what that file does (locking, the write-ahead log, the time of each stage). This copies the database
