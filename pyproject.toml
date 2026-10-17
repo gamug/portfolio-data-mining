@@ -60,4 +60,9 @@ package = false
 # schema-introspection helpers) so src/data_mining/ and src/extractor/ name
 # no database engine -- "which engine" is a portfolio-common change. See
 # docs/portfolio-common-v1.2-engine-agnostic.md.
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.1" }
+#
+# v1.2.2 fixes Database.attach(read_only=True) raising for as long as this
+# repo's own collector has urls.db open in WAL mode -- the exact bug that
+# made urls.db unreachable to portfolio-nlp while news_collector was running.
+# Additive; no signature changes.
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.2" }
