@@ -273,8 +273,7 @@ WAL and finish with a **reader check**: the file is attached read-only through `
 unreachable for `portfolio-nlp` while it was in WAL mode, so a run that leaves it in a state a reader refuses ends with
 `POST-CONDITION FAILED` and exit 1. The remedy printed depends on the kind of failure: a data problem says how to undo
 (`--revert` with the real list and backup paths; for a revert run, to restore the backup only if nothing has run since), a
-reader problem says the data is as planned and to checkpoint with every reader stopped (`sqlite3 FILE "PRAGMA
-wal_checkpoint(TRUNCATE);"`) or `uv sync` to `portfolio-common` >= 1.2.2, with no revert needed. Both modes also write
+reader problem says the data is as planned and to checkpoint with every reader stopped (`python3 -c "import sqlite3; print(sqlite3.connect('FILE').execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone())"`, which prints `(0, n, n)` when done; the script prints this command with the real path, and the `sqlite3` CLI is not installed on this machine) or `uv sync` to `portfolio-common` >= 1.2.2, with no revert needed. Both modes also write
 `reclass_apply_summary_<time>.json` / `reclass_revert_summary_<time>.json` next to the list (`--summary` to move it; it
 never overwrites): database, `portfolio-common` version, the state before and after (pairs, articles, rows per class,
 `ok` articles), the rows changed, the predicted and actual sync, the backup path and SHA-256, the list path and rows,
@@ -313,10 +312,11 @@ about 50 minutes with `--articles`.
 
 0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
    50 minutes, and never writes to the real file.
-1. T-062 (PR #66) and the docs PR #67 are both merged (#67 carries this step 6 with Python; check that `master` has it) and
-   the code is updated on the machine that runs the collector and the crawler (`git pull`, then
-   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
-   `portfolio-common 1.2.2`; same environment as the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
+1. T-062 (PR #66), the docs PR #67 and the remedy fix PR #69 are merged (step 6 below prints a `python3 -c` command, not
+   `sqlite3`, and the reader-problem remedy printed by the script is a `python3 -c` command too) and the code is updated
+   on the machine that runs the collector and the crawler (`git pull`, then `uv sync`: master pins `portfolio-common`
+   v1.2.2, which the database access needs, and `uv pip list` must show `portfolio-common 1.2.2`; same environment as
+   the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
 3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
