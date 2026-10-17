@@ -1254,3 +1254,45 @@ def test_reverting_an_accept_expects_its_ok_article_to_be_quarantined_again(
     data = json.loads(summary.read_text())
     assert data["expected_ok_articles_delta"] == -1
     assert (data["before"]["ok_articles"], data["after"]["ok_articles"]) == (1, 0)
+
+
+@pytest.mark.parametrize("version", ["1.2.1", "1.1.9", "unknown"])
+def test_apply_and_revert_refuse_an_old_portfolio_common_before_any_write(
+    db_file: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    version: str,
+) -> None:
+    monkeypatch.setattr(reclass, "_library_version", lambda: version)
+    before = _rows(db_file)
+    backup, listing = tmp_path / "bk.db", tmp_path / "audit" / "l.csv"
+    seed = tmp_path / "seed.csv"
+    seed.write_text("id\n1\n")
+
+    assert (
+        reclass.main(
+            ["--db", str(db_file), "--apply", "--backup", str(backup), "--list", str(listing)]
+        )
+        == 1
+    )
+    assert reclass.main(["--db", str(db_file), "--revert", str(seed), "--backup", str(backup)]) == 1
+
+    err = capsys.readouterr().err
+    assert err.count("run `uv sync` (needs >= 1.2.2)") == 2
+    assert not backup.exists()
+    assert not listing.exists()
+    assert not list(tmp_path.glob("*.partial")) and not list((tmp_path / "audit").glob("*"))
+    assert _rows(db_file) == before
+
+
+def test_the_dry_run_only_warns_about_an_old_portfolio_common(
+    db_file: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(reclass, "_library_version", lambda: "1.2.1")
+
+    assert reclass.main(["--db", str(db_file)]) == 0
+
+    captured = capsys.readouterr()
+    assert "warning: portfolio-common 1.2.1 is installed" in captured.err
+    assert '"promotions"' in captured.out

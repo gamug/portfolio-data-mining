@@ -1159,7 +1159,8 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   38 of them News Corp); `score_ticker_rules.py --check` is unchanged.
 - **Tooling and guards.** `scripts/reclass_rejects.py`: dry run by default (status of the promoted rows, predicted sync
   and predicted change of the readable articles, top tickers, `api` rows); `--apply` needs a new `--backup` (checked:
-  fingerprint, `quick_check`, SHA-256), refuses a busy database, a full disk, an existing or unwritable audit list or
+  fingerprint, `quick_check`, SHA-256), refuses a `portfolio-common` older than 1.2.2 (before anything is written;
+  the dry run warns) and a busy database, a full disk, an existing or unwritable audit list or
   summary, writes the audit list as `.partial` and publishes it only after the commit, and rolls back if the database
   fingerprint moved since the plan; after the update and the sync it reads the database back (rows per class, rows
   changed, none still `reject`, the sync equals the prediction, no `accept` pair holds a quarantined article, the `ok`

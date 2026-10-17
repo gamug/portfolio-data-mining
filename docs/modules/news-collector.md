@@ -313,9 +313,10 @@ about 50 minutes with `--articles`.
 
 0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
    50 minutes, and never writes to the real file.
-1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
+1. The PR is merged (**without squash**, or rebase PR #67 onto master afterwards, so it does not show the whole T-062
+   history) and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
    `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
-   `portfolio-common 1.2.2`; same environment as the script).
+   `portfolio-common 1.2.2`; same environment as the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
 3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
@@ -332,7 +333,12 @@ about 50 minutes with `--articles`.
    as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986 (the real file reads 325,423 on 2026-10-17),
    `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
    unchanged.
-6. Restart the collector and the crawler with the merged code, and check one new row is classed by the new matcher.
+6. Restart the collector and the crawler with the merged code and check the deployed matcher. At once, read-only:
+   `PYTHONPATH=src uv run python -c "from data_mining.matching import classify; print(classify('https://x.com/kla-corporation-q4',
+   '', 'KLA Corporation', 'KLAC'))"` must print `review` / `loose_name` (it proves the code, not the data). Once the
+   collector has discovered new rows: `sqlite3 -readonly /workspaces/thesis/data/urls.db "SELECT id, ticker,
+   match_class, match_reason, url FROM discovered_urls ORDER BY id DESC LIMIT 20"`; a new row whose URL spells the full
+   company name is `review` / `loose_name`, not `reject`.
 7. Rollback: `--revert data/retag/reclass_promoted.csv --backup NEW.db` puts back the class, reason and status of the
    rows that still hold what the run wrote. Restoring `url_cat_backup.db` instead also discards every row the collector and
    crawler wrote after the backup, so use it only if nothing has run since.

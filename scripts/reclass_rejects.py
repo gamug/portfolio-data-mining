@@ -39,6 +39,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -649,6 +650,22 @@ def _library_version() -> str:
         return "unknown"
 
 
+MIN_LIBRARY = (1, 2, 2)
+
+
+def _library_problem() -> str | None:
+    """Why the installed `portfolio-common` cannot be trusted with the reader check, or None.
+
+    Checked before any write: a run that finds out afterwards has taken the backup and committed."""
+    version = _library_version()
+    parts = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    if parts is None:
+        return f"portfolio-common is {version}; run `uv sync` (needs >= 1.2.2)"
+    if tuple(int(x) for x in parts.groups()) < MIN_LIBRARY:
+        return f"portfolio-common {version} is installed; run `uv sync` (needs >= 1.2.2)"
+    return None
+
+
 def _reader_check(
     db_path: Path, expected: Fingerprint, ok_articles: int
 ) -> tuple[list[str], dict[str, object]]:
@@ -833,6 +850,11 @@ def main(argv: list[str] | None = None) -> int:
     if reason := _not_a_database(db_path):
         print(f"error: {reason}", file=sys.stderr)
         return 1
+    if problem := _library_problem():
+        if args.apply or args.revert:
+            print(f"error: {problem}", file=sys.stderr)
+            return 1
+        print(f"warning: {problem}; --apply and --revert would refuse", file=sys.stderr)
     if args.revert:
         return _revert_main(db_path, args)
     with closing(sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)) as con:
