@@ -242,17 +242,62 @@ PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --apply --b
 PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --revert data/retag/reclass_promoted.csv --backup NEW2.db
 ```
 
-The dry run is read-only (a few minutes on the 2 GB file) and prints `promotions`, `by_class`, `by_reason`,
+The dry run is read-only and prints `promotions`, `by_class`, `by_reason`,
 `by_status` (the discovery status of the promoted rows), `skipped_back_to_pending`,
 `promoted_with_a_quarantined_article`, `top_tickers`, `predicted_sync` (`quarantined`, `released`: what the
-sync will print) and `api_rejects_left_alone`. `--apply` needs a backup path that does not exist and refuses a
+sync will print) and `api_rejects_left_alone`. The first dry run on the real file is slow (about 3 minutes: it
+sits on the mounted drive and is read cold); a second one is fast because the pages are cached, so do not
+conclude it hung. `--apply` needs a backup path that does not exist and refuses a
 busy database, a disk that cannot hold the copy, an existing or unwritable audit list, and a database whose
 fingerprint (row counts, highest ids, rows per status and per class) moved since the plan; it checks the
 copy (fingerprint, `quick_check`) and prints its SHA-256, and warns when `-wal` is not empty. Stop the
-collector and the crawler first. It writes the audit list (`data/retag/reclass_promoted.csv`, git-ignored;
-`--list` to move it) before changing anything; `--revert LIST` puts back the old class, reason and status of
-the rows that still hold what the run wrote, then syncs. If the process dies between the promotions and the
+collector and the crawler first. It writes the audit list as `reclass_promoted.csv.partial` and renames it to
+`data/retag/reclass_promoted.csv` (git-ignored; `--list` to move it) only once the promotions are committed, so a
+run that aborts leaves no list and a crash after the commit leaves it; `--revert LIST` puts back the old class,
+reason and status of the rows that still hold what the run wrote, then syncs (and refuses a `.partial` list).
+After the update and the sync, `--apply` and `--revert` read the database back and exit 1, with
+`POST-CONDITION FAILED` lines, if it is not as planned: the rows per class moved by exactly the promotions, none of
+them still `reject`, the sync did what the dry run predicted, no `accept` pair keeps a quarantined article (a revert:
+no listed row still holds what the run wrote). If the process dies between the promotions and the
 sync, `--apply` again (no backup is asked for when nothing is left to promote) runs the sync.
+
+**What the idle check can see.** `--apply` opens a write transaction before it copies anything and refuses when
+another process holds the lock. That sees a writer on the machine that runs the script. A collector or crawler on
+another host (for example Windows, with the script in a container over the mounted drive) may not be visible
+through the mount, so the fingerprint is the protection and **you confirm the processes are stopped**: the collector
+API (`apps/news_collector_api.py`, port 8001), any `discover` run of the collector CLI, and the crawler/extractor.
+
+### Real run checklist (T-062)
+
+The order matters: `matching.classify` runs in the collector at discovery, and the queue upsert only promotes a
+class. A collector or crawler restarted after the apply with the **old** code writes the same pairs as `reject` and
+`skipped` again and undoes the fix. Time to allow: about **12 minutes** for `--apply` on the real file (measured on a copy
+on the same mounted drive, cold: fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
+5.5 minutes, update and sync 2 minutes, verify 1 minute), about 10 minutes for `--revert` (backup 6.5 minutes), and
+up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). Do not stop it because it is
+quiet: each stage prints when it ends. After an apply the `-wal` file is not empty until SQLite checkpoints it, so the
+"writer may be running" warning on the next run is expected then.
+
+1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, the
+   same environment as the script).
+2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
+   (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
+3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
+   scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db`.
+4. Apply with a new backup name:
+   `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup
+   /workspaces/thesis/data/url_cat_backup.db --list data/retag/reclass_promoted.csv`. On screen: the stage lines
+   (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0` and exit 0
+   with no `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
+   committed and how to revert).
+5. Record the backup's SHA-256 and who keeps the backup and `data/retag/reclass_promoted.csv`. Expected figures,
+   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986,
+   `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
+   unchanged.
+6. Restart the collector and the crawler with the merged code, and check one new row is classed by the new matcher.
+7. Rollback: `--revert data/retag/reclass_promoted.csv --backup NEW.db` puts back the class, reason and status of the
+   rows that still hold what the run wrote. Restoring `url_cat_backup.db` instead also discards every row the collector and
+   crawler wrote after the backup, so use it only if nothing has run since.
 
 A promoted pair is `review`, so its article stays quarantined and `portfolio-nlp` reads exactly what it read
 before; the counts that change are `reject` and `review`. `scripts/loose_name_precision.py sample` draws 30
