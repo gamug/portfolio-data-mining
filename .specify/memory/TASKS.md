@@ -90,7 +90,7 @@ Closed Work items 3, 4, 5, 6, 7, 9, 10 and 11 are in `CHANGELOG.md` (Work item 5
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
 Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
 Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its open successor is Work item 12);
-Work item 11, `T-061`, closed 2026-10-16 in PR #62).
+Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 13, `T-063`, closed 2026-10-17 by decision, no code).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 

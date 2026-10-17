@@ -1190,8 +1190,9 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   file were read), the other 35 pairs 20 of 20 (lower bound 84%; the one earlier `BAC` `no` was confirmed `yes`).
 - **What it changes for `portfolio-nlp`:** nothing it can read. A promoted pair is `review`, `review` stays quarantined
   and `portfolio-nlp` reads only `fetch_status = 'ok'`; the run checks that count (predicted change 0). What moves is
-  the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-16:**
-  release the News Corp pairs in a follow-up (`T-063`, Work item 13); the other 35 stay `review`.
+  the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-17**
+  (Work item 13): the News Corp pairs stay `review` for the NER check, as do the other 35; nothing is released after the
+  run.
 - **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
   rule promotes 437, so `reject` is **324,986** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
@@ -1201,14 +1202,58 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
 - **Owner of the hand-read lists:** `matching.PLURAL_PHRASES` and the camel-tail names are re-scanned by whoever changes
   the company universe (a new two-word name that is also a plural noun is read as a spelling and lands in `review`,
   which is harmless for the quarantine but raises the false rate of `loose_name`). The re-scan is part of the
-  universe-change task, and `loose_name_precision.py sample` re-measures the rate.
-- **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed,
-  `uv sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then
-  the close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
-  artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; `T-063` starts after that.
-- **Scripts after the run (maintainer decides):** recommended: keep `reclass_rejects.py` (`--revert` is the rollback) and
-  `rehearse_reclass.py` until `T-063` is merged, since it reuses the audit list and the same guards; remove both and
-  their tests in the `T-063` close-out commit. The audit list, the run summary and the backup are the record.
+  universe-change task, and `loose_name_precision.py sample` re-measures the rate. A second gap, found in Work item 13:
+  11 News Corp pairs on 8 URLs spell the legal name (`news-corporation` in the slug) and stay `reject`, so the NER check
+  would not see them; the loose-name rule does not read `news corporation` as `news corp`. Adding that form would make
+  them `review` (437 promotions become 448, with a new dry run and rehearsal); the maintainer decides before the real
+  run, and the figures of this item are frozen on 437 until then.
+- **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed, `uv
+  sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then the
+  close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
+  artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; the News Corp pairs stay `review`
+  for the NER check (Work item 13, closed by decision). The close-out also drops `T-063` from the docstrings of
+  `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and checks that `SPEC.md` FR-014 (the
+  doubt rule, confirmed by the maintainer) still matches. **Gate:** PR #66 was merged without its last commit (807a442,
+  the runbook's step 6 with Python), which PR #67 carries, and the reader-problem remedy of the script still names the
+  `sqlite3` CLI (PR #69 fixes it), so the real run needs #67 and #69 merged first; and the real `--apply` waits for the
+  maintainer's answer on the 11 legal-name pairs (Known gap above: 437 or 448 promotions); the runbook in
+  `docs/modules/news-collector.md` is not changed for it.
+- **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep
+  `reclass_rejects.py` is its `--revert` as the rollback of the run; recommended: keep both scripts until the maintainer
+  has checked the run, then remove them with their tests in `T-062`'s close-out commit. The audit list, the run summary
+  and the backup are the record.
+
+## Work item 13 — The News Corp pairs wait for the NER check (decision, T-063 closed without code)
+
+**Status: closed 2026-10-17 by the maintainer's decision (option B).** The maintainer's design rule: where the tag
+confidence is in doubt, the pair stays `review` so that `portfolio-nlp` can take a deep look with NLP models and NER
+(the feature is not built). `T-063` proposed releasing the News Corp pairs (`NWS`, `NWSA`) to `accept` after Work item
+12's run; on the evidence below the maintainer chose to **hold them all for the NER check**. No alias, no script change,
+no release: the News Corp pairs stay what `T-062` makes them.
+**Decision record** (the rule itself is in `SPEC.md` FR-014).
+- **Why not release:** the pairs are 402 of `T-062`'s 437 promotions (`NWS` 200, `NWSA` 202; 202 distinct URLs; 400 from
+  the URL alone, 2 from the title). Every URL has the literal `news-corp`, but the maintainer's hand sample is 10 of 10
+  with a 95% lower bound of 72%, and 42 URLs (84 pairs) also name another tagged company (roundups, the FOX merger
+  stories, `dow-jones` stories). A developer read of 20 of the 168 uncontested URLs found 18 about News Corp and 2
+  multi-company lists (95% lower bound for 18 of 20: 70%).
+- **What release would have changed** (measured read-only on 2026-10-17, the audit's own tests): the 413 News Corp pairs
+  with the slug (402 `review` + 11 `reject`; 210 URLs) have no wall and no body under the floor of 80 words; 400 articles
+  are `ok` before quarantine (200 distinct bodies, each stored for both share classes) and 13 would go back to `failed`
+  (9) or `thin_content` (4). Releasing all would have made 400 articles readable; the uncontested subset 314 (325 pairs).
+  The readable set therefore stays as `T-062` leaves it: nothing moves for `portfolio-nlp`.
+- **What the NER check inherits:** the 402 `review` pairs here and the 35 others from `T-062`; quarantined bodies are
+  kept. `GET /articles?fetch_status=quarantined` does not return the match class, so the check needs either a
+  `match_class` filter on that endpoint or a read of `discovered_urls.match_class` through
+  `Database.attach(read_only=True)`; that belongs to the NER work item and is not decided here. Until it exists,
+  quarantine means "waiting for the check", not "excluded".
+- **Open (maintainer decides, not scheduled):** 11 News Corp pairs on 8 URLs spell the legal name (`news-corporation`
+  in the slug: Seeking Alpha transcripts, CNBC earnings stories) and stay `reject` after `T-062`, so the NER check would
+  not see them. The matcher's loose-name rule does not read `news corporation` as the company's `news corp`. Options:
+  add the legal-name form to the loose-name rule (they become `review`; it changes `T-062`'s run, 437 promotions would
+  become 448, and needs a new dry run and rehearsal) or accept the gap, as for the 438 pairs of Work item 12's known gap.
+  No other ticker has that slug in the database.
+- **Nothing to build here:** `known_false_rejects.py --check` stays at its numbers; `reclass_rejects.py` keeps its
+  `reject` → `review` scope.
 
 ## Sequencing
 
@@ -1216,7 +1261,7 @@ Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in 
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
-in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it.
+in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
