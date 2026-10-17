@@ -313,8 +313,8 @@ about 50 minutes with `--articles`.
 
 0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
    50 minutes, and never writes to the real file.
-1. The PR is merged (**without squash**, or rebase PR #67 onto master afterwards, so it does not show the whole T-062
-   history) and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
+1. T-062 (PR #66) and the docs PR #67 are both merged (#67 carries this step 6 with Python; check that `master` has it) and
+   the code is updated on the machine that runs the collector and the crawler (`git pull`, then
    `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
    `portfolio-common 1.2.2`; same environment as the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
