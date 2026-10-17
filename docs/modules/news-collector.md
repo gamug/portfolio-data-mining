@@ -262,12 +262,24 @@ are mutually exclusive, and a mistyped `--db`, a file that is not a database, an
 After the update and the sync, `--apply` and `--revert` read the database back and exit 1, with
 `POST-CONDITION FAILED` lines, if it is not as planned: the rows per class moved by exactly the promotions, none of
 them still `reject`, the `UPDATE`s changed exactly the planned rows, the sync did what the dry run predicted, no `accept`
-pair keeps a quarantined article (a revert: no listed row still holds what the run wrote). Both modes then truncate the
+pair keeps a quarantined article, and the articles `portfolio-nlp` reads (`fetch_status = 'ok'`) changed by exactly the
+change the dry run predicted (`predicted_ok_articles_delta`: 0 when no pair becomes `accept`, which is the claim that a
+run of `review` promotions changes nothing a consumer reads). A revert: no listed row still holds what the run wrote and the
+`ok` articles changed by what the revert implies. Both modes then truncate the
 WAL and finish with a **reader check**: the file is attached read-only through `Database.attach(read_only=True)` of the
 `portfolio-common` installed there, the pairs are counted against the fingerprint, and the line
-`reader check: attach(read_only=True) ok, N rows (portfolio-common X)` is printed. That is the failure that made `urls.db`
+`reader check: attach(read_only=True) ok, N rows, M readable articles (portfolio-common X)` is printed (it counts the
+`ok` articles through the attach and compares them with a direct count). That is the failure that made `urls.db`
 unreachable for `portfolio-nlp` while it was in WAL mode, so a run that leaves it in a state a reader refuses ends with
-`POST-CONDITION FAILED` and exit 1. If the process dies between the promotions and the
+`POST-CONDITION FAILED` and exit 1. The remedy printed depends on the kind of failure: a data problem says how to undo
+(`--revert` with the real list and backup paths; for a revert run, to restore the backup only if nothing has run since), a
+reader problem says the data is as planned and to checkpoint with every reader stopped (`sqlite3 FILE "PRAGMA
+wal_checkpoint(TRUNCATE);"`) or `uv sync` to `portfolio-common` >= 1.2.2, with no revert needed. Both modes also write
+`reclass_apply_summary_<time>.json` / `reclass_revert_summary_<time>.json` next to the list (`--summary` to move it; it
+never overwrites): database, `portfolio-common` version, the state before and after (pairs, articles, rows per class,
+`ok` articles), the rows changed, the predicted and actual sync, the backup path and SHA-256, the list path and rows,
+the post-conditions with their problems, the reader check and the duration of each stage; the backup, list and summary
+paths are printed absolute. If the process dies between the promotions and the
 sync, `--apply` again (no backup is asked for when nothing is left to promote) runs the sync.
 
 **What the idle check can see.** `--apply` opens a write transaction before it copies anything and refuses when
@@ -300,10 +312,11 @@ log the run says so and the log clears when it closes.
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup
    /workspaces/thesis/data/url_cat_backup.db --list data/retag/reclass_promoted.csv`. On screen: the stage lines
    (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0`, `checkpoint: WAL
-   truncated …` (stderr), `reader check: attach(read_only=True) ok, N rows (portfolio-common 1.2.2)` and exit 0 with no
-   `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
+   truncated …` (stderr), `reader check: attach(read_only=True) ok, N rows, M readable articles (portfolio-common 1.2.2)`, `run summary …` and exit
+   0 with no `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
    committed and how to revert).
-5. Record the backup's SHA-256 and who keeps the backup and `data/retag/reclass_promoted.csv`. Expected figures,
+5. Keep `reclass_apply_summary_<time>.json` (next to the list; it holds the backup's SHA-256, the counts, the reader check
+   and the stage times) with the backup and `data/retag/reclass_promoted.csv`, and say who keeps them. Expected figures,
    as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986,
    `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
    unchanged.
