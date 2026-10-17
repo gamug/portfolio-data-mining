@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1037,6 +1038,10 @@ def test_a_reader_failure_gets_the_reader_advice_and_no_revert(
     err = capsys.readouterr().err
     assert code == 1
     assert "the data is as planned" in err and "wal_checkpoint(TRUNCATE)" in err
+    assert "python3 -c" in err and "sqlite3 " not in err.replace(
+        "import sqlite3", ""
+    )  # no CLI needed
+    assert "a first number of 1 means a process still holds the file" in err
     assert "portfolio-common >= 1.2.2" in err and "No revert is needed" in err
     assert "--revert " not in err  # reverting does not fix a file a reader refuses
     assert str(db_file.resolve()) in err  # the real path, not a placeholder
@@ -1296,3 +1301,20 @@ def test_the_dry_run_only_warns_about_an_old_portfolio_common(
     captured = capsys.readouterr()
     assert "warning: portfolio-common 1.2.1 is installed" in captured.err
     assert '"promotions"' in captured.out
+
+
+def test_the_printed_checkpoint_command_runs_without_the_sqlite3_cli(tmp_path: Path) -> None:
+    path = tmp_path / "wal's.db"  # a quote in the path must survive the shell
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("CREATE TABLE t (x)")
+    con.execute("INSERT INTO t VALUES (1)")
+    con.commit()
+    con.close()
+
+    done = subprocess.run(  # noqa: S602 - the command is the one the script prints for a person
+        reclass._checkpoint_command(path), shell=True, capture_output=True, text=True, check=False
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().startswith("(0,")

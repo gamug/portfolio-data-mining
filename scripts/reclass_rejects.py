@@ -40,6 +40,7 @@ import importlib.metadata
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import sys
@@ -715,6 +716,13 @@ def _not_a_database(db_path: Path) -> str | None:
     return None
 
 
+def _checkpoint_command(db_path: Path) -> str:
+    """The shell command that truncates the WAL with Python: the `sqlite3` CLI is not installed on the machines
+    that run this."""
+    code = f"import sqlite3; print(sqlite3.connect({str(db_path.resolve())!r}).execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone())"
+    return shlex.join(["python3", "-c", code])
+
+
 def _checkpoint(db_path: Path) -> None:
     """Leave the database checkpointed: the last connection to close after a run is read-only (the
     verification) and cannot fold the WAL into the file, so `-wal` would stay non-empty and a reader
@@ -808,8 +816,10 @@ def _finish(
                 if data_problems
                 else "; the data is as planned"
             )
-            + f". With the collector and every reader stopped run: sqlite3 {db_path.resolve()} "
-            '"PRAGMA wal_checkpoint(TRUNCATE);" or `uv sync` to portfolio-common >= 1.2.2. '
+            + f". With the collector and every reader stopped run: {_checkpoint_command(db_path)} "
+            "(prints (0, n, n) when done; a first number of 1 means a process still holds the file: stop it and "
+            "run it again; use this command, not a `sqlite3` CLI line that portfolio-common may print above) "
+            "or `uv sync` to portfolio-common >= 1.2.2. "
             "No revert is needed for this.",
             file=sys.stderr,
         )
