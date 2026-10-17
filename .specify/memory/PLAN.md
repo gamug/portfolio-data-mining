@@ -1138,20 +1138,66 @@ dropped.
 
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, T-062)
 
-**Status: in progress (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). Done in code: `matching._loose_name` makes a full name the URL spells loosely (suffix kept, `&` dropped, the brand of a camel-case name such as `PepsiCo`; a form needs two words or more, each of at least two characters, or one distinctive word, so `AT&T`'s `at t` never counts; a slug's possessive `s` only for a name of two words or more outside `PLURAL_PHRASES`, because a slug writes a plural the same way: `best-buys`, `on-semiconductors`, `target-corporations`, `apples`, `visas`) `review`/`loose_name`, never `reject`; all 433 known false rejects are `review` (45 of them depend on the possessive form, 38 of those News Corp), `score_ticker_rules.py --check` figures are unchanged (the samples hold none of them); `scripts/reclass_rejects.py` re-classes the `reject` rows (dry run by default; it reports the status of the promoted rows, the predicted quarantine sync, the top tickers and the `api` rows it leaves alone; `--apply` refuses a busy database, a full disk and an unwritable or existing audit list, takes a verified backup, saves the audit list and rolls back if the database fingerprint moved since the plan; `--revert LIST` undoes a run; each stage prints its duration). Real database (read-only, head `afa55b1`, 2026-10-16): **437 promotions**, all `review`/`loose_name`, none `accept`, so no article is released: 437 of 437 promoted articles are already quarantined, none is `skipped`, `api` has no `reject` row, the predicted sync is 0 quarantined / 0 released (News Corp 402 pairs = 202 distinct URLs, `KLAC` 16, `SO` 11, `BAC` 4, `DG`/`IFF`/`PEP`/`TTD` 1). Rehearsal on a copy of the real database (2026-10-16): apply 54 s warm (fingerprint 0.7 s, plan 19 s, backup with `quick_check` and SHA-256 23 s, update and sync 1.5 s; cold, on the mounted drive, the dry run alone is about 3 minutes), `reject` -437, `review` +437, no `accept`, `articles` statuses unchanged, a second apply writes nothing and no list, `--revert` restores `discovered_urls` and `articles` exactly (`EXCEPT` both ways: 0 rows). Hand check: `data/ticker_reclass_check_sample.csv` passes the T-057 criterion for the shipped rule (`ticker_validation_sample.py --refresh` kept 99 labels and replaced the one row the PepsiCo fix changed; 2 of 60 `accept` wrong, 0 of 40 `reject` correct, 1 unclear; the pre-fix sheets are kept in the git-ignored `data/retag/`). Precision of `loose_name` (`scripts/loose_name_precision.py`, distinct URLs, 30 hand labels): the first sample found two rule defects (`AT&T` `at t`, `target-corporations`), fixed and pinned (22 real names with a one-letter word are listed in a test); after the fix the sample was refreshed (26 labels kept, 4 rows replaced and labeled by the maintainer, all `yes`): News Corp 10 of 10 (95% lower bound 72%; every one of the 202 distinct URLs contains the literal `news-corp`, 19 as `news-corps`, and the 201 slugs of the known file were read: all are about News Corp), others 20 of 20 (95% lower bound 84%; the one earlier `no`, `BAC` `bank-of-americas-moynihan`, was confirmed `yes` by the maintainer on 2026-10-16: the URL names Bank of America's CEO and the title is truncated). Remaining known gap (measured on the real database, read-only, 2026-10-16): 438 of the 324,981 `reject` rows left after the rule have a distinctive non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`, `technologies`), a handful real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`); not fixed here, below the T-057 hand check's resolution. Still open: `reclass_rejects.py --apply` on the real database (with the backup), and the `portfolio-nlp` hand-off.**
+**Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` + `NWSA`,
+`KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1) whose URL carries the company's full name, and the hand check
+estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, scope and the figures are in Work item 10
+("Accepted recall loss"). **What:** a full-name hit is at least `review` (never `reject`), with the possessive `s` and
+`&` normalized; the rows already rejected are re-classed with an audited targeted pass (the re-tag only touches
+`match_reason IS NULL` rows). **Acceptance:** the 433 rows are no longer `reject`, `score_ticker_rules.py --check` is
+re-measured and the figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, the real run is rehearsed on a
+same-mount copy and then done with a backup, and `portfolio-nlp` is told what changes for it. No schema change.
 
-**What the run changes for `portfolio-nlp`:** nothing it can read. A promoted pair is `review`, `review` stays quarantined, and `portfolio-nlp` reads only `fetch_status = 'ok'`: 437 of 437 promoted articles are already quarantined and the predicted sync releases none. What moves is the labels (`reject` falls and `review` rises by 437), which the hand-off must say. **Decision for the maintainer:** release a proven subset to `accept` in a follow-up task, or leave all 437 as `review`. The evidence is strongest for the 202 News Corp URLs (10 of 10 labeled, every slug read, all literal `news-corp`); for the other 35 pairs the sample is 20 of 20 (lower bound 84%). **Decided by the maintainer on 2026-10-16: release the News Corp pairs in a follow-up task (`T-063`, Work item 13); the other 35 stay `review`.** This item does not release anything.**
+**Status: in progress** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The
+code, the tests, the rehearsal and the hand checks are done; the real run and the hand-off are open.
 
-**Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` +
-`NWSA`, `KLAC` 15, `SO` 11, `BAC` 4, `DG`/`IFF`/`TTD` 1) whose URL carries the company's full name, and the
-hand check estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, scope and the
-current figures are in Work item 10 ("Accepted recall loss"). **What:** a full-name hit is at least `review`
-(never `reject`), with the possessive `s` and `&` normalized; the quarantined rows are re-classed with a
-targeted pass and released when they become `accept`. **Tooling the hand check needs:** the T-057 sheet
-(`data/ticker_retag_check_sample.csv`) joins `EARLIER_SAMPLES` and the `--final` exclusions, and the new draw uses `--final --out <new path>` (the default output is that sheet); the new sheet is drawn from the post-fix classes.
-**Acceptance:** the 433 rows are no longer `reject`, `score_ticker_rules.py --check` is re-measured and
-the PLAN figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, and `portfolio-nlp` gets the new
-removed and `review` counts (the readable set does not change unless the maintainer decides to release a subset). No schema change.
+- **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never
+  `reject`: the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name
+  (`pepsi` for `PepsiCo`; only a capital `Co`/`Corp` tail is cut), and a slug's possessive `s` only for a name of two
+  words or more outside `PLURAL_PHRASES` (`best buy`, `on semiconductor`, `target corporation`). A form needs two words
+  or more, each of at least two characters, or one distinctive word, so `AT&T`'s `at t` never counts (22 real names with
+  a one-letter word are pinned in a test). All 433 known false rejects are `review` (45 depend on the possessive form,
+  38 of them News Corp); `score_ticker_rules.py --check` is unchanged.
+- **Tooling and guards.** `scripts/reclass_rejects.py`: dry run by default (status of the promoted rows, predicted sync
+  and predicted change of the readable articles, top tickers, `api` rows); `--apply` needs a new `--backup` (checked:
+  fingerprint, `quick_check`, SHA-256), refuses a busy database, a full disk, an existing or unwritable audit list or
+  summary, writes the audit list as `.partial` and publishes it only after the commit, and rolls back if the database
+  fingerprint moved since the plan; after the update and the sync it reads the database back (rows per class, rows
+  changed, none still `reject`, the sync equals the prediction, no `accept` pair holds a quarantined article, the `ok`
+  articles changed by exactly the prediction), truncates the WAL and attaches the file read-only the way
+  `portfolio-nlp` does (`Database.attach(read_only=True)`, `portfolio-common` 1.2.2); it writes a run summary JSON and
+  prints the backup, list and summary paths absolute. `--revert LIST` validates its list before anything (columns,
+  integer unique ids, each row a promotion, same ticker and url as the database) and touches only the listed pair. A
+  failure prints the remedy that fits (data: how to undo; reader: checkpoint or `uv sync`, no revert). Each stage prints
+  its duration. `scripts/rehearse_reclass.py` runs the whole sequence on a same-mount copy and reports.
+  `ticker_validation_sample.py --refresh` and `loose_name_precision.py` keep the hand-check sheets current.
+- **Real-database evidence** (read-only, `urls.db`, 2026-10-16/17). Dry run: **437 promotions**, all `review`/`loose_name`,
+  none `accept`: 437 of 437 promoted articles are already quarantined, none is `skipped`, `api` has no `reject` row,
+  predicted sync 0 quarantined / 0 released (News Corp 402 pairs = 202 distinct URLs, `KLAC` 16, `SO` 11, `BAC` 4,
+  `DG`/`IFF`/`PEP`/`TTD` 1). Rehearsal with `rehearse_reclass.py` on a copy (2.3 GB) on the same mounted drive, commit
+  `417af01`, `portfolio-common` 1.2.2: 12 checks, all held. Apply
+  **965.2 s** (fingerprint 45.0 s, plan 61.9 s, report
+  141.5 s, backup + `quick_check` + SHA-256 370.7 s, update + sync
+  126.7 s, verify 138.9 s), `-wal` 0 bytes and `-shm`
+  present afterwards; a second apply wrote nothing (629.2 s);
+  revert **947.7 s**, `-wal` 0 bytes; the reverted copy equals the pristine one
+  (`EXCEPT` both ways: `discovered_urls` [0, 0], `articles` [0, 0]); a second writer
+  makes `--apply` refuse (`busy`, no backup, no list). Earlier rehearsals on the same mount took 697 s and 1,030 s for
+  the apply (the spread is the shared drive), so the runbook says 12 to 17 minutes and to plan for 20.
+- **Hand check and precision.** `data/ticker_reclass_check_sample.csv` passes the T-057 criterion for the shipped rule (2 of
+  60 `accept` wrong, 0 of 40 `reject` correct, 1 unclear). `loose_name` precision, the maintainer's labels on distinct
+  URLs: News Corp 10 of 10 (95% lower bound 72%; all 202 URLs contain the literal `news-corp`, the 201 slugs of the known
+  file were read), the other 35 pairs 20 of 20 (lower bound 84%; the one earlier `BAC` `no` was confirmed `yes`).
+- **What it changes for `portfolio-nlp`:** nothing it can read. A promoted pair is `review`, `review` stays quarantined
+  and `portfolio-nlp` reads only `fetch_status = 'ok'`; the run checks that count (predicted change 0). What moves is
+  the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-16:**
+  release the News Corp pairs in a follow-up (`T-063`, Work item 13); the other 35 stay `review`.
+- **Known gap** (read-only, 2026-10-16): 438 of the 324,981 `reject` rows left after the rule have a distinctive
+  non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
+  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`); not fixed here, below the T-057 hand check's resolution.
+- **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed,
+  `uv sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then
+  the close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
+  artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; `T-063` starts after that.
 
 ## Sequencing
 
