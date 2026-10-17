@@ -1254,14 +1254,29 @@ def _provenance(expectations_path: Path) -> dict[str, Any]:
 
 
 def _deletion_step(output_dir: Path) -> list[dict[str, str]]:
-    """The one procedure covering every copy (brief §6)."""
+    """The one procedure covering every copy (brief §6).
+
+    Every entry here is a POSIX shell recipe (`rm -rf`, `test ! -e`) for the
+    user to run themselves, on whichever machine that copy actually lives on
+    -- not necessarily this one. `output_dir` is rendered with
+    `.as_posix()` rather than `str()` so the separators are always `/`, not
+    a platform-native backslash rendering, regardless of what host generated
+    this manifest. That fixes the one thing this repo's own pipeline can hit
+    (`output_dir` is always already POSIX-rooted -- it always runs inside
+    the Linux devcontainer); it does *not* make this a general cross-platform
+    guarantee -- a Windows drive letter in `output_dir` would still pass
+    through (`.as_posix()` only swaps separators), which a POSIX shell
+    cannot act on. Not a concern for this pipeline's actual usage, just not
+    a claim this function makes for every possible caller.
+    """
     scratch = FEASIBILITY_SCRATCH
+    output_dir_posix = output_dir.as_posix()
     return [
         {
             "copy": "this machine's private folder",
-            "path": str(output_dir),
-            "command": f"rm -rf {output_dir}",
-            "check": f"test ! -e {output_dir}",
+            "path": output_dir_posix,
+            "command": f"rm -rf {output_dir_posix}",
+            "check": f"test ! -e {output_dir_posix}",
         },
         {
             "copy": "T-100's machine, if different",

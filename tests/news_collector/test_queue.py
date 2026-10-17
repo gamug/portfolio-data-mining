@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path
 
@@ -16,10 +17,13 @@ from news_collector.storage.queue import URLQueue
 
 
 @pytest.fixture
-def queue(tmp_path: Path) -> URLQueue:
+def queue(tmp_path: Path) -> Iterator[URLQueue]:
     q = URLQueue(str(tmp_path / "test.db"))
     q.initialize()
-    return q
+    try:
+        yield q
+    finally:
+        q.close()
 
 
 def _make_url(url: str, ticker: str = "AAPL", domain: str = "cnbc.com") -> DiscoveredURL:
@@ -227,10 +231,17 @@ def test_enqueue_inserts_at_most_len_input(urls: list[str]) -> None:
     # correctly flags as unsafe to share across @given examples.
     with tempfile.TemporaryDirectory() as tmp_dir:
         q = URLQueue(str(Path(tmp_dir) / "prop_test.db"))
-        q.initialize()
-        discovered = [_make_url(u) for u in urls]
-        inserted = q.enqueue_batch(discovered)
-        assert 0 <= inserted <= len(urls)
+        try:
+            q.initialize()
+            discovered = [_make_url(u) for u in urls]
+            inserted = q.enqueue_batch(discovered)
+            assert 0 <= inserted <= len(urls)
+        finally:
+            # Without this, the connection outlives the `with` block (GC
+            # hasn't run yet) and TemporaryDirectory's cleanup fails on
+            # Windows with PermissionError -- unlinking an open file is
+            # fine on POSIX, not on Windows.
+            q.close()
 
 
 # ---------------------------------------------------------------------------
@@ -506,12 +517,15 @@ def test_last_inserted_rejected_counts_only_new_rejected_rows(tmp_path: Path) ->
         )
 
     q = URLQueue(str(tmp_path / "q.db"))
-    q.initialize()
-    batch = [row("https://cnbc.com/a", "reject"), row("https://cnbc.com/b", "accept")]
+    try:
+        q.initialize()
+        batch = [row("https://cnbc.com/a", "reject"), row("https://cnbc.com/b", "accept")]
 
-    assert q.enqueue_batch(batch) == 2
-    assert q.last_inserted_rejected == 1
-    assert q.enqueue_batch(batch) == 0
-    assert q.last_inserted_rejected == 0
-    assert q.enqueue_batch([]) == 0
-    assert q.last_inserted_rejected == 0
+        assert q.enqueue_batch(batch) == 2
+        assert q.last_inserted_rejected == 1
+        assert q.enqueue_batch(batch) == 0
+        assert q.last_inserted_rejected == 0
+        assert q.enqueue_batch([]) == 0
+        assert q.last_inserted_rejected == 0
+    finally:
+        q.close()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
@@ -13,10 +14,13 @@ from news_collector.storage.queue import URLQueue
 
 
 @pytest.fixture
-def queue(tmp_path: Path) -> URLQueue:
+def queue(tmp_path: Path) -> Iterator[URLQueue]:
     q = URLQueue(str(tmp_path / "resume_test.db"))
     q.initialize()
-    return q
+    try:
+        yield q
+    finally:
+        q.close()
 
 
 def _orchestrator(queue: URLQueue) -> DiscoveryOrchestrator:
