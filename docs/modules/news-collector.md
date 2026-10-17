@@ -254,7 +254,10 @@ copy (fingerprint, `quick_check`) and prints its SHA-256, and warns when `-wal` 
 collector and the crawler first. It writes the audit list as `reclass_promoted.csv.partial` and renames it to
 `data/retag/reclass_promoted.csv` (git-ignored; `--list` to move it) only once the promotions are committed, so a
 run that aborts leaves no list and a crash after the commit leaves it; `--revert LIST` puts back the old class,
-reason and status of the rows that still hold what the run wrote, then syncs (and refuses a `.partial` list).
+reason and status of the rows that still hold what the run wrote, then syncs. `--revert` validates its list before it
+touches anything (the columns of this script's list, integer and unique ids, each row a promotion, every id present in
+the database; a `.partial` list is refused) and prints how many of the listed rows it reverted; `--apply` and `--revert`
+are mutually exclusive, and a mistyped `--db`, an unusable backup directory or a missing list is a one-line error.
 After the update and the sync, `--apply` and `--revert` read the database back and exit 1, with
 `POST-CONDITION FAILED` lines, if it is not as planned: the rows per class moved by exactly the promotions, none of
 them still `reject`, the sync did what the dry run predicted, no `accept` pair keeps a quarantined article (a revert:
@@ -275,11 +278,14 @@ class. A collector or crawler restarted after the apply with the **old** code wr
 on the same mounted drive, cold: fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
 5.5 minutes, update and sync 2 minutes, verify 1 minute), about 10 minutes for `--revert` (backup 6.5 minutes), and
 up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). Do not stop it because it is
-quiet: each stage prints when it ends. After an apply the `-wal` file is not empty until SQLite checkpoints it, so the
-"writer may be running" warning on the next run is expected then.
+quiet: each stage prints when it ends. Both modes end with `PRAGMA wal_checkpoint(TRUNCATE)`: the last connection to
+close is the read-only verification, which cannot fold the log into the file, and a reader on `portfolio-common` 1.2.1
+refuses a database whose `-wal` is not empty (1.2.2 refuses only a non-empty `-wal` with no `-shm`). If a reader holds the
+log the run says so and the log clears when it closes.
 
 1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
-   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs; same environment as the script).
+   `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
+   `portfolio-common 1.2.2`; same environment as the script).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
 3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
