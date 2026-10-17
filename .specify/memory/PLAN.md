@@ -1190,8 +1190,9 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   file were read), the other 35 pairs 20 of 20 (lower bound 84%; the one earlier `BAC` `no` was confirmed `yes`).
 - **What it changes for `portfolio-nlp`:** nothing it can read. A promoted pair is `review`, `review` stays quarantined
   and `portfolio-nlp` reads only `fetch_status = 'ok'`; the run checks that count (predicted change 0). What moves is
-  the labels (`reject` -437, `review` +437), which the hand-off must say. **Decided by the maintainer on 2026-10-16:**
-  release the News Corp pairs in a follow-up (`T-063`, Work item 13); the other 35 stay `review`.
+  the labels (`reject` -437, `review` +437), which the hand-off must say. **The maintainer scheduled on 2026-10-16**
+  a follow-up for the News Corp pairs (`T-063`, Work item 13; whether and how many are released is open there, see its
+  Decision paragraph); the other 35 stay `review`.
 - **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
   rule promotes 437, so `reject` is **324,986** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
@@ -1213,90 +1214,114 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
 ## Work item 13 — Release the News Corp pairs the loose-name rule held back (code + data, T-063)
 
 **Status: scheduled by the maintainer on 2026-10-16 (decision on the Work item 12 evidence); not started; the scope
-below is a proposal that waits for the maintainer's answer to the Decision paragraph.
-Depends on `T-062` being merged and its real re-class run done: the pairs it promotes are `review`/`loose_name`
-and quarantined, and this item makes the News Corp ones `accept`.**
+below is a proposal that waits for the maintainer's answer to the Decision paragraph. Depends on `T-062` being merged
+and its real re-class run done: the pairs it promotes are `review`/`loose_name` and quarantined, and this item makes the
+News Corp ones `accept`.**
 **Decision (design rule of the maintainer, 2026-10-17):** where the tag confidence is in doubt, the pair stays `review`
 so that `portfolio-nlp` can take a deep look (NER on the articles that are susceptible to review; the feature is not
-built). A pair is released to `accept` here only when its evidence leaves no doubt. Applied to the News Corp pairs:
-the 10 of 10 hand sample has a 95% lower bound of 72%, which is a doubt on its own, so the proposal releases the
-pairs whose URL names News Corp alone and **holds the contested ones** (step 4). Release all, wait for the NER
-feature (hold all), or this subset: the maintainer chooses on the dry run's numbers; until then T-063 is blocked
-and nothing below is built. The hold is the default because it is the choice the rule asks for when in doubt.
-**Why:** `T-062` stops rejecting pairs whose URL spells the company out, but a promoted pair is `review`, so its
-article stays quarantined and `portfolio-nlp` reads nothing more than before. The News Corp pairs are 402 of the 437
-promotions (`NWS` 200, `NWSA` 202; 202 distinct URLs; 400 pairs from the URL alone, 2 more from the title)
-and the evidence that they are the company is strong: every
-one of the 202 URLs contains the literal `news-corp` (19 as the possessive `news-corps`), the 201 slugs of the known
-file were read and all are about News Corp, and the maintainer's hand sample is 10 of 10 (95% lower bound 72%).
-The other 35 pairs (`KLAC` 16, `SO` 11, `BAC` 4, `DG`/`IFF`/`PEP`/`TTD` 1; sample 20 of 20, lower bound 84%) stay
-`review`; this item does not touch them (the maintainer may extend it later).
+built). A pair is released to `accept` here only when its evidence leaves no doubt. Applied to the News Corp pairs: the
+10 of 10 hand sample has a 95% lower bound of 72%, which is a doubt on its own, so the proposal releases the pairs whose
+URL names News Corp alone and **holds the contested ones** (step 4). Release all, wait for the NER feature (hold all),
+or this subset: the maintainer chooses on the dry run's numbers; until then T-063 is blocked and nothing below is built.
+The hold is the default because it is the choice the rule asks for when in doubt.
+**Measured on 2026-10-17** (read-only, `urls.db`, the audit's own tests, floor 80 words): the 413 pairs have **no wall
+and no body under the floor**; 400 articles have `prev_fetch_status` `ok` (200 distinct bodies, each stored for both
+share classes) and 13 would go back to `failed` (9) or `thin_content` (4), not `ok`. Readable-set growth: **A (release
+all) 400 articles, 200 of them copies; C (the proposal: all but the 84 contested and 4 roundup pairs) 314 articles on
+157 bodies; B 0.** Hand read of 20 of the 168 uncontested URLs (drawn with seed 63, read by the developer, to be
+confirmed by the maintainer): 18 are about News Corp, 2 are multi-company lists the contested test cannot see because
+the other companies are outside the tagged set (`lightning-round-walter-energy-news-corp-alcoa-and-more`,
+`starboard-values-jeff- smith-unveils-his-newest-ideas-including-a-push-for-news-corp-spinoff`); two of the 18 never
+name `News Corp` in the body (a phone-hacking trial and a board story about its subsidiary), which is a doubt for the
+NER check, not a miss. The sample is 18 of 20 (95% lower bound 70%), no better than the 72% that started this; the
+roundup hold below removes both errors, so the 18 are all that is left of the sample.
+**Why:** `T-062` stops rejecting pairs whose URL spells the company out, but a promoted pair is `review`, so its article
+stays quarantined and `portfolio-nlp` reads nothing more than before. The News Corp pairs are 402 of the 437 promotions
+(`NWS` 200, `NWSA` 202; 202 distinct URLs; 400 pairs from the URL alone, 2 more from the title) and the evidence that
+they are the company is strong: every one of the 202 URLs contains the literal `news-corp` (19 as the possessive
+`news-corps`), the 201 slugs of the known file were read and all are about News Corp, and the maintainer's hand sample
+is 10 of 10 (95% lower bound 72%). The other 35 pairs (`KLAC` 16, `SO` 11, `BAC` 4, `DG`/`IFF`/`PEP`/`TTD` 1; sample 20
+of 20, lower bound 84%) stay `review`; this item does not touch them (the maintainer may extend it later).
 **What:**
-1. **Alias.** `matching.ALIASES` gets `NWS` and `NWSA` `("news corp", "news corps", "news corporation")` (as `WMT`
-   `wal mart`, `META` `facebook`): a hit is `accept` / `alias`, so new collector rows are right at discovery. The
-   third form is the legal name: 13 pairs on 9 URLs spell it (`news-corporation-shares-pop...`, Seeking Alpha
-   transcripts), 11 of them stay `reject` under T-062 (2 are `review` through the title) and the matcher needs a word
-   boundary, so `news corp` does not cover it; no other ticker has that slug in the database (0 rows). Simulated on the
-   433 known false rejects: 400 `accept` / `alias` (`NWS` 199, `NWSA` 201), 33 `review`, the same with or without the
-   third form. On the real database every one of the 413 News Corp pairs with the slug (210 URLs) classifies
-   `accept` / `alias`.
+1. **Alias.** `matching.ALIASES` gets `NWS` and `NWSA` `("news corp", "news corps", "news corporation")` (as `WMT` `wal
+   mart`, `META` `facebook`): a hit is `accept` / `alias`, so new collector rows are right at discovery. The third form
+   is the legal name: 13 pairs on 9 URLs spell it (`news-corporation-shares-pop...`, Seeking Alpha transcripts), 11 of
+   them stay `reject` under T-062 (2 are `review` through the title) and the matcher needs a word boundary, so `news
+   corp` does not cover it; no other ticker has that slug in the database (0 rows). Simulated on the 433 known false
+   rejects: 400 `accept` / `alias` (`NWS` 199, `NWSA` 201), 33 `review`, the same with or without the third form. On the
+   real database every one of the 413 News Corp pairs with the slug (210 URLs) classifies `accept` / `alias`.
 2. **The audited pass.** `reclass_rejects.py --from-class` (`reject`, `review` or both; default `reject`) promotes the
    rows of those classes that now classify `accept`: T-063 runs it with `reject,review`, so the 11 `reject` pairs of the
-   legal-name form are released with the 402 `review` ones (413 pairs, 210 URLs). A release is by class: `sync_quarantine` releases every article whose
-   pair is `accept` (`release_articles` puts back `prev_fetch_status`), so a pair that must stay held must stay `review`.
+   legal-name form are released with the 402 `review` ones (413 pairs, 210 URLs). A release is by class:
+   `sync_quarantine` releases every article whose pair is `accept` (`release_articles` puts back `prev_fetch_status`),
+   so a pair that must stay held keeps its class.
 3. **What a release changes in the checks** (T-062's checks assume that nothing readable moves). The dry run prints the
    predicted release (articles whose pair is promoted and whose `prev_fetch_status` is `ok`) and `predicted_sync` as
    `released N`; the post-condition checks that the `ok` articles grew by exactly that number (T-062: 0), that no listed
    pair is still `review`, and that every released article is readable through `Database.attach(read_only=True)`;
-   `--revert` accepts a `review` to `accept` list (validated as before: columns, unique ids, each row a promotion from
-   `--from-class`, same ticker and url as the database, pair-checked) and puts the articles back to `quarantined`
-   (`quarantine_articles`), its post-condition checks the `ok` articles fell by the released number; the fingerprint, the
-   run summary and the reader check read the new class. Each is a test, and the rehearsal checks all three (apply,
-   second apply, revert), as for T-062.
+   `--revert` accepts a list whose rows go to `accept` from either old class (`review`, and `reject` for the legal-name
+   pairs) and restores each row's own `old_class`; the list is validated as before (columns, unique ids, each row a
+   promotion from `--from-class`, same ticker and url as the database, pair-checked), and the revert puts the articles
+   back to `quarantined` (`quarantine_articles`), its post-condition checks the `ok` articles fell by the released
+   number; the fingerprint, the run summary and the reader check read the new class. Each is a test, and the rehearsal
+   checks all three (apply, second apply, revert), as for T-062.
 4. **Walls and short bodies stay held.** The audit tools are read-only and release nothing, so the pass does the
-   exclusion itself: the dry run applies the audit's tests (`extractor.parse.wall_kind`,
-   `MIN_WORDS_FOR_FULL_CONTENT`, the same as `audit_article_quality.py`) to the body of each candidate article whose
-   `prev_fetch_status` is `ok`, lists every pair that fails (id, ticker, url, reason) and **leaves it `review`**, so
-   `sync_quarantine` does not release it. The report and the run summary carry the held list; the acceptance below says
-   how many are expected. A held pair keeps the class it had.
-   **Contested URLs are held too** (the doubt rule): a URL that has a pair of another ticker in `accept` or `review`
-   names more than one company (roundups, the FOX / News Corp merger stories, `dow-jones` stories), so the article may
-   not be about News Corp. On the real database of 2026-10-17: **42 URLs, 84 pairs** (`DOW` 12, `FOX` 11, `COST` 3,
-   `CSCO`, `MSFT`, `WBD`, `WELL` 2 each; e.g. `stocks-making-the-biggest-moves-midday-news-corp-alibaba-applied-
-   materials-and-more`, `top-50-hedge-funds-ditch-news-corp-for-boeing`). The dry run lists them apart from the walls
-   (reason `contested`); they wait for the NER check. Choosing "release all" drops this hold. Without it the pass
-   releases 329 pairs on 168 URLs, before the wall and short-body hold.
+   exclusion itself: the dry run applies the audit's tests (`extractor.parse.wall_kind`, `MIN_WORDS_FOR_FULL_CONTENT`,
+   the same as `audit_article_quality.py`) to the body of each candidate article whose `prev_fetch_status` is `ok`,
+   lists every pair that fails (id, ticker, url, reason) and **leaves it `review`**, so `sync_quarantine` does not
+   release it. The report and the run summary carry the held list; the acceptance below says how many are expected. A
+   held pair keeps the class it had. **Contested URLs are held too** (the doubt rule): a URL that has a pair of another
+   ticker in `accept` or `review` names more than one company (roundups, the FOX / News Corp merger stories, `dow-jones`
+   stories), so the article may not be about News Corp. On the real database of 2026-10-17: **42 URLs, 84 pairs** (`DOW`
+   12, `FOX` 11, `COST` 3, `CSCO`, `MSFT`, `WBD`, `WELL` 2 each; e.g.
+   `stocks-making-the-biggest-moves-midday-news-corp-alibaba-applied- materials-and-more`,
+   `top-50-hedge-funds-ditch-news-corp-for-boeing`). The dry run lists them apart from the walls (reason `contested`, or
+   `roundup` for the second test); they wait for the NER check. Choosing "release all" drops this hold. Without it the
+   pass releases 329 pairs on 168 URLs, before the wall and short-body hold. **Known limit of the contested test:** it
+   sees only the companies of the tagged set, so a list that names News Corp next to companies outside it (Alcoa, Walter
+   Energy, Dropbox) is not contested. Roundups are held by a second, deterministic test, **`roundup`**: the URL slug has
+   one of `lightning-round`, `biggest-moves`, `stocks-on-the-move`, `stocks-making`, `after-hours-buzz`, `hedge-funds`,
+   `top-<n>`, `movers`, `midday`, `and-more`, `-ideas`. On the real database it holds **2 URLs, 4 pairs** (the two lists
+   found by the hand read of the Decision paragraph) and nothing else among the 168 uncontested URLs. The proposal then
+   releases **325 pairs on 166 URLs**; the test is a list of slugs, so a roundup with another slug is not held: the
+   limit is stated, not removed.
 5. **Scope.** The pass applies only the candidates the aliases make `accept`: the dry run reports the exact number of
    pairs (413 on the real file of 2026-10-17: 402 `review` plus 11 `reject`, or the number found then, with the reason
-   for any difference), the pairs held by step 4 (walls, short bodies, contested) and the articles released, and `--apply` refuses when its plan differs from the fingerprint of the dry
-   run (the existing guard). The other 35 pairs stay `review`: after the run `review` / `loose_name` is 35 plus the
-   `review` pairs held by step 4 (84 contested at least).
-6. **Two share classes, one body.** `NWS` and `NWSA` are one company, so each News Corp URL has two pairs and two
-   stored copies of one body (the audit counts them as `duplicate_bodies`; nothing holds them, as for `GOOG` /
-   `GOOGL`). **Default: both pairs are released** (a duplicate is a copy the collector stored once per tagged ticker,
-   not a bad body). The dry run prints the readable set growth as `N articles, of which D bodies already readable for
-   the other share class`, and `portfolio-nlp` is told both numbers: the readable set grows by up to 329 (the proposal's count, before
-   the wall hold), about half of them copies of another ticker's body, which the dry run counts. If the maintainer wants one share class only, the alias goes to one ticker and the
-   count halves; this is decided on the dry run's numbers, before the real run.
-7. **Hand-off and window.** `portfolio-nlp` is told how many articles it gains before the real run. The real run
-   stops the collector and the crawler like T-062's: if the T-063 code is merged before T-062's run, one stop can do
-   both (the alias then already applies to the rows the collector adds); after it, a second stop is needed, with the
-   same checklist.
+   for any difference), the pairs held by step 4 (walls, short bodies, contested) and the articles released, and
+   `--apply` refuses when its plan differs from the fingerprint of the dry run (the existing guard). The other 35 pairs
+   stay `review`: after the run `review` / `loose_name` is 35 plus the `review` pairs held by step 4 (88 at least: 84
+   contested, 4 roundup).
+6. **Two share classes, one body.** `NWS` and `NWSA` are one company, so each News Corp URL has two pairs and two stored
+   copies of one body (the audit counts them as `duplicate_bodies`; nothing holds them, as for `GOOG` / `GOOGL`).
+   **Default: both pairs are released** (a duplicate is a copy the collector stored once per tagged ticker, not a bad
+   body). The dry run prints the readable set growth as `N articles, of which D bodies already readable for the other
+   share class`, and `portfolio-nlp` is told both numbers: the readable set grows by 400 (A) or 314 (the proposal;
+   measured, no wall and no short body among them), half of them copies of the other share class's body, which the dry
+   run counts. If the maintainer wants one share class only, the alias goes to one ticker and the count halves; this is
+   decided on the dry run's numbers, before the real run.
+7. **Hand-off and window.** `portfolio-nlp` is told how many articles it gains before the real run. The real run stops
+   the collector and the crawler like T-062's: if the T-063 code is merged before T-062's run, one stop can do both (the
+   alias then already applies to the rows the collector adds); after it, a second stop is needed, with the same
+   checklist.
 8. **What `portfolio-nlp` reads next (not built).** The held pairs are the first input of the NER check (the 437 of
    T-062 and the contested ones here). `GET /articles?fetch_status=quarantined` does not return the match class, so the
    check needs either a `match_class` filter on that endpoint or a read of `discovered_urls.match_class` through
    `Database.attach(read_only=True)`; the design belongs to the NER work item and is not decided here. Until then
    quarantine means "waiting for the check", not "excluded".
 **Acceptance:** `ALIASES` has the two entries (three forms) with tests (the 413 slug pairs are `accept` / `alias`; the
-legal-name form is pinned; another company
-whose name contains `news` stays as it was); `known_false_rejects.py --check` and its test are updated (of the 433 rows,
+legal-name form is pinned, and a `news-corporation` URL of another company is not a hit; another company whose name
+contains `news` stays as it was); `known_false_rejects.py --check` and its test are updated (of the 433 rows,
 **400 `accept` / `alias` (News Corp) and 33 `review`**); `score_ticker_rules.py --check` is re-measured and the PLAN
-figures re-frozen if they move; tests for steps 2 to 5 (wall and short body held and listed, predicted release equals
-the `ok` growth, revert round trip, scope refusal); the dry run on the real database reports the exact number of
-articles released, the pairs held and why, and the audit result (walls among the 413: 0, or each listed and left as it was;
-contested: 84 pairs on 42 URLs, listed and left as they were); a rehearsal on a copy (apply, second apply, revert) equals the dry run; the real run is done by the
-maintainer's go-ahead with a new backup; the released articles are readable (`ok`) and `portfolio-nlp` has the number.
-No schema change (constitution #10 does not apply). Constitution #11 and #12 apply at close.
+figures re-frozen if they move; tests for steps 2 to 5 (wall and short body held and listed; a URL with another ticker's
+pair in `accept` or `review` is `contested` and held, one whose other pair is `reject` is not; a roundup slug is held; a
+held pair keeps its class, `review` or `reject`; the revert never touches a held pair and takes a list with both old
+classes; a second apply writes nothing; predicted release equals the `ok` growth, revert round trip, scope refusal); the
+dry run on the real database reports the exact number of articles released, the pairs held and why, and the audit result
+(walls among the 413: 0 and none under the floor, measured on 2026-10-17, or each listed and left as it was; contested
+84 pairs on 42 URLs and roundup 4 pairs on 2 URLs, listed and left as they were); a rehearsal on a copy (apply, second
+apply, revert) equals the dry run; the real run is done by the maintainer's go-ahead with a new backup; the released
+articles are readable (`ok`) and `portfolio-nlp` has the number. No schema change (constitution #10 does not apply).
+Constitution #11 and #12 apply at close.
 
 ## Sequencing
 
