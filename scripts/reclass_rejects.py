@@ -817,7 +817,9 @@ def _finish(
                 else "; the data is as planned"
             )
             + f". With the collector and every reader stopped run: {_checkpoint_command(db_path)} "
-            "(prints (0, n, n) when done) or `uv sync` to portfolio-common >= 1.2.2. "
+            "(prints (0, n, n) when done; a first number of 1 means a process still holds the file: stop it and "
+            "run it again; use this command, not a `sqlite3` CLI line that portfolio-common may print above) "
+            "or `uv sync` to portfolio-common >= 1.2.2. "
             "No revert is needed for this.",
             file=sys.stderr,
         )

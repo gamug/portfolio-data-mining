@@ -1041,6 +1041,7 @@ def test_a_reader_failure_gets_the_reader_advice_and_no_revert(
     assert "python3 -c" in err and "sqlite3 " not in err.replace(
         "import sqlite3", ""
     )  # no CLI needed
+    assert "a first number of 1 means a process still holds the file" in err
     assert "portfolio-common >= 1.2.2" in err and "No revert is needed" in err
     assert "--revert " not in err  # reverting does not fix a file a reader refuses
     assert str(db_file.resolve()) in err  # the real path, not a placeholder
