@@ -245,7 +245,7 @@ PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --revert da
 The dry run is read-only and prints `promotions`, `by_class`, `by_reason`,
 `by_status` (the discovery status of the promoted rows), `skipped_back_to_pending`,
 `promoted_with_a_quarantined_article`, `top_tickers`, `predicted_sync` (`quarantined`, `released`: what the
-sync will print) and `api_rejects_left_alone`. The first dry run on the real file is slow (about 3 minutes: it
+sync will print) and `api_rejects_left_alone`. The first dry run on the real file is slow (3 to 6 minutes, 5.3 measured on 2026-10-17: it
 sits on the mounted drive and is read cold); a second one is fast because the pages are cached, so do not
 conclude it hung. `--apply` needs a backup path that does not exist and refuses a
 busy database, a disk that cannot hold the copy, an existing or unwritable audit list, and a database whose
