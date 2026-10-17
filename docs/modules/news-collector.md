@@ -292,14 +292,24 @@ API (`apps/news_collector_api.py`, port 8001), any `discover` run of the collect
 
 The order matters: `matching.classify` runs in the collector at discovery, and the queue upsert only promotes a
 class. A collector or crawler restarted after the apply with the **old** code writes the same pairs as `reject` and
-`skipped` again and undoes the fix. Time to allow: about **12 minutes** for `--apply` on the real file (measured on a copy
-on the same mounted drive, cold: fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
-5.5 minutes, update and sync 2 minutes, verify 1 minute), about 10 minutes for `--revert` (backup 6.5 minutes), and
-up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). Do not stop it because it is
-quiet: each stage prints when it ends. Both modes end with `PRAGMA wal_checkpoint(TRUNCATE)`: the last connection to
-close is the read-only verification, which cannot fold the log into the file, and a reader on `portfolio-common` 1.2.1
-refuses a database whose `-wal` is not empty (1.2.2 refuses only a non-empty `-wal` with no `-shm`). If a reader holds the
-log the run says so and the log clears when it closes.
+`skipped` again and undoes the fix. Time to allow: **12 to 17 minutes** for `--apply` on the real file, plan for 20 (measured on copies on the same
+mounted drive, cold: 697 s and 1,030 s; fingerprint 46 s, plan 61 s, report 73 s, backup with `quick_check` and SHA-256
+5.5 minutes, update and sync 2 minutes, verify 1 minute in the first), about 10 to 12 minutes for `--revert`
+(backup 6.5 minutes), and up to 8 minutes for an `--apply` that finds nothing (it still plans, syncs and verifies). The
+spread is the shared drive. Do not stop a run because it is quiet: each stage prints when it ends, and a run killed
+inside the backup leaves a partial file that the next run refuses until it is moved. Both modes end with
+`PRAGMA wal_checkpoint(TRUNCATE)`: the last connection to close is the read-only verification, which cannot fold the log
+into the file, and a reader on `portfolio-common` 1.2.1 refuses a database whose `-wal` is not empty (1.2.2 refuses
+only a non-empty `-wal` with no `-shm`). If a reader holds the log the run says so and the log clears when it closes.
+
+**Rehearse first** (once, with the collector running or not; it never writes to the real file):
+`PYTHONPATH=src uv run python scripts/rehearse_reclass.py --real-db /workspaces/thesis/data/urls.db --workdir
+/workspaces/thesis/data/rehearsal --lock-test --articles`. It needs about 9 GB free on the **same drive** (it refuses a
+directory on another filesystem), copies the database with SQLite's online backup, then runs a second writer holding the
+lock (apply must refuse), apply with a backup, the `-wal`/`-shm` state, a second apply (writes nothing), revert, and the
+`EXCEPT` comparison with the pristine copy, prints a Markdown report, writes `rehearsal_report.json`, asserts the real
+file's size and mtime are unchanged, removes its copies (`--keep` to keep them) and exits 1 if any check fails. It takes
+about 50 minutes with `--articles`.
 
 1. The PR is merged and the code is updated on the machine that runs the collector and the crawler (`git pull`, then
    `uv sync`: master pins `portfolio-common` v1.2.2, which the database access needs, and `uv pip list` must show
