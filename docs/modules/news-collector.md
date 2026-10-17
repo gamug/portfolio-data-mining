@@ -330,8 +330,8 @@ about 50 minutes with `--articles`.
    committed and how to revert).
 5. Keep `reclass_apply_summary_<time>.json` (next to the list; it holds the backup's SHA-256, the counts, the reader check
    and the stage times) with the backup and `data/retag/reclass_promoted.csv`, and say who keeps them. Expected figures,
-   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986 (the real file reads 325,423 on 2026-10-17),
-   `review` 51,295 → 51,732, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 437, `articles.fetch_status`
+   as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,975 (the real file reads 325,423 on 2026-10-17),
+   `review` 51,295 → 51,743, `accept` 104,614 unchanged, `match_reason = 'loose_name'` 448, `articles.fetch_status`
    unchanged.
 6. Restart the collector and the crawler with the merged code and check the deployed matcher. At once, read-only:
    `PYTHONPATH=src uv run python -c "from data_mining.matching import classify; print(classify('https://x.com/kla-corporation-q4',
