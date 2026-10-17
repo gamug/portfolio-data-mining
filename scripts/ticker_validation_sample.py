@@ -26,6 +26,7 @@ Usage:
     PYTHONPATH=src uv run python scripts/ticker_validation_sample.py [--db PATH]
         [--existing PATH] [--out PATH] [--seed N] [--final]
     PYTHONPATH=src uv run python scripts/ticker_validation_sample.py --verdict LABELED_CSV [--db PATH]
+    PYTHONPATH=src uv run python scripts/ticker_validation_sample.py --refresh LABELED_CSV [--db PATH]
 """
 
 from __future__ import annotations
@@ -68,17 +69,9 @@ FINAL_ALLOCATION = {
 }
 
 
-def draw(
-    db_path: Path,
-    exclude: set[str],
-    seed: int = SEED,
-    *,
-    final: bool = False,
-) -> list[dict[str, object]]:
-    """Return the sampled rows (label columns empty), deterministic for a seed.
-
-    With ``final`` the T-057 check is drawn: the shipped ``classify`` and ``FINAL_ALLOCATION``."""
-    allocation = FINAL_ALLOCATION if final else ALLOCATION
+def _members(db_path: Path, *, final: bool) -> dict[tuple[str, str], list[tuple[object, ...]]]:
+    """Every pair of the database grouped by ``(class, source)``: the shipped ``classify`` with
+    ``final``, the design-time rule without."""
     uri = f"file:{db_path.resolve()}?mode=ro"
     members: dict[tuple[str, str], list[tuple[object, ...]]] = defaultdict(list)
     with closing(connect(uri, uri=True)) as con:
@@ -94,31 +87,72 @@ def draw(
             else:
                 cls = design_class({"url": url, "ticker": ticker, "company": company}, title)
             members[(cls, source)].append((row_id, url, ticker, company, domain, source, cls))
+    return members
+
+
+def _row(m: tuple[object, ...], size: int) -> dict[str, object]:
+    row_id, url, ticker, company, domain, source, klass = m
+    return {
+        "id": row_id,
+        "url": url,
+        "ticker": ticker,
+        "company": company,
+        "domain": domain,
+        "source": source,
+        "match_mode": klass,
+        "stratum": f"{klass}/{source}",
+        "stratum_size": size,
+        "label": "",
+        "labeled_by": "",
+        "assistant_label": "",
+    }
+
+
+def draw(
+    db_path: Path,
+    exclude: set[str],
+    seed: int = SEED,
+    *,
+    final: bool = False,
+) -> list[dict[str, object]]:
+    """Return the sampled rows (label columns empty), deterministic for a seed.
+
+    With ``final`` the T-057 check is drawn: the shipped ``classify`` and ``FINAL_ALLOCATION``."""
+    allocation = FINAL_ALLOCATION if final else ALLOCATION
+    members = _members(db_path, final=final)
     rng = random.Random(seed)  # noqa: S311 - reproducible sampling, not security
     out: list[dict[str, object]] = []
     for key in sorted(allocation):
         pool = [m for m in members[key] if str(m[0]) not in exclude]
-        for row_id, url, ticker, company, domain, source, klass in rng.sample(
-            pool, min(allocation[key], len(pool))
-        ):
-            out.append(
-                {
-                    "id": row_id,
-                    "url": url,
-                    "ticker": ticker,
-                    "company": company,
-                    "domain": domain,
-                    "source": source,
-                    "match_mode": klass,
-                    "stratum": f"{klass}/{source}",
-                    "stratum_size": len(members[key]),
-                    "label": "",
-                    "labeled_by": "",
-                    "assistant_label": "",
-                }
-            )
+        for m in rng.sample(pool, min(allocation[key], len(pool))):
+            out.append(_row(m, len(members[key])))
     rng.shuffle(out)  # the labeling order must not reveal the class
     return out
+
+
+def refresh(
+    rows: list[dict[str, str]], db_path: Path, exclude: set[str], seed: int = FINAL_SEED
+) -> tuple[list[dict[str, str]], list[str]]:
+    """The labeled sheet kept as it is, except the rows whose class the shipped ``classify`` no longer
+    gives: each is replaced, in the same position, by a fresh pair of the same ``(class, source)``
+    stratum (blank label, never an id of ``exclude``, of the sheet or of a dropped row). Returns the
+    new rows and the ids that were replaced, so a person labels only those."""
+    members = _members(db_path, final=True)
+    now = {str(m[0]): m[6] for ms in members.values() for m in ms}
+    dropped = [r["id"] for r in rows if now.get(r["id"]) != r["match_mode"]]
+    used = exclude | {r["id"] for r in rows}
+    rng = random.Random(seed)  # noqa: S311 - reproducible sampling, not security
+    out: list[dict[str, str]] = []
+    for r in rows:
+        key = (r["match_mode"], r["source"])
+        if r["id"] not in dropped:
+            out.append({**r, "stratum_size": str(len(members[key]))})
+            continue
+        pool = [m for m in members[key] if str(m[0]) not in used]
+        pick = rng.choice(pool)
+        used.add(str(pick[0]))
+        out.append({k: str(v) for k, v in _row(pick, len(members[key])).items()})
+    return out, dropped
 
 
 # The T-057 check is exactly this shape; `check_sheet` refuses any other sheet.
@@ -126,6 +160,7 @@ FINAL_COUNTS = {"accept": 60, "reject": 40}
 EARLIER_SAMPLES = (
     Path(__file__).resolve().parents[1] / DEFAULT_SAMPLE,
     Path(__file__).resolve().parents[1] / DEFAULT_OUT,
+    Path(__file__).resolve().parents[1] / FINAL_OUT,  # the T-057 sheet; a T-062 draw is fresh of it
 )
 MAX_ACCEPT_WRONG = 5
 MAX_REJECT_CORRECT = 1
@@ -202,12 +237,34 @@ def check_sheet(sheet_path: Path, db_path: Path) -> list[str]:
     ids = [r["id"] for r in rows]
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         problems.append(f"duplicated ids: {dupes[:5]}")
-    earlier = {i for path in EARLIER_SAMPLES if path.is_file() for i in _read_ids(path)}
+    earlier = {
+        i
+        for path in EARLIER_SAMPLES
+        if path.is_file()
+        and path.resolve() != sheet_path.resolve()  # a sheet is not its own earlier
+        for i in _read_ids(path)
+    }
     if reused := sorted(set(ids) & earlier):
         problems.append(
             f"{len(reused)} id(s) already in an earlier sample, not fresh: {reused[:5]}"
         )
     return problems + _db_problems(rows, db_path)
+
+
+def _refresh(sheet: Path, db: Path) -> int:
+    with sheet.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    exclude: set[str] = set()
+    for path in EARLIER_SAMPLES:
+        if path.is_file() and path.resolve() != sheet.resolve():
+            exclude |= set(_read_ids(path))
+    new, dropped = refresh(rows, db, exclude)
+    with sheet.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=FIELDS)
+        writer.writeheader()
+        writer.writerows(new)
+    print(f"kept {len(rows) - len(dropped)} labeled rows; replaced {len(dropped)}: {dropped}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,7 +282,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="LABELED_CSV",
         help="score a labeled --final sample (with --db also check it is the T-057 sheet)",
     )
+    parser.add_argument(
+        "--refresh",
+        metavar="LABELED_CSV",
+        help="keep the labels of a --final sheet, replace only rows whose class changed (in place)",
+    )
     args = parser.parse_args(argv)
+    if args.refresh:
+        return _refresh(Path(args.refresh), Path(args.db or resolve_db_path()))
     if args.verdict:
         ok, text = final_verdict(Path(args.verdict))
         print(text)
@@ -241,8 +305,12 @@ def main(argv: list[str] | None = None) -> int:
         print("error: urls.db or the existing sample not found", file=sys.stderr)
         return 1
     excluded = [existing]
-    if args.final:  # the rule is frozen: skip every pair either earlier sample used
-        excluded.append(Path(DEFAULT_OUT))
+    if (
+        args.final
+    ):  # skip every pair any earlier sample used (the T-057 sheet too, for the T-062 draw)
+        excluded.extend(
+            Path(p) for p in (DEFAULT_OUT, FINAL_OUT) if Path(p) != Path(args.out or "")
+        )
     exclude: set[str] = set()
     for path in excluded:
         if not path.is_file():

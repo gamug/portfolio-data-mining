@@ -236,3 +236,149 @@ def test_explicit_forms_edges_and_cashtags_of_common_tickers(
     title: str, company: str, ticker: str, expected: str
 ) -> None:
     assert cls("https://x.com/news/story", title, company, ticker) == expected
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        ("https://x.com/kla-corporation-2022-q4-results", "KLA Corporation", "KLAC"),
+        ("https://x.com/2024/southern-company-ceo-says.html", "Southern Company", "SO"),
+        ("https://x.com/murdochs-news-corp-to-sell-foxtel", "News Corp (Class B)", "NWS"),
+        (
+            "https://x.com/stake-in-international-flavors-fragrances",
+            "International Flavors & Fragrances",
+            "IFF",
+        ),
+        ("https://x.com/pepsi-why-not-to-buy-this-soft-drink-maker", "PepsiCo", "PEP"),
+        ("https://x.com/semiconductor-bank-of-americas-top-chip-stocks", "Bank of America", "BAC"),
+        ("https://x.com/news-corps-dual-class-structure", "News Corp (Class B)", "NWS"),
+        ("https://x.com/dollar-generals-sales-miss", "Dollar General", "DG"),
+    ],
+)
+def test_a_full_name_the_url_spells_loosely_is_review_never_reject(
+    url: str, company: str, ticker: str
+) -> None:
+    assert classify(url, "", company, ticker) == matching.Match("review", "loose_name")
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        ("https://x.com/southern-states-weather", "Southern Company", "SO"),  # lone stopword
+        ("https://x.com/latest-news-today", "News Corp (Class A)", "NWSA"),  # lone ordinary word
+        ("https://x.com/kla-news", "KLA Corporation", "KLAC"),  # name split by other words
+        ("https://x.com/key-to-a-good-retirement", "KeyCorp", "KEY"),  # brand too short
+        ("https://x.com/cis-outlook-2024", "Cisco", "CSCO"),  # no capital tail to cut
+        ("https://x.com/sys-admin-tips", "Sysco", "SYY"),
+    ],
+)
+def test_a_loose_name_needs_the_whole_name(url: str, company: str, ticker: str) -> None:
+    assert cls(url, "", company, ticker) == "reject"
+
+
+@pytest.mark.parametrize(
+    ("url", "company", "ticker"),
+    [
+        (
+            "https://x.com/pros-best-buys-in-health-care",
+            "Best Buy",
+            "BBY",
+        ),  # a plural, not the company
+        ("https://x.com/cramer-on-semiconductors-risk", "ON Semiconductor", "ON"),
+        ("https://x.com/best-apples-for-pies", "Apple Inc.", "AAPL"),
+        ("https://x.com/student-visas-explained", "Visa Inc.", "V"),
+        ("https://x.com/tariffs-on-semiconductors-hit-asia", "ON Semiconductor", "ON"),
+        (
+            "https://x.com/new-rules-would-target-corporations-that-waste-time",
+            "Target Corporation",
+            "TGT",
+        ),
+    ],
+)
+def test_a_trailing_s_in_the_url_is_not_read_as_the_company(
+    url: str, company: str, ticker: str
+) -> None:
+    assert matching.Match("review", "loose_name") != classify(url, "", company, ticker)
+
+
+# The 11 names of the real universe (506 company names in `urls.db`) whose last word ends in "co" or
+# "corp": the camel-case rule must cut exactly two of them. A name added to the universe later is not
+# in this list: re-scan the company names of `urls.db` for a capital `Co`/`Corp` tail when it changes.
+CO_ENDING_NAMES = [
+    "Costco",
+    "Cisco",
+    "Fifth Third Bancorp",
+    "Invesco",
+    "KeyCorp",
+    "Kimco Realty",
+    "Labcorp",
+    "Masco",
+    "PepsiCo",
+    "Sysco",
+    "U.S. Bancorp",
+]
+
+
+def test_the_camel_case_tail_cuts_only_pepsico_and_keycorp() -> None:
+    cut = [n for n in CO_ENDING_NAMES if matching._CAMEL_TAIL.search(n)]
+
+    assert cut == ["KeyCorp", "PepsiCo"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://x.com/top-tech-fund-manager-at-t-rowe-price-gives-picks",
+        "https://x.com/united-airlines-we-can-see-the-light-at-t",
+        "https://x.com/jim-cramer-looks-at-t-mobiles-record-iphone-sales",
+    ],
+)
+def test_the_letters_of_a_dropped_ampersand_are_not_a_spelling_of_the_company(url: str) -> None:
+    assert cls(url, "", "AT&T", "T") == "reject"
+
+
+def test_the_exact_spelling_of_a_name_with_single_letters_is_still_accepted() -> None:
+    assert classify("https://x.com/at-and-t-earnings", "", "AT&T", "T") == matching.Match(
+        "accept", "name"
+    )
+
+
+# The 22 names of the real universe (506 company names in `urls.db`) with a one-letter word in a form
+# the loose rule would look for (`at t`, `m t bank`, `moody s`, `j m smucker`): none of those forms may
+# count. A name added to the universe later is not in this list: re-scan when it changes.
+SINGLE_LETTER_NAMES = [
+    "Arthur J. Gallagher & Co.",
+    "A. O. Smith",
+    "Casey's",
+    "C.H. Robinson",
+    "D. R. Horton",
+    "Domino's",
+    "Estée Lauder Companies (The)",
+    "W. W. Grainger",
+    "J.B. Hunt",
+    "Lowe's",
+    "McDonald's",
+    "Moody's Corporation",
+    "M&T Bank",
+    "O'Reilly Automotive",
+    "PG&E Corporation",
+    "J.M. Smucker Company (The)",
+    "S&P Global",
+    "AT&T",
+    "T-Mobile US",
+    "T. Rowe Price",
+    "U.S. Bancorp",
+    "W. R. Berkley Corporation",
+]
+
+
+def test_no_loose_form_of_a_name_with_single_letters_counts() -> None:
+    for company in SINGLE_LETTER_NAMES:
+        forms = {
+            matching.full_name(company),
+            matching.full_name(company).replace(" and ", " "),
+            matching._kept_name(company),
+        }
+        single = [f for f in forms if any(len(w) < 2 for w in f.split())]
+        assert single, company  # the list is of names that have such a form
+        assert not any(matching._spelled_enough(f) for f in single), company

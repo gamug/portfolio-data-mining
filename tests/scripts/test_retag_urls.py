@@ -431,7 +431,11 @@ def test_a_sheet_reusing_an_earlier_sample_is_refused(
 def test_the_committed_samples_are_what_the_check_excludes() -> None:
     importlib.reload(validation)  # undo the autouse shrink: the real defaults
     names = {p.name for p in validation.EARLIER_SAMPLES}
-    assert names == {"ticker_tagging_sample.csv", "ticker_validation_sample.csv"}
+    assert names == {
+        "ticker_tagging_sample.csv",
+        "ticker_validation_sample.csv",
+        "ticker_retag_check_sample.csv",  # T-062: its fresh draw excludes the T-057 sheet
+    }
     assert validation.FINAL_COUNTS == {"accept": 60, "reject": 40}
 
 

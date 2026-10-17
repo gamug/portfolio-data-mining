@@ -66,17 +66,20 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, origin: Work item 10 real run)
 
-- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher, so the maintainer schedules it)*
+- [ ] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher; scheduled by the maintainer 2026-10-16)*
       Fix the full-name false rejects: at least 433 `reject` pairs on 234 URLs whose URL spells the company
       out (`data/retag_known_false_rejects.csv`, `PLAN.md` Work item 10 "Accepted recall loss"). Three causes in
       `matching._name_reason`: a name that is short or a stopword once the suffix is removed (`kla`, `southern`, `news`),
       a possessive written as a trailing `s` (`bank-of-americas`), and an `&` the URL drops. Make a full-name hit at
       least `review` (never `reject`), normalize the possessive and `&`, then re-class the quarantined rows with a
-      targeted pass (the re-tag only touches `match_reason IS NULL` rows) and `release_articles` for any that become
-      `accept`. Acceptance: the 433 rows are no longer `reject` (update `known_false_rejects.py --check` and
+      targeted pass (the re-tag only touches `match_reason IS NULL` rows), audited: dry run, verified backup, audit list,
+      `--revert`, a fingerprint guard, post-conditions (rows per class, the sync prediction, the readable `ok` articles) and
+      a read-only attach as `portfolio-nlp` does it, all in `scripts/reclass_rejects.py`, rehearsed on a same-mount copy with
+      `scripts/rehearse_reclass.py`; `release_articles` runs for any that become `accept`. Acceptance: the 433 rows are no longer `reject` (update `known_false_rejects.py --check` and
       `tests/scripts/test_known_false_rejects.py`), `score_ticker_rules.py --check` is re-measured and `PLAN.md`'s figures
-      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told the new
-      counts of removed and `review` rows (its T-131/T-132 inputs change). Constitution AI behavior #10 does not apply
+      re-frozen, a fresh hand check (new 60/40 sheet, drawn from the post-fix classes) passes the T-057 criterion, and `portfolio-nlp` is told what changes for it:
+      the `reject` count falls and the `review` count rises by the promoted pairs, while the rows it can read do not change (a
+      promoted pair is `review`, so its article stays quarantined) unless the maintainer decides to release a subset to `accept`. Constitution AI behavior #10 does not apply
       (no schema change). Tooling for that sheet: add `data/ticker_retag_check_sample.csv` to `EARLIER_SAMPLES` and to the
       `--final` exclusions in `ticker_validation_sample.py`, and draw with `--final --out <new path>` (the default output is the T-057 sheet and must not be overwritten).
 
@@ -91,8 +94,11 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
-Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is open but not scheduled: the
-maintainer decides when. `portfolio-nlp` does not wait on it.
+Work item 12 (`T-062`, matcher follow-up for full-name false rejects) is in progress (scheduled 2026-10-16):
+matcher, `scripts/reclass_rejects.py` and `scripts/rehearse_reclass.py` are written; the run is rehearsed on a
+same-mount copy of the real database (apply, second apply, revert, comparison); the hand-check sheet passes for the
+shipped rule and the `loose_name` precision sample is fully labeled (News Corp 10 of 10, the rest 20 of 20). The real
+re-class run (437 promotions, all `review`) and the `portfolio-nlp` hand-off remain. `portfolio-nlp` does not wait on it.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until

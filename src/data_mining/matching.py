@@ -42,6 +42,8 @@ CLASS_RANK: dict[MatchClass, int] = {"reject": 0, "review": 1, "accept": 2}
 WORD_TICKERS = ("ON", "A", "ARE", "IT", "TECH", "HAS", "NOW", "ALL")
 
 MIN_NAME = 4
+MIN_WORDS = 2  # a loose name match spans two words or more, or the name is distinctive
+MIN_WORD_CHARS = 2  # ... and each of its words has at least two characters
 MIN_TICKER = 3
 MIN_SHORT_TICKER = 2
 
@@ -88,6 +90,16 @@ _SUFFIX = re.compile(
     r"\b(inc|corp|corporation|co|company|ltd|plc|llc|holdings|group|the|class [a-c])\b\.?",
     re.IGNORECASE,
 )
+
+
+# Names whose plural the slug spells like a possessive but is an ordinary phrase (read by hand in the
+# real data, PLAN Work item 12: `best-buys` is a list of picks, not Best Buy, and
+# `on-semiconductors` is a plural, not ON Semiconductor, and `target-corporations` is a noun phrase, not
+# Target Corporation). Owner: whoever changes the company universe re-scans for new names of this shape.
+PLURAL_PHRASES = frozenset({"best buy", "on semiconductor", "target corporation"})
+_CAMEL_TAIL = re.compile(
+    r"(?<=[a-z])(?:Corp|Co)$"
+)  # PepsiCo, KeyCorp: a capital tail on a lower-case letter
 
 
 @dataclass(frozen=True)
@@ -163,6 +175,51 @@ def _name_reason(
     return None
 
 
+def _kept_name(company: str) -> str:
+    """The lower-case name with its corporate suffix kept and ``(Class B)`` gone."""
+    return " ".join(flat(re.sub(r"\([^)]*\)", " ", company)).split())
+
+
+def _spelled_enough(form: str) -> bool:
+    """A form is safe to look for on its own: two words or more, or one distinctive word.
+
+    Every word needs at least two characters: the ``&``-dropped form of ``AT&T`` is ``at t``, which is
+    two words but not a spelling of the company (``…fund-manager-at-t-rowe-price…``)."""
+    words = form.split()
+    if any(len(w) < MIN_WORD_CHARS for w in words):
+        return False
+    return len(words) >= MIN_WORDS or (len(form) >= MIN_NAME and form not in STOPWORDS)
+
+
+def _loose_name(company: str, text: str) -> bool:
+    """The company's name as a URL spells it, a weaker sign than the exact name (``review``).
+
+    Spellings the exact check misses (PLAN Work item 12): the name with its corporate suffix kept
+    (``kla-corporation``, ``southern-company``, ``news-corp``), the name with the ``and`` of an ``&``
+    dropped (``flavors-fragrances``), and the brand of a camel-case name (``pepsi`` for ``PepsiCo``;
+    only a capital ``Co``/``Corp`` tail counts, so ``Costco`` and ``Cisco`` are not cut). A trailing
+    ``s`` of a possessive is read (``news-corps-dual-class``, ``bank-of-americas-ceo``; 45 of the 433
+    known false rejects) only for a name of two words or more, because a slug writes a plural the same
+    way (``apples`` and ``visas`` are nouns), and not for a name in `PLURAL_PHRASES`, the phrases read
+    by hand in the real data. A single word
+    is never enough on its own: it must be distinctive, or the match must span two words or more.
+    """
+    flat_text = flat(text)
+    name = full_name(company)
+    brand = flat(_CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())).strip()
+    forms = {name, name.replace(" and ", " "), _kept_name(company), brand}
+    for form in forms:
+        if not form or not _spelled_enough(form):
+            continue
+        if f" {form} " in flat_text:
+            return True
+        words = form.split()
+        possessive_safe = len(words) >= MIN_WORDS and form not in PLURAL_PHRASES
+        if possessive_safe and f" {form}s " in flat_text:
+            return True
+    return False
+
+
 def name_in(
     company: str,
     ticker: str,
@@ -203,6 +260,8 @@ def _weak(
         return Match("review", "cashtag")
     if len(ticker) >= MIN_TICKER and ticker not in common and word(ticker, text):
         return Match("review", "weak_ticker")
+    if _loose_name(company, text):
+        return Match("review", "loose_name")
     words = company.split(maxsplit=1)
     first = words[0].strip(",.") if words else ""
     if len(first) >= MIN_NAME and first.lower() not in STOPWORDS and word(first, text):
