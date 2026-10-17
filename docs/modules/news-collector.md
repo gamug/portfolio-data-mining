@@ -256,12 +256,18 @@ collector and the crawler first. It writes the audit list as `reclass_promoted.c
 run that aborts leaves no list and a crash after the commit leaves it; `--revert LIST` puts back the old class,
 reason and status of the rows that still hold what the run wrote, then syncs. `--revert` validates its list before it
 touches anything (the columns of this script's list, integer and unique ids, each row a promotion, every id present in
-the database; a `.partial` list is refused) and prints how many of the listed rows it reverted; `--apply` and `--revert`
-are mutually exclusive, and a mistyped `--db`, an unusable backup directory or a missing list is a one-line error.
+the database **as the same pair** (ticker and url equal; the `UPDATE` repeats that condition); a `.partial` list is
+refused) and prints how many of the listed rows its `UPDATE`s changed; `--apply` and `--revert`
+are mutually exclusive, and a mistyped `--db`, a file that is not a database, an unusable backup directory or a missing list is a one-line error.
 After the update and the sync, `--apply` and `--revert` read the database back and exit 1, with
 `POST-CONDITION FAILED` lines, if it is not as planned: the rows per class moved by exactly the promotions, none of
-them still `reject`, the sync did what the dry run predicted, no `accept` pair keeps a quarantined article (a revert:
-no listed row still holds what the run wrote). If the process dies between the promotions and the
+them still `reject`, the `UPDATE`s changed exactly the planned rows, the sync did what the dry run predicted, no `accept`
+pair keeps a quarantined article (a revert: no listed row still holds what the run wrote). Both modes then truncate the
+WAL and finish with a **reader check**: the file is attached read-only through `Database.attach(read_only=True)` of the
+`portfolio-common` installed there, the pairs are counted against the fingerprint, and the line
+`reader check: attach(read_only=True) ok, N rows (portfolio-common X)` is printed. That is the failure that made `urls.db`
+unreachable for `portfolio-nlp` while it was in WAL mode, so a run that leaves it in a state a reader refuses ends with
+`POST-CONDITION FAILED` and exit 1. If the process dies between the promotions and the
 sync, `--apply` again (no backup is asked for when nothing is left to promote) runs the sync.
 
 **What the idle check can see.** `--apply` opens a write transaction before it copies anything and refuses when
@@ -293,8 +299,9 @@ log the run says so and the log clears when it closes.
 4. Apply with a new backup name:
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup
    /workspaces/thesis/data/url_cat_backup.db --list data/retag/reclass_promoted.csv`. On screen: the stage lines
-   (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0` and exit 0
-   with no `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
+   (stderr), `backup … sha256 …`, `audit list … (N rows)`, `promoted N rows; quarantined 0, released 0`, `checkpoint: WAL
+   truncated …` (stderr), `reader check: attach(read_only=True) ok, N rows (portfolio-common 1.2.2)` and exit 0 with no
+   `POST-CONDITION FAILED`. On anything else, stop and read it (a failed check says the changes are
    committed and how to revert).
 5. Record the backup's SHA-256 and who keeps the backup and `data/retag/reclass_promoted.csv`. Expected figures,
    as of the dry run with the collector stopped (they move if rows were added since): `reject` 325,423 → 324,986,
