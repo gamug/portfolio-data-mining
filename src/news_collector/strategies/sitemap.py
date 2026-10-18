@@ -29,6 +29,17 @@ _NS_NEWS = "http://www.google.com/schemas/sitemap-news/0.9"
 # the first two fields, so anything shorter than that is unusable.
 _MIN_CDX_ROW_FIELDS = 2
 
+# How many sitemap failures an error message names before it says "and N more" (T-076).
+_FAILURES_SHOWN = 3
+
+
+def summarize_failures(failures: list[str], shown: int = _FAILURES_SHOWN) -> str:
+    """One bounded line for a list of sitemap failures (an index of dead children can be long)."""
+    text = "; ".join(failures[:shown])
+    if len(failures) > shown:
+        text += f"; and {len(failures) - shown} more"
+    return text
+
 
 class SitemapRSSStrategy:
     """

@@ -22,7 +22,7 @@ from news_collector.connectors.yahoo_finance import YahooFinanceConnector
 from news_collector.models import Company, DateRange, DiscoveredURL, DiscoveryStats, PartialStats
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
-from news_collector.strategies.sitemap import SitemapRSSStrategy
+from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
 
 log = logging.getLogger(__name__)
 # Separate logger name so progress/ETA lines can be filtered independently
@@ -294,7 +294,7 @@ class DiscoveryOrchestrator:
         # leaves a usable checkpoint for the next one), but not when a sitemap root or
         # child failed (T-076): the pair is reported as an error and a later run retries it.
         if sitemap_failures:
-            partial.error = "; ".join(sitemap_failures)
+            partial.error = summarize_failures(sitemap_failures)
             log.warning(
                 "%s / %s not checkpointed, %d sitemap failure(s)",
                 company.ticker,
