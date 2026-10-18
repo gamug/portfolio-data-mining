@@ -81,29 +81,42 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       `docs/modules/news-collector.md` (a new full-name URL is `review`/`loose_name`), which also closes the data half of the
       `T-062` step 6 check. Constitution AI behavior #10 does not apply (no schema change).
 - [ ] **T-065** *(Work item 14; configuration, found 2026-10-18 while validating the database after the gateway restart)*
-      The gateway and the apps read the wrong database. `/etc/environment` sets `DATABASE_URL="../data/urls.db"` for the
-      whole container, `load_dotenv()` does not override a variable that is already set, so the `.env` value is ignored (the
-      crawler's `/status` answered 500 because `../data/urls.db` does not exist), and the collector API's `db_path` defaults
-      are the literal `data/urls.db` (`src/news_collector/api/routers/discovery.py`, `api/schemas.py`), which is an empty
-      file in the repo, so `/collector/discovery/stats` showed `total: 0`. Until fixed, start the gateway as
-      `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py` (documented in `docs/modules/news-collector.md`;
-      this does not cover the collector's request defaults, pass `db_path` there). Fix: `load_dotenv(override=True)` in the
-      apps (decide with the maintainer: a deliberate `.env` should beat an inherited variable), and make the collector API
-      defaults come from `data_mining.resolve_db_path()` like the crawler's. Acceptance: a test that the defaults follow
-      `$DATABASE_URL`, and with the gateway started plainly `/collector/discovery/stats` and `/crawler/status` report the
-      real counts (481,332 pairs on 2026-10-18).
-- [ ] **T-066** *(Work item 14; configuration, asked by the maintainer 2026-10-18)*
-      `apps/gateway.py` must read `.env` itself and fail loudly instead of serving the wrong database. Today the gateway
-      does not call `load_dotenv()` (each sub-app does, on import, and `load_dotenv()` leaves an inherited variable alone),
-      so on 2026-10-18 it started on `DATABASE_URL="../data/urls.db"` from `/etc/environment`, answered `/crawler/status`
-      with 500 and `/collector/discovery/stats` with `total: 0`, and nothing said why. Do: load `.env` at the top of the
-      gateway (with `T-065`'s override rule, decided with the maintainer), resolve the path with
-      `data_mining.resolve_db_path()`, log the effective path and where it came from (`.env`, inherited, default), refuse to
-      start with a clear message when that file does not exist or is empty (unless a flag says a new database is intended),
-      and log a warning when an inherited value differs from the one in `.env`. Acceptance: tests of the start-up check
-      (missing path, empty file, inherited value differing from `.env`, plain `.env`), and a plain start of the gateway on
-      this machine either serves the real counts or stops with the message. Depends on `T-065` for the override rule; the
-      two can ship together.
+      The collector API reads the wrong database by default. Its request defaults are the literal `data/urls.db`
+      (`src/news_collector/api/routers/discovery.py`, `api/schemas.py`, `api/deps.py`), an empty file in the repo, so
+      `/collector/discovery/stats` showed `total: 0` while the real database held 481,332 pairs; the crawler already
+      reads `$DATABASE_URL`. Make every default come from `data_mining.resolve_db_path()` (also `src/news_collector/main.py`
+      and `cli/news_crawler_cli.py`). Acceptance: a test that the defaults follow `$DATABASE_URL`, and a plain
+      `/collector/discovery/stats` reports the real counts. Until fixed, pass `db_path` in the request (documented in
+      `docs/modules/news-collector.md`). The `.env` precedence part is `T-066`.
+
+- [ ] **T-066** *(Work item 14; configuration rule, asked by the maintainer 2026-10-18: reading `.env` is mandatory for every service)*
+      Every entry point, the five apps (`apps/gateway.py`, `news_collector_api.py`, `news_crawler_api.py`, `pricing_api.py`,
+      `sec_edgar_api.py`) and the four CLIs (`cli/news_collector_cli.py`, `news_crawler_cli.py`, `pricing_cli.py`,
+      `sec_edgar_cli.py`), must read the repository's `.env` the same way, before anything reads the environment. Today
+      `apps/gateway.py` and `cli/news_collector_cli.py` never call `load_dotenv()`, the others do it on their own with
+      the default `override=False`, and `src/news_collector/config.py` does it again with `override=False` on purpose
+      (a real variable such as `DISCOVERY_END_DATE` wins). A variable inherited from the container beat `.env` on
+      2026-10-18: `/etc/environment` set `DATABASE_URL="../data/urls.db"`, the gateway answered `/crawler/status` with 500 and
+      nothing said why. Do: one function (for example `data_mining.env.load_env()`) that every app and CLI calls first,
+      finds `.env` from the repo root rather than the working directory, applies one precedence rule, logs the effective
+      `DATABASE_URL` and where it came from (`.env`, inherited, default), warns when an inherited value differs from `.env`,
+      and, in the gateway and the apps, refuses to start when the database file is missing or empty (unless a flag says a
+      new one is intended). **Decide with the maintainer first:** `.env` beats the inherited environment (then
+      `config.py`'s `override=False` and its `DISCOVERY_END_DATE` behavior change) or the other way round with the warning
+      only. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file) and of the start-up check;
+      **a test that fails when an app or CLI under `apps/` or `cli/` does not call it** (so the rule stays mandatory); a plain start of
+      the gateway on this machine serves the real counts or stops with the message; `.env.example` and the module docs
+      state the rule. Scripts under `scripts/` that read `DATABASE_URL` take `--db`, so they are out of scope unless the
+      maintainer adds them.
+
+- [ ] **T-067** *(Work item 14; collector API, found 2026-10-18)*
+      `POST /collector/discover/{domain}/` with `tickers` and no `company_names` stores the ticker as the company
+      (`company = 'KLAC'`), and the matcher then classes a URL that spells `kla-corporation` as `reject`. The test run of
+      2026-10-18 left two such rows (ids 495519 and 495520) in the real `urls.db`. Resolve the name from the universe
+      (`data_mining.portfolio`) when it is omitted, or refuse the request with a clear error; also reject a `company_names`
+      list whose length differs from `tickers` (it is positional; a dict gives a validation error that does not say so).
+      Acceptance: tests for the omitted, the mismatched and the explicit cases; the two stray rows are corrected or removed
+      with the maintainer's approval.
 
 ## Status
 

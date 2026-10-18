@@ -1256,10 +1256,13 @@ test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of 481,332 p
 batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`; it blocks only the data half of the
 `T-062` step 6 check.
 
-`T-065` (same Work item, found the same day): the container sets `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which
-beats `.env`, and the collector API's request defaults ignore `DATABASE_URL`; the gateway therefore read an empty or missing
-database after the restart. Workaround and fix: `TASKS.md` `T-065`.
-`T-066` (asked by the maintainer): the gateway itself reads `.env`, logs the database it opened and refuses to start on a missing or empty one.
+`T-065`, `T-066`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
+collector API's request defaults are the literal `data/urls.db` (an empty file), not `$DATABASE_URL` (`T-065`); the container sets
+`DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`, and the gateway and one CLI never read `.env`; the maintainer
+made reading `.env` a mandatory rule for every app and CLI (`T-066`, with a test that enforces it; the precedence is the maintainer's
+decision, because `news_collector/config.py` keeps a real variable above `.env` today); and a discovery request without
+`company_names` stores the ticker as the company and gets rejected (`T-067`). Workaround until fixed: start with
+`DATABASE_URL=/workspaces/thesis/data/urls.db`, pass `db_path` and `company_names`.
 
 ## Sequencing
 
