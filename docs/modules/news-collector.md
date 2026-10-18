@@ -9,6 +9,11 @@ Investing.com, Nasdaq, Seeking Alpha, StockTwits) and persists them to a durable
 queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
 `.env.example`; table `discovered_urls`) for [news_crawler](news-crawler.md) to consume.
 
+**Which database the gateway opens.** On this machine `/etc/environment` sets `DATABASE_URL="../data/urls.db"`, which beats `.env` (`load_dotenv()` does not
+override) and points at a directory that does not exist; the collector API's request defaults are the literal `data/urls.db`, an empty file in the repo.
+Start the gateway with the real path explicit: `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, and check `GET /crawler/status` (it must
+show the real counts) before any discovery; for the collector pass `db_path` in the request. The fix is `T-065` (`TASKS.md`).
+
 ## Architecture
 
 - **Connector-per-domain** (`src/news_collector/connectors/`) — one class per news source.

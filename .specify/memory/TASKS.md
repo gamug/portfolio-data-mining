@@ -80,6 +80,18 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       then re-run the `KLAC` `cnbc` discovery on the real database and read the new rows with the step 6 query of
       `docs/modules/news-collector.md` (a new full-name URL is `review`/`loose_name`), which also closes the data half of the
       `T-062` step 6 check. Constitution AI behavior #10 does not apply (no schema change).
+- [ ] **T-065** *(Work item 14; configuration, found 2026-10-18 while validating the database after the gateway restart)*
+      The gateway and the apps read the wrong database. `/etc/environment` sets `DATABASE_URL="../data/urls.db"` for the
+      whole container, `load_dotenv()` does not override a variable that is already set, so the `.env` value is ignored (the
+      crawler's `/status` answered 500 because `../data/urls.db` does not exist), and the collector API's `db_path` defaults
+      are the literal `data/urls.db` (`src/news_collector/api/routers/discovery.py`, `api/schemas.py`), which is an empty
+      file in the repo, so `/collector/discovery/stats` showed `total: 0`. Until fixed, start the gateway as
+      `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py` (documented in `docs/modules/news-collector.md`;
+      this does not cover the collector's request defaults, pass `db_path` there). Fix: `load_dotenv(override=True)` in the
+      apps (decide with the maintainer: a deliberate `.env` should beat an inherited variable), and make the collector API
+      defaults come from `data_mining.resolve_db_path()` like the crawler's. Acceptance: a test that the defaults follow
+      `$DATABASE_URL`, and with the gateway started plainly `/collector/discovery/stats` and `/crawler/status` report the
+      real counts (481,332 pairs on 2026-10-18).
 
 ## Status
 

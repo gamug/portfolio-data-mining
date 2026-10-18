@@ -1256,6 +1256,10 @@ test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of 481,332 p
 batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`; it blocks only the data half of the
 `T-062` step 6 check.
 
+`T-065` (same Work item, found the same day): the container sets `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which
+beats `.env`, and the collector API's request defaults ignore `DATABASE_URL`; the gateway therefore read an empty or missing
+database after the restart. Workaround and fix: `TASKS.md` `T-065`.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
