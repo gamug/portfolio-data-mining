@@ -30,7 +30,7 @@ class DiscoverRequest(BaseModel):
         description=(
             "Optional company names, positional: one per ticker, same length (else 422). If omitted, each "
             "ticker is looked up by exact symbol in the current S&P 500, then as of start_date "
-            "(a ticker found in neither is a 422). Ignored when tickers is omitted."
+            "(a ticker found in neither is a 422); an empty list counts as omitted. Ignored when tickers is omitted."
         ),
     )
     start_date: date | None = Field(
@@ -56,7 +56,7 @@ class RunAllRequest(BaseModel):
         description=(
             "Optional company names, positional: one per ticker, same length (else 422). If omitted, each "
             "ticker is looked up by exact symbol in the current S&P 500, then as of start_date "
-            "(a ticker found in neither is a 422). Ignored when tickers is omitted."
+            "(a ticker found in neither is a 422); an empty list counts as omitted. Ignored when tickers is omitted."
         ),
     )
     start_date: date | None = Field(

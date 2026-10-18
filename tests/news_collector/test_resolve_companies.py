@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import date
 from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -17,7 +18,7 @@ from news_collector.api.routers import _common, cnbc, discovery
 from news_collector.api.schemas import DiscoverRequest, RunAllRequest
 from news_collector.models import Company
 
-_CLIENT = httpx.AsyncClient()  # never used: every lookup is faked
+_CLIENT = cast(httpx.AsyncClient, object())  # never used: every lookup is faked
 
 _SP500 = [
     Company(ticker="KLAC", name="KLA Corporation", sector="Information Technology"),
@@ -283,3 +284,23 @@ def test_a_per_domain_route_returns_422_for_an_unknown_ticker(
     assert res.status_code == 422
     assert "ZZZ" in res.json()["detail"]
     assert "company_names" in res.json()["detail"]
+
+
+async def test_an_empty_names_list_counts_as_omitted(wikipedia: list[int]) -> None:
+    req = DiscoverRequest(tickers=["AAPL"], company_names=[])
+    assert (await _common.resolve_companies(req, _CLIENT))[0].name == "Apple Inc."
+
+
+async def test_a_renamed_current_ticker_gets_the_store_name_when_wikipedia_is_down(
+    monkeypatch: pytest.MonkeyPatch, store_file: Path
+) -> None:
+    async def fail(client: httpx.AsyncClient) -> list[Company]:
+        raise ValueError("markup changed")
+
+    def renamed(as_of: date) -> list[dict]:
+        return [{"Symbol": "KLAC", "Security": "KLA-Tencor"}]
+
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fail)
+    monkeypatch.setattr(companies_module, "query_as_of", renamed)
+    companies = await _common.resolve_companies(DiscoverRequest(tickers=["KLAC"]), _CLIENT)
+    assert companies[0].name == "KLA-Tencor"  # the name as of start_date, as documented
