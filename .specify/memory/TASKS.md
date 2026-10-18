@@ -185,8 +185,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (1) **Default:** `default_end_date()` returns the UTC date (`datetime.now(UTC).date()`) and no longer reads the environment; `ENV_END_DATE` goes away. The date is taken when the
       command or the request runs, not when the module is imported (a long-lived API gets the day of each request). One clock function so tests patch one place.
       (2) **Cost accepted:** `--resume` matches the exact `(start_date, end_date)` of a prior run (`discovery_progress` is keyed by both), and "today" changes every day, so a run
-      on a new day re-runs every `(ticker, domain)` pair from the start date. No duplicated rows: `UNIQUE(url, ticker)` rejects a repeat at insert time (a test shows a second run over
-      the same pairs inserts 0). The cost is time and network; Work item 15 (`T-068`–`T-074`) cuts the sitemap part. To continue a batch the next day, pass the same `--end-date`.
+      on a new day re-runs every `(ticker, domain)` pair from the start date. No duplicated rows: `UNIQUE(url, ticker)` rejects a repeat at insert time (a test runs the same pairs twice over the same range with `--no-resume`/`resume: false` and shows the second run inserts 0; a run over a different `end_date` with resume on re-runs the pairs). The cost is time and network; Work item 15 (`T-068`–`T-074`) cuts the sitemap part. To continue a batch the next day, pass the same `--end-date`.
       Not chosen: an incremental start (last completed end date) and a resume that ignores the end date; either would be its own task.
       (3) **API echoes the range:** `RunAllResponse` and `DiscoverResponse` gain `start_date` and `end_date` (ISO dates, the values actually used), so a caller copies them into the next
       request to resume the same range. Additive, no database change. The CLI summary prints the same two dates.
@@ -199,13 +198,20 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       `SPEC.md` setup step 2 says the end date is an input. The code PR touches no constitution.
       (7) **Text the code PR must change** (so none is missed): `.env.example` (remove `DISCOVERY_END_DATE`, comment says "end date: pass it, default today UTC"); `docs/modules/news-collector.md`
       (the paragraph that says the run requests "`$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE`" and the universe-refresh "needs no code" claim: say "from the start date through today, and
-      every pair re-runs on a new day"); `README.md` if it names the variable; `api/schemas.py` (`_DATE_DEFAULT_NOTE`); the `--end-date` help in `news_collector/main.py`;
+      every pair re-runs on a new day"); `api/schemas.py` (`_DATE_DEFAULT_NOTE`); the `--end-date` help in `news_collector/main.py`;
       the `orchestrator.py` docstring ("Defaults to 2022-01-01 to today"); `data_mining/env.py` (allow-list, retired list); `tests/data_mining/test_env.py` (the allow-list test).
+      (7b) **An invalid range is refused, not a crash** *(round 2)*: `DateRange` raises `ValueError` when start > end, and with the new default a request that sets only a future `start_date`
+      reaches it. A shared helper in `api/routers/_common.py` builds the range for both API call sites (`_common.py` and `discovery.py`) and answers **422** with the message; the CLI catches it and exits **1**
+      with one line (no traceback). **A future end date is allowed** (no clamp): the range echoed in the response is the one used.
+      (7c) **Notice reaches the CLI trace** *(round 2)*: `data_mining/env.py` gets `replay_notices()` (logs the cached override and retired lines); `news_collector.main discover` calls it right after
+      `setup_logging`, as the collector API already does through `log_again()`, so the CLI's file trace has the line too. The crawler API and the gateway keep no file trace (as decided in `T-066b`).
+      **The notice is logged by every entry point** (one line per process, by name): one mechanism in `load_env()`, no per-entry list; a stale line is a configuration error worth one line at each start.
+      **Merge order:** #84 (docs) then the T-077 code PR straight after, with nothing else merged between; `SPEC.md` says "from T-077 on" so the text is true once the code lands.
       (8) **Real `.env`:** it is git-ignored, so no PR edits it; the maintainer deletes the stale `DISCOVERY_END_DATE=2026-08-10` line after the code PR merges. The acceptance run on this
       machine keeps the line, to show it is ignored and logged.
       Acceptance: tests that the default is the UTC date (patched clock; two calls on two days give two dates; a run at 23:59 and at 00:01 UTC); that an explicit `--end-date` and a request
-      `end_date` win; that an `--end-date` before the start date fails (`DateRange` already refuses it); that `DISCOVERY_END_DATE` set in `.env` or in the system environment is ignored and
-      logged once by name, with no value, also in the file trace of the collector API; that `import news_collector.config` reads no `.env`; that both API responses and the CLI summary carry the
+      `end_date` win; that a start after the end is refused: API 422 with the message on both call sites (also a request with only a future `start_date`), CLI exit code 1 with one line and no traceback; that a future `end_date` is accepted and echoed; that `DISCOVERY_END_DATE` set in `.env` or in the system environment is ignored and
+      logged once by name, with no value, also in the file trace of the collector API and of `news_collector.main discover` (`replay_notices()`); that `import news_collector.config` reads no `.env`; that both API responses and the CLI summary carry the
       range used; that a second run over the same pairs inserts 0 rows. On this machine with the stale line still in `.env`: the run uses today's date and the log names the variable.
       No database schema change.
 
