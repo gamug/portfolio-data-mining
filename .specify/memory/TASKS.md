@@ -77,18 +77,18 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       Acceptance: (1) a test with 20,000 mixed pairs that lowers the limit (`queue._conn._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`,
       or monkeypatches the chunk size) and **fails on the unfixed code** (shown in the PR); it inserts all rows and returns the right
       `last_inserted_rejected` and `last_promotion`; (2) a test with more than 16,000 urls and fewer than 100 rejects: every `u.id` set, promotion applied;
-      (3) chunked equals unchunked on a small batch; (4) a CLI test of the non-zero exit; (5) **Redefined by the maintainer 2026-10-18 (option A): read, do not re-run.** A second `KLAC`/`cnbc` discovery on the real database would add
-      stored rejects that Work item 15's `T-073` has to remove again, so the data half of `T-062` step 6 is read from the rows the 2026-10-18 `KLAC` run already
-      stored, with no write. **Accepted narrowing:** the original step 5 also proved the chunked path on the real database (a batch above 16,000 pairs going through);
-      that proof is dropped, the logic is covered by the tests with a lowered limit, and the first real batch above 16,000 pairs after `T-071` is where to confirm it.
-      **Closed 2026-10-18 (PR #73 merged; read-only on `/workspaces/thesis/data/urls.db`):** the matcher prints `review`/`loose_name` for `kla-corporation-q4`.
-      Of the 19 `KLAC` `review`/`loose_name` rows, 16 date from 2026-08-11 (before the `T-062` run); the evidence written after the deployed matcher is **3 rows of 2026-10-18, all `source = 'ddg'`**:
-      495519 and 495520 (`seekingalpha.com`, `kla-corporation-is-a-buy-the-dip…`, `kla-corp-fundamentals…`) and 495526 (`cnbc.com` through search, `…kla-corporation-is-a-great-company`), all `pending`.
-      The sitemap path gave no such row: the 578,117 `KLAC` `cnbc.com` sitemap rows are all `reject`/`none`/`skipped`, and classing them again with `KLA Corporation` as the name
-      leaves all 578,117 as `reject` (same matcher, URL only, empty title: a determinism check, not a proof that none was wrongly rejected). No `KLAC` URL spelling
-      `kla-corporation` or `kla-corp-` is `reject`; `kla-tencor` URLs (the former name) are `reject` and not expected to be anything else. The data half of `T-062` step 6 is closed by those 3 rows.
-      Rows 495519/495520 were the two stray rows (`company = 'KLAC'`, `reject`/`skipped` in the 13:14 backup `urls.pre-t064.db`); on the real file they now read `company = 'KLA Corporation'`,
-      `review`/`loose_name`, `pending`. No schema change (constitution #10 N/A).
+      (3) chunked equals unchunked on a small batch; (4) a CLI test of the non-zero exit; (5) **Redefined by the maintainer 2026-10-18 (option A): read, do not re-run** (a second `KLAC`/`cnbc` discovery would add stored rejects that `T-073` removes again). Closed 2026-10-18, read-only on `/workspaces/thesis/data/urls.db`:
+      - *Accepted narrowing:* the original step 5 also proved the chunked path on the real database (a batch above 16,000 pairs going through). That proof is dropped; the logic is covered by the
+        tests with a lowered limit, and the first real batch above 16,000 pairs after `T-071` is where to confirm it.
+      - *Evidence for the data half of `T-062` step 6 (the deployed matcher classes a full-name URL `review`/`loose_name`):* the matcher prints it for `kla-corporation-q4`. Of the 19 `KLAC`
+        `review`/`loose_name` rows, 16 date from 2026-08-11 (before the `T-062` run). **One row is clean evidence: 495526** (`cnbc.com` through search, `source = 'ddg'`, `…kla-corporation-is-a-great-company`,
+        new on 2026-10-18 13:20, `pending`). Rows 495519 and 495520 (`seekingalpha.com`, `ddg`) read `review`/`loose_name` too, but their provenance is not recorded: see the strays below.
+      - *Sitemap path:* no `review` row. The 578,117 `KLAC` `cnbc.com` sitemap rows are all `reject`/`none`/`skipped`; classing them again with `KLA Corporation` as the name leaves all 578,117 as `reject`
+        (same matcher, URL only, empty title: a determinism check, not a proof that none was wrongly rejected). No `KLAC` URL spelling `kla-corporation` or `kla-corp-` is `reject`; `kla-tencor` URLs
+        (the former name) are `reject`, as expected.
+      - *Strays:* in the 13:14 backup `urls.pre-t064.db`, 495519/495520 are `company = 'KLAC'`, `reject`, `skipped`; on the real file they are `company = 'KLA Corporation'`, `review`/`loose_name`, `pending`.
+        The promotion code does not write `company`, so someone wrote it; who, and whether the class and status were set by the same write, is not recorded. Hence the one-row count above.
+      No schema change (constitution #10 N/A).
 - [ ] **T-065** *(configuration)* The collector API opens the wrong database by default. Change: (a) `default=None` (typed `str | None`,
       description "default: $DATABASE_URL") for the five `db_path` defaults in `api/routers/discovery.py` (3) and `api/schemas.py` (2);
       (b) `data_mining.resolve_db_path(value=None)` returns the value, else `$DATABASE_URL`, else the default, and treats an empty string as
@@ -128,9 +128,8 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       `start_date` outside the store's coverage, gets a clear 422. Known limit, accepted and documented: a ticker added after `start_date` and removed before
       today is in neither, so it is refused (the caller passes `company_names` for it). The leaver lookup is the maintainer's to confirm.
       Acceptance (hermetic): omitted, mismatched and explicit cases; a leaver ticker; an unknown ticker that is a substring of a company name; an
-      out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520) no longer need a correction: on 2026-10-18 the real file reads `company = 'KLA Corporation'` for both
-      (`SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519` returns 0; the 13:14 backup `urls.pre-t064.db` still has them as strays). Who corrected them is not recorded,
-      and the promotion code does not write `company`, so it was an explicit write: the maintainer confirms it, and the query is re-run as the check before the task closes.
+      out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520): on 2026-10-18 the real file already reads `company = 'KLA Corporation'` for both, written by an unrecorded
+      correction (the 13:14 backup `urls.pre-t064.db` still has them as strays). Acceptance check: `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519` returns 0.
 - [x] **T-075** *(bug, found 2026-10-18; code and tests in PR #75)* `_parse_date` in `src/news_collector/strategies/sitemap.py` returned `None` for every
       value (it cut the text to the length of the *format string*), so no sitemap entry was ever filtered by the run's date range and no sitemap row got a `pub_date`
       (0 of 1,040,939). Effect on the real database: the `KLAC` `cnbc.com` run took every URL back to 2006 for a 2022-01-01 to 2026-08-10 range (only 18.7% of its 578,117 rows are
