@@ -1259,8 +1259,8 @@ batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`;
 `T-065`, `T-066`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
 collector API's routers and request schemas pass the literal `data/urls.db` (an empty file) as `db_path`, so the `$DATABASE_URL` fallback in `get_queue` is never reached (`T-065`); the container sets
 `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`: `.env` is read today only as an import side effect of the sub-apps and of `news_collector/config.py`, each with `override=False`, and nothing logs which value won; the maintainer
-made reading `.env` a mandatory rule for every app and CLI (`T-066`, with a test that enforces it; the precedence is the maintainer's
-decision, because `news_collector/config.py` keeps a real variable above `.env` today); and a discovery request without
+made reading `.env` a mandatory rule for every app and CLI (`T-066`, with a test that enforces it; the maintainer decided 2026-10-18 that the inherited
+environment stays above `.env`, as `news_collector/config.py` has it, and that a conflict is logged as a warning instead of being silent); and a discovery request without
 `company_names` stores the ticker as the company and gets rejected (`T-067`). Workaround until fixed: start with
 `DATABASE_URL=/workspaces/thesis/data/urls.db`, pass `db_path` and `company_names`.
 
@@ -1271,7 +1271,7 @@ items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
-Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check, and `T-066` waits for the maintainer's `.env` precedence decision.
+Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; the `.env` precedence of `T-066` is decided (the inherited environment wins, with a warning).
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

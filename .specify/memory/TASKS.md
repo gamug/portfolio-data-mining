@@ -105,12 +105,15 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       always beats `.env` and nothing says so. A variable inherited from the container beat `.env` on
       2026-10-18: `/etc/environment` set `DATABASE_URL="../data/urls.db"`, the gateway answered `/crawler/status` with 500 and
       nothing said why. Do: one function (for example `data_mining.env.load_env()`) that every app and CLI calls first,
-      finds `.env` from the repo root rather than the working directory, applies one precedence rule, treats an empty `DATABASE_URL` (as in `.env.example`) as unset, logs the effective
-      `DATABASE_URL` and where it came from (`.env`, inherited, default), warns when an inherited value differs from `.env`,
+      finds `.env` from the repo root rather than the working directory, applies the precedence rule (decided by the maintainer 2026-10-18, below), treats an empty `DATABASE_URL` (as in `.env.example`) as unset, logs the effective
+      `DATABASE_URL` and where it came from (`.env`, inherited, default), warns when an inherited value differs from `.env` (naming the variable and both values, for example
+      `DATABASE_URL: inherited "../data/urls.db" differs from .env "/workspaces/thesis/data/urls.db"; using the inherited one`),
       and, in the gateway and the apps, refuses to start when the database file is missing or empty (unless a flag says a
-      new one is intended). **Decide with the maintainer first:** `.env` beats the inherited environment (then
-      `config.py`'s `override=False` and its `DISCOVERY_END_DATE` behavior change) or the other way round with the warning
-      only. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file, empty value) and of the start-up check;
+      new one is intended). **Precedence, decided by the maintainer 2026-10-18 (option B):** the inherited environment
+      stays above `.env` (`override=False`, so a shell or container can still override a value for one run, as
+      `config.py` documents for `DISCOVERY_END_DATE`), and a conflict is never silent: the warning above plus the start-up
+      refusal on a missing or empty database. `config.py` keeps `override=False`; it moves to the shared `load_env`
+      with no change of behavior. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file, empty value) and of the start-up check;
       **a test that fails when an app or CLI under `apps/` or `cli/` does not call it itself** (an import side effect does not count; so the rule stays mandatory); a plain start of
       the gateway on this machine serves the real counts or stops with the message; `.env.example` and the module docs
       state the rule. Scripts under `scripts/` that read `DATABASE_URL` take `--db`, so they are out of scope unless the
