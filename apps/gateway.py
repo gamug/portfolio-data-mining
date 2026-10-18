@@ -37,8 +37,12 @@ if str(_REPO_ROOT) not in sys.path:
 
 from contextlib import AsyncExitStack, asynccontextmanager
 
+sys.path.insert(0, str(_REPO_ROOT / "src"))  # data_mining (the sub-apps add it too)
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+
+from data_mining.startup_check import apply_allow_new_db_flag, check_startup
 
 log = logging.getLogger("gateway")
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +93,8 @@ async def gateway_lifespan(app: FastAPI) -> AsyncIterator[None]:
     define a custom lifespan (Starlette falls back to a default no-op one),
     so this is safe for all of them and needs no per-service special-casing.
     """
+    # Refuse to start on a wrong or empty database before any sub-app answers (T-066a).
+    check_startup(creates_db=False)
     async with AsyncExitStack() as stack:
         for sub_app in _mounted_apps:
             await stack.enter_async_context(sub_app.router.lifespan_context(sub_app))
@@ -142,4 +148,5 @@ def health() -> dict:
 if __name__ == "__main__":
     import uvicorn
 
+    apply_allow_new_db_flag(sys.argv)
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=False)

@@ -24,7 +24,8 @@ Run:
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -38,6 +39,7 @@ from portfolio_common.db import Database
 from pydantic import BaseModel
 
 from data_mining.db import resolve_db_path
+from data_mining.startup_check import apply_allow_new_db_flag, check_startup
 from extractor.db import (
     connect,
     ensure_articles_table,
@@ -72,10 +74,20 @@ DEFAULT_DB = resolve_db_path()
 # shares one across its whole run.
 _scheduler = DomainScheduler(default_concurrency=2, domain_concurrency={"cnbc.com": 4})
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Refuse to start on a wrong or empty database (T-066a); a TestClient that is not
+    # used as a context manager does not run this.
+    check_startup(creates_db=False)
+    yield
+
+
 app = FastAPI(
     title="news-crawler extraction API (dev/test)",
     description="Local-only wrapper over the S&P 500 article extraction pipeline. See CLAUDE.md.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -444,4 +456,5 @@ async def gics_for_ticker(ticker: str, gics_map: dict = Depends(get_gics_map)) -
 if __name__ == "__main__":
     import uvicorn
 
+    apply_allow_new_db_flag(sys.argv)
     uvicorn.run(app, host="127.0.0.1", port=8002, reload=False)

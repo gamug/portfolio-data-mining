@@ -26,6 +26,7 @@ load_dotenv()  # populate os.environ (DATABASE_URL, etc.) before anything reads 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
+from data_mining.startup_check import check_startup
 from news_collector.api.routers import (
     cnbc,
     discovery,
@@ -45,6 +46,9 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the shared httpx.AsyncClient across the application lifetime."""
+    # The collector creates the database on first use, so only a missing directory or an
+    # unreadable file stops it (T-066a).
+    check_startup(creates_db=True)
     log_path = setup_logging(log_dir=".log", run_name="api")
     if log_path:
         log.info("Logging this server's run to %s", log_path)
