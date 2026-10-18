@@ -21,3 +21,6 @@ env.root_env_file = lambda: _MISSING_ENV_FILE
 def _no_real_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(env, "root_env_file", lambda: _MISSING_ENV_FILE)
     monkeypatch.setattr(env, "_notices", [])  # what one test's load_env() logged is its own
+    monkeypatch.setattr(env, "_retired_noticed", set())
+    for name in env.RETIRED:  # a machine that still exports one must not change a test
+        monkeypatch.delenv(name, raising=False)

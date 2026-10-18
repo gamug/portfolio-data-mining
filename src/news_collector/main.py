@@ -23,14 +23,14 @@ import httpx
 
 # `python -m news_collector.main ...` skips the `cli/news_collector_cli.py` wrapper, so this
 # module loads `.env` itself, before the imports below read the environment.
-from data_mining.env import load_env
+from data_mining.env import load_env, replay_notices
 
 load_env()  # .env wins over the inherited environment (T-066b)
 
 from data_mining.db import resolve_db_path
 from news_collector.companies import CompanyLookupError, lookup_companies
-from news_collector.config import default_end_date, default_start_date
-from news_collector.models import Company, DateRange
+from news_collector.config import build_date_range, default_start_date
+from news_collector.models import Company
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
 from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
@@ -41,7 +41,11 @@ log = get_logger(__name__)
 
 
 def _parse_date(s: str) -> date:
-    return date.fromisoformat(s)
+    """argparse `type=`: a malformed date is a usage error (exit 2)."""
+    try:
+        return date.fromisoformat(s)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {s!r}") from exc
 
 
 def _load_sp500_csv(path: str) -> list[Company]:
@@ -87,10 +91,12 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     if log_path:
         log.info("Logging this run to %s", log_path)
 
-    date_range = DateRange(
-        start=_parse_date(args.start_date),
-        end=_parse_date(args.end_date),
-    )
+    replay_notices(log)  # load_env() ran before the file handler existed (T-066b, T-077)
+    try:
+        date_range = build_date_range(args.start_date, args.end_date)
+    except ValueError as exc:
+        log.error("%s", exc)  # noqa: TRY400 - the message is the whole story, no stack
+        return 1
 
     db_path = Path(resolve_db_path(args.db))
     queue = URLQueue(db_path)
@@ -117,6 +123,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
 
     # Print summary
     print("\n=== Discovery Summary ===")
+    print(f"Date range       : {date_range.start} to {date_range.end}")
     print(f"Total discovered : {stats.total_discovered}")
     print(
         f"Inserted (new)   : {stats.total_inserted} (matcher-rejected, never fetched: {stats.total_rejected})"
@@ -209,13 +216,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     disc.add_argument(
         "--start-date",
-        default=default_start_date().isoformat(),
+        type=_parse_date,
+        default=default_start_date(),
         help="Start date YYYY-MM-DD (default from DISCOVERY_START_DATE env var, else 2022-01-01)",
     )
     disc.add_argument(
         "--end-date",
-        default=default_end_date().isoformat(),
-        help="End date YYYY-MM-DD (default from DISCOVERY_END_DATE env var, else today)",
+        type=_parse_date,
+        default=None,
+        help=(
+            "End date YYYY-MM-DD (default: today, UTC, when the command starts). To continue "
+            "a batch on a later day pass the same value: --resume skips only an exact range."
+        ),
     )
     disc.add_argument("--concurrency", type=int, default=5, help="Max parallel tasks")
     disc.add_argument(

@@ -134,9 +134,9 @@ def test_allow_list_is_the_one_the_maintainer_confirmed() -> None:
         "DATABASE_URL",
         "UNIVERSE_DB_PATH",
         "DISCOVERY_START_DATE",
-        "DISCOVERY_END_DATE",
         "ALLOW_NEW_DB",
     } == LOGGED_VALUES
+    assert "DISCOVERY_END_DATE" not in LOGGED_VALUES  # retired by T-077
 
 
 def test_start_up_check_reports_env_as_the_source_after_load_env(
@@ -261,3 +261,55 @@ def test_no_override_means_no_override_line(
     with caplog.at_level(logging.INFO, logger="data_mining.startup"):
         log_again()
     assert not [r for r in caplog.records if ".env override" in r.getMessage()]
+
+
+def test_retired_variable_in_the_file_gets_one_notice_by_name_and_is_not_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    path = _write(tmp_path, "DISCOVERY_END_DATE=2026-08-10\n")
+    with caplog.at_level(logging.WARNING, logger="data_mining.env"):
+        assert load_env(path) == []
+        load_env(path)
+        load_env(path)
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1  # deduplicated by name, three calls
+    assert "DISCOVERY_END_DATE" in lines[0]
+    assert "2026-08-10" not in lines[0]
+    assert "DISCOVERY_END_DATE" not in os.environ
+
+
+def test_retired_variable_in_the_system_environment_gets_the_notice_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("DISCOVERY_END_DATE", "2026-08-10")
+    with caplog.at_level(logging.WARNING, logger="data_mining.env"):
+        load_env(tmp_path / "missing.env")  # no file at all: the system value still counts
+    lines = [r.getMessage() for r in caplog.records]
+    assert len(lines) == 1
+    assert "system environment" in lines[0]
+    assert "2026-08-10" not in lines[0]
+
+
+def test_a_blank_retired_variable_gives_no_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("DISCOVERY_END_DATE", "  ")
+    with caplog.at_level(logging.WARNING, logger="data_mining.env"):
+        load_env(_write(tmp_path, "DISCOVERY_END_DATE=\n"))
+    assert caplog.records == []
+
+
+def test_log_again_labels_each_notice_and_the_retired_one_is_not_an_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", "../data/urls.db")
+    load_env(_write(tmp_path, "DATABASE_URL=/real.db\nDISCOVERY_END_DATE=2026-08-10\n"))
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="data_mining.startup"):
+        log_again()
+    messages = [r.getMessage() for r in caplog.records]
+    retired = [m for m in messages if "DISCOVERY_END_DATE" in m]
+    assert len(retired) == 1
+    assert retired[0].startswith("retired variable: ")
+    assert ".env override" not in retired[0]
+    assert sum(m.startswith(".env override: ") for m in messages) == 1

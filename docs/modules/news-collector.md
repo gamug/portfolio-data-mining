@@ -100,10 +100,10 @@ can join the tracked S&P 500 at any time, and until `discover` is re-run for it,
 has zero rows in `discovered_urls`/`articles` — a real gap, not a bug, if nobody re-runs the
 pipeline.
 
-The fix needs no code, because of how `discover` already behaves by default: with neither
+The fix needs no discovery code, because of how `discover` already behaves by default: with neither
 `--tickers` nor `--sp500` given, it fetches the **live, current** Wikipedia S&P 500 list
 every time (`news_collector.sp500.fetch_sp500_companies`) and requests the **full**
-`$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE` range for every ticker in it — never an
+`$DISCOVERY_START_DATE`-to-today range (the end date is `--end-date` / `end_date`, default today UTC, T-077) for every ticker in it — never an
 incremental tail. `--resume` (on by default) only skips a `(ticker, domain)` pair that
 already has a `discovery_progress` row for that *exact* date range (`orchestrator.py`); a
 ticker that just joined the universe has no such row, so it gets the full historical range
