@@ -20,3 +20,4 @@ env.root_env_file = lambda: _MISSING_ENV_FILE
 @pytest.fixture(autouse=True)
 def _no_real_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(env, "root_env_file", lambda: _MISSING_ENV_FILE)
+    monkeypatch.setattr(env, "_notices", [])  # what one test's load_env() logged is its own

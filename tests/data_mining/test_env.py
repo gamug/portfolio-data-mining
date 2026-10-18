@@ -4,17 +4,32 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from data_mining import env
+from data_mining import env, startup_check
 from data_mining.env import LOGGED_VALUES, load_env
-from data_mining.startup_check import allow_new_db, apply_allow_new_db_flag, inspect_database
+from data_mining.startup_check import (
+    allow_new_db,
+    apply_allow_new_db_flag,
+    check_startup,
+    inspect_database,
+    log_again,
+)
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _fresh_reports() -> Iterator[None]:
+    startup_check._reports.clear()
+    yield
+    startup_check._reports.clear()
 
 
 def _unset(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
@@ -197,3 +212,52 @@ def test_start_up_check_without_a_path_reads_the_file_load_env_reads(
     assert report.source == ".env"
     assert report.warnings == []
     assert report.path == (tmp_path / "real.db").resolve()
+
+
+def _real_db(tmp_path: Path) -> Path:
+    db = tmp_path / "real.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE discovered_urls (id INTEGER)")
+    conn.execute("INSERT INTO discovered_urls VALUES (1)")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_log_again_puts_the_override_and_the_report_in_a_late_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`load_env()` and `check_startup` run before the run's file handler exists."""
+    db = _real_db(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "../data/urls.db")
+    monkeypatch.setenv("HTTPS_PROXY", "http://old-user:old-secret@proxy:1")
+    path = _write(tmp_path, f"DATABASE_URL={db}\nHTTPS_PROXY=http://user:s3cret@proxy:8080\n")
+    load_env(path)
+    check_startup(creates_db=False, dotenv_path=path)
+    caplog.clear()  # nothing so far reached a handler installed afterwards
+    with caplog.at_level(logging.INFO, logger="data_mining.startup"):
+        log_again()
+    messages = [r.getMessage() for r in caplog.records]
+    overrides = [m for m in messages if ".env override" in m]
+    assert len(overrides) == 2
+    assert any(str(db) in m and "../data/urls.db" in m for m in overrides)
+    proxy = next(m for m in overrides if "HTTPS_PROXY" in m)
+    assert "s3cret" not in proxy
+    assert "old-secret" not in proxy
+    assert any("source=.env" in m for m in messages)
+    assert max(i for i, m in enumerate(messages) if ".env override" in m) < next(
+        i for i, m in enumerate(messages) if "source=" in m
+    )  # the reason comes before the line that names the source
+
+
+def test_no_override_means_no_override_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = _real_db(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", str(db))
+    path = _write(tmp_path, f"DATABASE_URL={db}\n")
+    load_env(path)
+    check_startup(creates_db=False, dotenv_path=path)
+    with caplog.at_level(logging.INFO, logger="data_mining.startup"):
+        log_again()
+    assert not [r for r in caplog.records if ".env override" in r.getMessage()]

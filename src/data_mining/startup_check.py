@@ -186,6 +186,21 @@ def check_startup(
     return report
 
 
+def log_again() -> None:
+    """Log what `load_env()` overrode and what the start-up check found, once more.
+
+    The collector installs its file handler (`setup_logging`) after `check_startup`, and
+    `load_env()` runs before both, so none of these lines is in the run's `.log/` trace. The
+    app calls this right after `setup_logging`.
+    """
+    for notice in env.override_notices():
+        log.warning(".env override: %s", notice)
+    for report in _reports.values():
+        log.info(_log_line(report))
+        for warning in report.warnings:
+            log.warning(warning)
+
+
 def _problem(report: DbReport, creates_db: bool, allow_new: bool) -> str | None:
     """Why this service must not start on `report`, or None."""
     if report.error:

@@ -32,6 +32,22 @@ LOGGED_VALUES = frozenset(
 )
 
 
+# What `load_env()` did, as the lines it logged. It runs at import, before any `setup_logging()`
+# installs the file handler of the run, so these lines are not in the run's file trace;
+# `check_startup` logs them again once logging is configured (`override_notices()`).
+_notices: list[str] = []
+
+
+def _notice(message: str) -> None:
+    _notices.append(message)
+    log.warning("%s", message)
+
+
+def override_notices() -> list[str]:
+    """The notices `load_env()` logged in this process, for a caller that logs after set-up."""
+    return list(_notices)
+
+
 def _repo_root() -> Path | None:
     """The first directory above this file that holds `pyproject.toml`, or None."""
     return next(
@@ -58,9 +74,7 @@ def load_env(path: str | Path | None = None) -> list[str]:
     if path is None:
         path = root_env_file()
         if path is None:
-            log.warning(
-                "No pyproject.toml above %s: .env not read, the environment stands", __file__
-            )
+            _notice(f"No pyproject.toml above {__file__}: .env not read, the environment stands")
             return []
     path = Path(path)
     if not path.is_file():
@@ -74,15 +88,9 @@ def load_env(path: str | Path | None = None) -> list[str]:
         if inherited is not None and inherited != value:
             overridden.append(name)
             if name in LOGGED_VALUES:
-                log.warning(
-                    "%s from %s (%r) replaces the inherited value (%r)",
-                    name,
-                    path,
-                    value,
-                    inherited,
+                _notice(
+                    f"{name} from {path} ({value!r}) replaces the inherited value ({inherited!r})"
                 )
             else:
-                log.warning(
-                    "%s from %s replaces the inherited value (values not logged)", name, path
-                )
+                _notice(f"{name} from {path} replaces the inherited value (values not logged)")
     return overridden

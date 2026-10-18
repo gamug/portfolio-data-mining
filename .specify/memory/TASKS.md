@@ -111,7 +111,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       start on an empty database. Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of the
       log line, the warning, the refusal for a missing file, a schema-only file (the case that happened) and a populated file, and the flag; a plain
       gateway start on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (unset by default).
-- [x] **T-066b** *(code done 2026-10-18, PR #83: `data_mining/env.py`, nine entry points, `tests/data_mining/test_env.py`, `test_env_entrypoints.py`, `tests/conftest.py`; choice (11) still open; design agreed with the maintainer 2026-10-18; rule 7 amended in the same docs PR, code in the next PR)* `.env` wins over the
+- [x] **T-066b** *(code done 2026-10-18, PR #83: `data_mining/env.py`, ten entry-point files (the 9 `apps/`+`cli/` files and `news_collector/main.py`), `tests/data_mining/test_env.py`, `test_env_entrypoints.py`, `tests/conftest.py`; choice (11) still open; design agreed with the maintainer 2026-10-18; rule 7 amended in the same docs PR, code in the next PR)* `.env` wins over the
       inherited environment (this machine's `/etc/environment` sets `DATABASE_URL="../data/urls.db"`); the system value is the fallback.
       Design, in the order the maintainer decided it:
       (1) **Goal:** `.env` first; if the file or the variable is missing, the system variable. This supersedes the 2026-10-18 option B

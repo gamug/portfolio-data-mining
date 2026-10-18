@@ -27,7 +27,7 @@ load_env()  # .env wins over the inherited environment (T-066b)
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 
-from data_mining.startup_check import check_startup
+from data_mining.startup_check import check_startup, log_again
 from news_collector.api.routers import (
     cnbc,
     discovery,
@@ -53,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     log_path = setup_logging(log_dir=".log", run_name="api")
     if log_path:
         log.info("Logging this server's run to %s", log_path)
+        log_again()  # the start-up lines above came before the file handler existed
     async with build_client() as client:
         app.state.client = client
         yield
