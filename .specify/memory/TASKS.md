@@ -127,8 +127,19 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       project import that reads the environment (`news_collector…`, `data_mining…`, `pricing…`, `sec_edgar…`; an import side effect does not count). `scripts/` out of scope (they take `--db`).
       Also: replace the `load_dotenv()` calls in the sub-apps, `news_collector/main.py` and `news_collector/config.py` with `load_env()` (or remove them where the entry
       point already called it); update `.env.example`, the module docs and the `T-066a` tests that assert the inherited value wins.
+      **Details fixed after the manager's review (PR #82):**
+      (8) **Secrets:** an **allow-list**, not a name pattern. The log line prints both values only for `DATABASE_URL`, `UNIVERSE_DB_PATH`, `DISCOVERY_START_DATE`,
+      `DISCOVERY_END_DATE`, `ALLOW_NEW_DB`; for every other variable, including any added later, only the name (a proxy URL or another engine's `DATABASE_URL` can hold credentials).
+      (9) **Root:** walk up from `data_mining/env.py` to the first directory with `pyproject.toml`; none found means no file is read, the system values stand and one notice is logged.
+      (10) **Order in an entry point:** the `sys.path` bootstrap of `src/` and the import of `load_env` itself are allowed before the call; every other project import that reads the
+      environment must come after it. The AST test skips `apps/__init__.py` and covers `apps/gateway.py` (it reads the environment itself in its lifespan) and every other `apps/*.py` and `cli/*.py`.
+      (11) **`news_collector/config.py`:** its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
+      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. The maintainer can reverse this choice.
+      **Known consequences (accepted with decision 2, no escape hatch):** a one-off value on the command line loses to `.env`: the documented
+      `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A one-off run is made by editing `.env`
+      or with a flag applied after `load_env()` (`--db`, `--allow-new-db`, a request's `db_path`). The module docs and `.env.example` say so in the code PR.
       Acceptance: tests of precedence (`.env` over inherited), fallback (missing file, absent variable, blank value), root lookup from another working directory,
-      the notice without a secret's value, the AST test (fails on a file without the call), and the real gateway start on this machine with the wrong inherited value
+      the notice (values printed only for the allow-list; a variable not on it is logged by name, with a value that must not appear in the log), the AST test (fails on a file without the call), and the real gateway start on this machine with the wrong inherited value
       using the `.env` database.
 - [x] **T-067** *(collector API; done 2026-10-18, PR #81: `news_collector/companies.py` (shared by `resolve_companies` and the CLI's `--tickers`), tests in `tests/news_collector/test_resolve_companies.py` and `test_main_exit_code.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
       request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a

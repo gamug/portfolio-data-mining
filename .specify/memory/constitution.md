@@ -144,8 +144,10 @@ stack actually pinned in `pyproject.toml`.
    it. Every `apps/*.py` and `cli/*.py` entry point calls
    `data_mining.env.load_env()` first, before any project import that reads
    the environment (`load_env(path)` takes an explicit file for tests); it
-   logs one line per variable it overrides and never prints a secret's
-   value. The shared function replaces the earlier per-service
+   logs one line per variable it overrides, printing the values only of an
+   allow-list of path and date variables (never a key, token or proxy URL).
+   It finds `.env` at the first parent of `data_mining/env.py` that holds
+   `pyproject.toml`, not in the current directory. The shared function replaces the earlier per-service
    `load_dotenv()` calls so the rule cannot drift between files; an AST
    test over `apps/` and `cli/` fails when an entry point lacks the call.
 8. **Naming**: modules and functions describe the pipeline stage or
