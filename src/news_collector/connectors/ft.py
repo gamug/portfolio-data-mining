@@ -1,4 +1,4 @@
-"""Financial Times connector — DDG primary, sitemap secondary, Wayback CDX tertiary."""
+"""Financial Times connector — DDG primary, Wayback CDX tertiary (no sitemap, T-076)."""
 
 from __future__ import annotations
 
@@ -13,15 +13,12 @@ from news_collector.models import DateRange, SitemapEntry
 # FT article URLs: https://www.ft.com/content/<uuid>
 _ARTICLE_RE = re.compile(r"https?://(?:www\.)?ft\.com/content/[0-9a-f-]{36}$")
 
-# FT sitemap index
-_FT_SITEMAP_INDEX = "https://www.ft.com/sitemap-index.xml"
-
 
 class FTConnector(BaseConnector):
     """
     Financial Times strategy:
     - Primary: DDG site:ft.com (circumvents paywall for link discovery)
-    - Secondary: Sitemap index at sitemap-index.xml
+    - Secondary: none (the sitemap index answers 403, so `sitemap_roots` is empty, T-076)
     - Tertiary: Wayback Machine CDX API
     Note: Article content is paywalled — this connector discovers URLs only.
     """
@@ -31,7 +28,7 @@ class FTConnector(BaseConnector):
             config=ConnectorConfig(
                 domain="ft.com",
                 requests_per_second=0.5,  # conservative — FT has rate limiting
-                sitemap_roots=[_FT_SITEMAP_INDEX],
+                sitemap_roots=[],  # sitemap-index.xml answers 403, the Wayback fallback also failed (2026-10-18, T-076)
                 ddg_site_filter="site:ft.com",
                 has_paywall=True,
                 wayback_fallback=True,

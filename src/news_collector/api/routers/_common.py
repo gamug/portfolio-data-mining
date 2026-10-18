@@ -22,7 +22,7 @@ from news_collector.models import Company, DateRange, DiscoveredURL
 from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
-from news_collector.strategies.sitemap import SitemapRSSStrategy
+from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +115,11 @@ async def _discover_one_ticker(
         errors.append(msg)
     else:
         sitemap_urls = sitemap_result  # type: ignore[assignment]
+    if sitemap_strategy.failures:
+        # a failed root or child is an error here too (T-076); there is no checkpoint on this route
+        msg = f"Sitemap incomplete for {company.ticker}: {summarize_failures(sitemap_strategy.failures)}"
+        log.warning(msg)
+        errors.append(msg)
 
     api_urls: list[DiscoveredURL] = []
     if extra_fetch is not None:

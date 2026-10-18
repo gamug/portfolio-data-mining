@@ -111,7 +111,11 @@ incremental tail. `--resume` (on by default) only skips a `(ticker, domain)` pai
 already has a `discovery_progress` row for that *exact* date range (`orchestrator.py`); a
 ticker that just joined the universe has no such row, so it gets the full historical range
 on the very next run, exactly like every other ticker did on its own first run — same
-treatment, no "is this ticker new?" branch anywhere.
+treatment, no "is this ticker new?" branch anywhere. A pair whose sitemap root or child
+failed to fetch or parse (T-076) is **not** recorded as completed: the run reports it in its
+errors (the CLI exits non-zero, the API route lists it in `errors`) and the next run retries
+it. RSS and Wayback failures stay warnings. `ft.com` and `nasdaq.com` have no sitemap roots
+(403 on 2026-10-18), so they are not affected.
 
 This mirrors the pattern `portfolio-financial-analysis`'s `pricing_agent`/`fundamental_agent`
 use for the same problem (mutable universe, per-agent price/filing data): *"One `run` makes
