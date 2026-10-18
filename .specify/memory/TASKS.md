@@ -64,6 +64,23 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
+## Work item 14 — Collector: a discovery batch above SQLite's variable limit fails (T-064)
+
+Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collector/discover/cnbc/` for `KLAC` returned
+`errors: ["too many SQL variables"]` and inserted nothing (`cnbc.com` holds 465,044 of the 481,332 pairs).
+
+- [ ] **T-064** *(Work item 14; bug in code from `T-056c`, not from `T-062`)* `enqueue_batch` and `_count_new_rejected` in
+      `src/news_collector/storage/queue.py` build one `(url, ticker) IN (...)` with two bound variables per pair, so a batch
+      above about 16,000 pairs exceeds SQLite's limit (32,766 on 3.40.1) and the whole batch is lost, with the error only in
+      the response. Chunk both lookups (about 5,000 pairs per query), keep the results identical, and make a failure of a
+      batch loud (log at error level, non-empty `errors`, and the CLI exit code non-zero if it has one). Confirm the cause first:
+      log the batch size of the failing `KLAC`/`cnbc` call. Acceptance: a test with a batch above the limit (20,000 pairs,
+      rejected and accepted mixed, so the test does not depend on the SQLite build's limit) inserts all rows, returns the right
+      `last_inserted_rejected` and `last_promotion`, and a test that the chunked result equals the unchunked one on a small batch;
+      then re-run the `KLAC` `cnbc` discovery on the real database and read the new rows with the step 6 query of
+      `docs/modules/news-collector.md` (a new full-name URL is `review`/`loose_name`), which also closes the data half of the
+      `T-062` step 6 check. Constitution AI behavior #10 does not apply (no schema change).
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12 and 13 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once

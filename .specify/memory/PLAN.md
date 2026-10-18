@@ -1244,6 +1244,18 @@ no release: the News Corp pairs stay what `T-062` makes them.
 - **Nothing to build here:** `known_false_rejects.py --check` stays at its numbers; `reclass_rejects.py` keeps its
   `reject` → `review` scope.
 
+## Work item 14 — Collector: a discovery batch above SQLite's variable limit fails (code, `T-064`)
+
+**Status: open, not scheduled (added 2026-10-18; the maintainer schedules it).** Found by the `T-062` step 6 check: a
+`KLAC` discovery through `POST /collector/discover/cnbc/` on the real `urls.db` returned `too many SQL variables` and
+inserted nothing. `enqueue_batch` and `_count_new_rejected` (`src/news_collector/storage/queue.py`, from `T-056c`) bind
+two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 32,766, so a batch above about 16,000 pairs
+is lost. The cause is the likely one, not yet confirmed by the batch size of that call (first step of `T-064`).
+**Fix:** chunk both lookups, same results, a loud failure instead of an error only in the response. **Acceptance and
+test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of 481,332 pairs) cannot add rows from a large
+batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`; it blocks only the data half of the
+`T-062` step 6 check.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
