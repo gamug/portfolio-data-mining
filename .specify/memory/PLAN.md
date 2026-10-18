@@ -1267,6 +1267,7 @@ environment stays above `.env`, as `news_collector/config.py` has it, and that a
 `T-075` and `T-076` (same Work item, found 2026-10-18 while asking why only `cnbc.com` has sitemap rows): the sitemap date parser never parsed a date, so the run's date range was never applied to the sitemap and no row got a `pub_date` (`T-075`, fixed; the rows already stored are not touched); and a failed sitemap fetch (`ft.com` and `nasdaq.com` answer 403) is only a warning and the pair is recorded as completed (`T-076`, open, with a decision for the maintainer). `T-075` also changes the size of Work item 15's sitemap cache: a cnbc match per ticker is about 121,000 entries in range, not 619,000.
 
 **Before this Work item closes:** decide what to do with the 939 older rows with `company = ticker` (`IBM` 892, `MSCI` 44, `AAPL` 3; `TASKS.md` `T-067`): a note, not a task (maintainer decision 2026-10-18).
+
 ## Work item 15 — Collector: stop the sitemap from multiplying the database by the number of tickers (code + schema + data, `T-068`–`T-074`)
 
 **Status: open, not scheduled (added 2026-10-18; the maintainer chose option B that day and schedules the work). Every gate below (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.**
