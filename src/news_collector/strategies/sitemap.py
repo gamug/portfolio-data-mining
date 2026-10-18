@@ -43,6 +43,10 @@ class SitemapRSSStrategy:
     ) -> None:
         self._connector = connector
         self._client = client
+        # Sitemap roots and children that could not be fetched or parsed in the last
+        # `discover` call (T-076). The orchestrator reads it: a pair with failures is
+        # reported and not checkpointed.
+        self.failures: list[str] = []
 
     async def discover(
         self,
@@ -62,6 +66,7 @@ class SitemapRSSStrategy:
         - visited_sitemaps grows; each sitemap URL processed exactly once
         """
         entries: list[SitemapEntry] = []
+        self.failures = []
 
         # 1. Crawl sitemap trees
         if self._connector.config.sitemap_roots:
@@ -153,6 +158,7 @@ class SitemapRSSStrategy:
                 text = await self._fetch(url)
             except Exception as exc:
                 log.warning("Sitemap fetch failed %s: %s", url, exc)
+                self.failures.append(f"sitemap fetch failed {url}: {exc}")
                 continue
 
             try:
@@ -162,6 +168,7 @@ class SitemapRSSStrategy:
                 root = DefusedET.fromstring(text)
             except (ET.ParseError, DefusedXmlException) as exc:
                 log.warning("Sitemap XML parse error %s: %s", url, exc)
+                self.failures.append(f"sitemap XML parse error {url}: {exc}")
                 continue
 
             tag = root.tag.lower()

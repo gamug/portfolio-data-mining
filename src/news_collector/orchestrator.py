@@ -273,8 +273,10 @@ class DiscoveryOrchestrator:
             ddg_urls = ddg_results  # type: ignore[assignment]
 
         sitemap_urls: list[DiscoveredURL] = []
+        sitemap_failures: list[str] = list(sitemap_strategy.failures)
         if isinstance(sitemap_results, Exception):
             log.warning("Sitemap failed for %s/%s: %s", company.ticker, domain, sitemap_results)
+            sitemap_failures.append(f"sitemap strategy raised: {sitemap_results}")
         else:
             sitemap_urls = sitemap_results  # type: ignore[assignment]
 
@@ -288,11 +290,21 @@ class DiscoveryOrchestrator:
         inserted = self._queue.enqueue_batch(deduped)
 
         # Checkpoint: record this (ticker, domain) pair as done for this date range
-        # so a future resume run can skip it. Recorded unconditionally (not gated
-        # on `resume`) so any run leaves a usable checkpoint for the next one.
-        self._queue.mark_pair_completed(
-            company.ticker, domain, date_range.start, date_range.end, inserted
-        )
+        # so a future resume run can skip it. Recorded whatever `resume` is (so any run
+        # leaves a usable checkpoint for the next one), but not when a sitemap root or
+        # child failed (T-076): the pair is reported as an error and a later run retries it.
+        if sitemap_failures:
+            partial.error = "; ".join(sitemap_failures)
+            log.warning(
+                "%s / %s not checkpointed, %d sitemap failure(s)",
+                company.ticker,
+                domain,
+                len(sitemap_failures),
+            )
+        else:
+            self._queue.mark_pair_completed(
+                company.ticker, domain, date_range.start, date_range.end, inserted
+            )
 
         partial.ddg_count = len(ddg_urls)
         partial.sitemap_count = len(sitemap_urls) + len(api_urls)

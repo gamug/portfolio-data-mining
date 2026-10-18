@@ -1,4 +1,4 @@
-"""Nasdaq connector — sitemap + /news/ pagination primary, DDG fallback."""
+"""Nasdaq connector — DDG only (no sitemap, T-076)."""
 
 from __future__ import annotations
 
@@ -12,15 +12,12 @@ from news_collector.models import DateRange, SitemapEntry
 
 _ARTICLE_RE = re.compile(r"https?://(?:www\.)?nasdaq\.com/articles/[a-z0-9-]+-\d{4}-\d{2}-\d{2}$")
 
-# Nasdaq provides a sitemap index
-_NASDAQ_SITEMAP_INDEX = "https://www.nasdaq.com/sitemap.xml"
-
 
 class NasdaqConnector(BaseConnector):
     """
     Nasdaq strategy:
-    - Primary: Sitemap index + /news/ section pagination
-    - Fallback: DDG site:nasdaq.com
+    - DDG site:nasdaq.com (the sitemap child /articles/sitemap.xml answers 403, so
+      `sitemap_roots` is empty, T-076)
     """
 
     def __init__(self, client: httpx.AsyncClient) -> None:
@@ -28,7 +25,7 @@ class NasdaqConnector(BaseConnector):
             config=ConnectorConfig(
                 domain="nasdaq.com",
                 requests_per_second=1.0,
-                sitemap_roots=[_NASDAQ_SITEMAP_INDEX],
+                sitemap_roots=[],  # the /articles/sitemap.xml child answers 403, /education/sitemap.xml 404 (2026-10-18, T-076)
                 ddg_site_filter="site:nasdaq.com",
                 headers={"Referer": "https://www.google.com/"},
             ),
