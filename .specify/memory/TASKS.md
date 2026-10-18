@@ -70,18 +70,19 @@ Found 2026-10-18 by the T-062 step 6 check and the database validation after the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
 `T-066b` waits for the maintainer's constitution rule 7 decision.
 
-- [ ] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
+- [x] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
       (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
       SQLite's variable limit (32,766 on 3.40.1). Make a failed batch loud: error log, non-empty `errors`, and a non-zero exit of
       `news_collector/main.py`. First log the batch size of the failing `KLAC`/`cnbc` call to confirm the cause.
       Acceptance: (1) a test with 20,000 mixed pairs that lowers the limit (`queue._conn._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`,
       or monkeypatches the chunk size) and **fails on the unfixed code** (shown in the PR); it inserts all rows and returns the right
       `last_inserted_rejected` and `last_promotion`; (2) a test with more than 16,000 urls and fewer than 100 rejects: every `u.id` set, promotion applied;
-      (3) chunked equals unchunked on a small batch; (4) a CLI test of the non-zero exit; (5) re-run `KLAC` `cnbc` on the real
-      database, only with the maintainer's explicit go-ahead, after a backup copy that passes `quick_check` (`data/url_cat_backup.db` is older than the
-      stray rows and the T-062 run), with `company_names` passed explicitly (T-067 is not fixed yet; without it the run repeats the 2026-10-18
-      mistake), and with the two stray rows corrected first or excluded from the check; then read the new rows with the step 6 query of `docs/modules/news-collector.md` (full-name URL is `review`/`loose_name`),
-      which closes the data half of `T-062` step 6. No schema change (constitution #10 N/A).
+      (3) chunked equals unchunked on a small batch; (4) a CLI test of the non-zero exit; (5) **Redefined by the maintainer 2026-10-18 (option A): read, do not re-run.** A second `KLAC`/`cnbc` discovery on the real database would add
+      stored rejects that Work item 15's `T-073` has to remove again, so the data half of `T-062` step 6 is read from the rows the 2026-10-18 `KLAC` run already
+      stored, with no write. **Closed 2026-10-18 (PR #73 merged; read-only on `/workspaces/thesis/data/urls.db`):** the matcher prints `review`/`loose_name` for
+      `kla-corporation-q4`; the 19 `KLAC` `review`/`loose_name` rows include id 495526, a `cnbc.com` URL that spells `kla-corporation` (`pending`, never fetched), and the two
+      `seekingalpha.com` rows 495519/495520 (found after the `T-062` run, `pending`); the 578,117 `KLAC` `cnbc.com` rows are all `reject`/`none`/`skipped`, and classing them again with
+      `KLA Corporation` as the name changes none (578,117 of 578,117 stay `reject`), so no row was wrongly rejected by the wrong-name run. No schema change (constitution #10 N/A).
 - [ ] **T-065** *(configuration)* The collector API opens the wrong database by default. Change: (a) `default=None` (typed `str | None`,
       description "default: $DATABASE_URL") for the five `db_path` defaults in `api/routers/discovery.py` (3) and `api/schemas.py` (2);
       (b) `data_mining.resolve_db_path(value=None)` returns the value, else `$DATABASE_URL`, else the default, and treats an empty string as
