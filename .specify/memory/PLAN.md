@@ -1147,7 +1147,7 @@ estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, sc
 re-measured and the figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, the real run is rehearsed on a
 same-mount copy and then done with a backup, and `portfolio-nlp` is told what changes for it. No schema change.
 
-**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is prepared as `handoff-portfolio-nlp.md` (delivery pending with the maintainer).
+**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is prepared (delivery pending with the maintainer).
 
 - **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never `reject`:
   the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name (`pepsi` for
