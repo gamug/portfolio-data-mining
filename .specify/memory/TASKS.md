@@ -177,7 +177,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (Wayback is an optional source and the same call per ticker, so making it fatal would put `ft`, whose only other source is DDG, in a permanent failure). The unparseable-`lastmod`
       once-per-fetch log is left to `T-070`.
 
-- [x] **T-077** *(code done 2026-10-18; collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`; design session with the maintainer 2026-10-18)* The discovery
+- [x] **T-077** *(code done 2026-10-18, PR #85; collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`; design session with the maintainer 2026-10-18)* The discovery
       end date is an **input** whose default is **today (UTC)**, not a configured value. Today `default_end_date()` reads `DISCOVERY_END_DATE` and falls back to today, and `.env`
       on this machine has `DISCOVERY_END_DATE=2026-08-10`; since `T-066b` the `.env` wins, so every run that does not pass an end date silently stops at 2026-08-10.
       Both entry points already accept the date (`news_collector.main discover --end-date`, and `end_date` in the discovery request bodies, optional); what is missing is a
