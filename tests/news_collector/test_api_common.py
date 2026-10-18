@@ -55,6 +55,7 @@ async def test_run_domain_discovery_respects_concurrency_limit(
 
     req = DiscoverRequest(
         tickers=[f"T{i}" for i in range(10)],
+        company_names=[f"Company {i}" for i in range(10)],
         db_path=str(tmp_path / "conc.db"),
         concurrency=3,
     )
@@ -88,7 +89,11 @@ async def test_run_domain_discovery_default_concurrency_is_five(
 
     monkeypatch.setattr(_common, "_discover_one_ticker", fake_discover_one_ticker)
 
-    req = DiscoverRequest(tickers=[f"T{i}" for i in range(10)], db_path=str(tmp_path / "conc2.db"))
+    req = DiscoverRequest(
+        tickers=[f"T{i}" for i in range(10)],
+        company_names=[f"Company {i}" for i in range(10)],
+        db_path=str(tmp_path / "conc2.db"),
+    )
     await _common.run_domain_discovery(
         req, connector=_FAKE_CONNECTOR, client=_FAKE_CLIENT, domain="cnbc.com"
     )
@@ -116,12 +121,6 @@ async def test_resolve_companies_uses_explicit_tickers_when_given(
         Company(ticker="AAPL", name="Apple Inc."),
         Company(ticker="MSFT", name="Microsoft Corp."),
     ]
-
-
-async def test_resolve_companies_uses_ticker_as_name_when_names_omitted() -> None:
-    req = DiscoverRequest(tickers=["aapl"])
-    companies = await _common.resolve_companies(req, client=_FAKE_CLIENT)
-    assert companies == [Company(ticker="AAPL", name="AAPL")]
 
 
 @pytest.mark.parametrize("req_cls", [DiscoverRequest, RunAllRequest])
