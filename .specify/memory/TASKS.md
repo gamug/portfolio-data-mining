@@ -92,6 +92,18 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       defaults come from `data_mining.resolve_db_path()` like the crawler's. Acceptance: a test that the defaults follow
       `$DATABASE_URL`, and with the gateway started plainly `/collector/discovery/stats` and `/crawler/status` report the
       real counts (481,332 pairs on 2026-10-18).
+- [ ] **T-066** *(Work item 14; configuration, asked by the maintainer 2026-10-18)*
+      `apps/gateway.py` must read `.env` itself and fail loudly instead of serving the wrong database. Today the gateway
+      does not call `load_dotenv()` (each sub-app does, on import, and `load_dotenv()` leaves an inherited variable alone),
+      so on 2026-10-18 it started on `DATABASE_URL="../data/urls.db"` from `/etc/environment`, answered `/crawler/status`
+      with 500 and `/collector/discovery/stats` with `total: 0`, and nothing said why. Do: load `.env` at the top of the
+      gateway (with `T-065`'s override rule, decided with the maintainer), resolve the path with
+      `data_mining.resolve_db_path()`, log the effective path and where it came from (`.env`, inherited, default), refuse to
+      start with a clear message when that file does not exist or is empty (unless a flag says a new database is intended),
+      and log a warning when an inherited value differs from the one in `.env`. Acceptance: tests of the start-up check
+      (missing path, empty file, inherited value differing from `.env`, plain `.env`), and a plain start of the gateway on
+      this machine either serves the real counts or stops with the message. Depends on `T-065` for the override rule; the
+      two can ship together.
 
 ## Status
 

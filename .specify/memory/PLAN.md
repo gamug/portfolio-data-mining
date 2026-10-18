@@ -1259,6 +1259,7 @@ batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`;
 `T-065` (same Work item, found the same day): the container sets `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which
 beats `.env`, and the collector API's request defaults ignore `DATABASE_URL`; the gateway therefore read an empty or missing
 database after the restart. Workaround and fix: `TASKS.md` `T-065`.
+`T-066` (asked by the maintainer): the gateway itself reads `.env`, logs the database it opened and refuses to start on a missing or empty one.
 
 ## Sequencing
 
