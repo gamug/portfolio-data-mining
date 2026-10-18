@@ -20,14 +20,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dotenv import load_dotenv
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
+
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from sec_edgar.agent import EdgarAgent
-
-load_dotenv()  # populate os.environ from .env before anything reads it
 
 NAME = os.environ.get("NAME", "Your Name")
 EMAIL = os.environ.get("EMAIL", "your.email@example.com")

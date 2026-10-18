@@ -18,6 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
+
 from news_collector.main import main
 
 if __name__ == "__main__":

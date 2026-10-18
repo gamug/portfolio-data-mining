@@ -39,6 +39,10 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 sys.path.insert(0, str(_REPO_ROOT / "src"))  # data_mining (the sub-apps add it too)
 
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 

@@ -126,3 +126,7 @@ known-third-party = ["fastapi", "pydantic"]
 # scores) *are* the spec being asserted -- naming each one as a constant
 # would just move the magic number one line up, not remove it.
 "../tests/**/*.py" = ["PLR2004"]
+
+# `python -m news_collector.main` is an entry point too: it calls `load_env()` before the
+# project imports that read the environment (T-066b).
+"../src/news_collector/main.py" = ["E402"]

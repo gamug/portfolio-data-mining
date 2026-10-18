@@ -19,9 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dotenv import load_dotenv
+from data_mining.env import load_env
 
-load_dotenv()  # populate os.environ (DATABASE_URL, etc.) before anything reads it
+load_env()  # .env wins over the inherited environment (T-066b)
+
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse

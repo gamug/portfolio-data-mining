@@ -24,7 +24,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dotenv import load_dotenv
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -34,8 +37,6 @@ from data_mining.portfolio import list_universe, resolve_symbol
 from pricing.fetcher import StockPriceFetcher
 from pricing.market_data import MarketDataClient
 from pricing.news import FinnhubNewsFetcher
-
-load_dotenv()  # populate os.environ from .env before anything reads it
 
 # Fail fast at startup if the key is missing, rather than lazily on first
 # request with a useless "YOUR_API_KEY" placeholder.

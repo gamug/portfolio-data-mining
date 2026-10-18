@@ -36,9 +36,10 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dotenv import load_dotenv
+from data_mining.env import load_env
 
-load_dotenv()
+load_env()  # .env wins over the inherited environment (T-066b)
+
 
 from data_mining.leaver_prices import DEFAULT_OUTPUT_DIR, LeaverPricesError, fetch_leaver_prices
 from data_mining.portfolio import list_universe, resolve_symbol

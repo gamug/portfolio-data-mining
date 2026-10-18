@@ -68,7 +68,7 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
-`T-066b` has its design (rule 7 amended, `.env` wins) and is next in the code.
+`T-066b` is done (design in PR #82; code in the next PR); the open choice (11) on `news_collector/config.py` stays with the maintainer.
 
 - [x] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
       (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
@@ -111,7 +111,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       start on an empty database. Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of the
       log line, the warning, the refusal for a missing file, a schema-only file (the case that happened) and a populated file, and the flag; a plain
       gateway start on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (unset by default).
-- [ ] **T-066b** *(design agreed with the maintainer 2026-10-18; rule 7 amended in the same docs PR, code in the next PR)* `.env` wins over the
+- [x] **T-066b** *(code done 2026-10-18: `data_mining/env.py`, nine entry points, `tests/data_mining/test_env.py`, `test_env_entrypoints.py`, `tests/conftest.py`; choice (11) still open; design agreed with the maintainer 2026-10-18; rule 7 amended in the same docs PR, code in the next PR)* `.env` wins over the
       inherited environment (this machine's `/etc/environment` sets `DATABASE_URL="../data/urls.db"`); the system value is the fallback.
       Design, in the order the maintainer decided it:
       (1) **Goal:** `.env` first; if the file or the variable is missing, the system variable. This supersedes the 2026-10-18 option B
