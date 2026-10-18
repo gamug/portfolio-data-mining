@@ -5,8 +5,8 @@ warning (the literal `data/urls.db` is a schema with no rows). `check_startup` l
 database the process resolved and why, warns when an inherited `DATABASE_URL` hides the
 one in `.env`, and refuses to start on a database that cannot be the real one.
 
-Precedence is unchanged (maintainer, 2026-10-18, option B): the inherited environment stays
-above `.env`, because `load_dotenv()` does not override.
+`.env` wins over the inherited environment (T-066b, `data_mining.env.load_env`, which every entry
+point calls first). A difference that remains here means `load_env()` did not run in this process.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from data_mining import env
 from data_mining.db import resolve_db_path
 
 log = logging.getLogger("data_mining.startup")
@@ -61,21 +62,25 @@ def allow_new_db() -> bool:
 
 
 def _resolve_source(dotenv_path: str | Path | None) -> tuple[Path, str, list[str]]:
-    """The absolute path, where the value came from, and the warnings about it. No file access.
+    """The absolute path, where the value came from, and the warnings about it.
+
+    `.env` is the file `load_env()` reads (`env.root_env_file()`, looked up at call time so a
+    test can replace it) unless `dotenv_path` names another.
 
     The source is `.env`, `inherited` or `default`. A value that is both inherited and in `.env`
     (identical) reports `.env`.
     """
     inherited = os.environ.get("DATABASE_URL", "").strip()
-    # `load_dotenv(override=False)` leaves no trace of the value that lost, so read the file.
-    from_env_file = (dotenv_values(dotenv_path).get("DATABASE_URL") or "").strip()
+    # Read the file: after `load_env()` the two agree, and a difference means it was not applied.
+    env_file = env.root_env_file() if dotenv_path is None else dotenv_path
+    from_env_file = (dotenv_values(env_file).get("DATABASE_URL") or "").strip() if env_file else ""
     warnings: list[str] = []
     if not inherited:
         source = "default"
         if "DATABASE_URL" in os.environ and from_env_file:
             warnings.append(
-                f"DATABASE_URL is set but empty in the environment, which hides the value "
-                f"in .env ({from_env_file!r}); the default path is used"
+                f"DATABASE_URL is set but empty in the environment while .env has "
+                f"{from_env_file!r}: load_env() did not run in this process; the default path is used"
             )
     elif from_env_file and from_env_file == inherited:
         source = ".env"
@@ -83,8 +88,8 @@ def _resolve_source(dotenv_path: str | Path | None) -> tuple[Path, str, list[str
         source = "inherited"
         if from_env_file:
             warnings.append(
-                f"DATABASE_URL is inherited from the environment ({inherited!r}) and differs "
-                f"from .env ({from_env_file!r}); the inherited value wins"
+                f"DATABASE_URL in the environment ({inherited!r}) differs from .env "
+                f"({from_env_file!r}): load_env() did not run in this process; the environment value is used"
             )
     return Path(resolve_db_path()).resolve(), source, warnings
 
@@ -172,13 +177,28 @@ def check_startup(
     if problem:
         log.error("Refusing to start: %s. %s", _log_line(report), problem)
         raise StartupCheckError(
-            f"{_log_line(report)}. {problem} Set DATABASE_URL to the real database (or unset the "
-            f"inherited value so .env applies); to start on an empty database on purpose, set "
+            f"{_log_line(report)}. {problem} Set DATABASE_URL to the real database in .env "
+            f"(it wins over an inherited value); to start on an empty database on purpose, set "
             f"{_ALLOW_NEW_DB_ENV}=1 or pass {ALLOW_NEW_DB_FLAG}."
         )
     if creates_db and not report.exists and first:
         log.warning("Notice: %s does not exist; it will be created on first use", report.path)
     return report
+
+
+def log_again() -> None:
+    """Log what `load_env()` overrode and what the start-up check found, once more.
+
+    The collector installs its file handler (`setup_logging`) after `check_startup`, and
+    `load_env()` runs before both, so none of these lines is in the run's `.log/` trace. The
+    app calls this right after `setup_logging`.
+    """
+    for notice in env.override_notices():
+        log.warning(".env override: %s", notice)
+    for report in _reports.values():
+        log.info(_log_line(report))
+        for warning in report.warnings:
+            log.warning(warning)
 
 
 def _problem(report: DbReport, creates_db: bool, allow_new: bool) -> str | None:

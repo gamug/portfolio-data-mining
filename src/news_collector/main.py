@@ -20,7 +20,12 @@ from datetime import date
 from pathlib import Path
 
 import httpx
-from dotenv import load_dotenv
+
+# `python -m news_collector.main ...` skips the `cli/news_collector_cli.py` wrapper, so this
+# module loads `.env` itself, before the imports below read the environment.
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
 
 from data_mining.db import resolve_db_path
 from news_collector.companies import CompanyLookupError, lookup_companies
@@ -31,10 +36,6 @@ from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
 from news_collector.utils.http import build_client
 from news_collector.utils.logging import get_logger, setup_logging
-
-# So `python -m news_collector.main ...` (which never goes through any
-# apps/*.py entrypoint) still picks up .env, e.g. DATABASE_URL below.
-load_dotenv()
 
 log = get_logger(__name__)
 

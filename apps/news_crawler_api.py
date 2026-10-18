@@ -32,8 +32,11 @@ from typing import Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from data_mining.env import load_env
+
+load_env()  # .env wins over the inherited environment (T-066b)
+
 import httpx
-from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query
 from portfolio_common.db import Database
 from pydantic import BaseModel
@@ -59,8 +62,6 @@ from extractor.parse import (
 from extractor.pipeline import process_one
 from extractor.reference import load_gics_map
 from extractor.scheduler import DomainScheduler
-
-load_dotenv()
 
 # $DATABASE_URL is a filesystem path today (this is still SQLite) -- kept as
 # an env var so pointing this at a real connection string later is a
