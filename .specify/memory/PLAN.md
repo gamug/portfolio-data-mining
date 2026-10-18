@@ -1244,7 +1244,7 @@ no release: the News Corp pairs stay what `T-062` makes them.
 - **Nothing to build here:** `known_false_rejects.py --check` stays at its numbers; `reclass_rejects.py` keeps its
   `reject` → `review` scope.
 
-## Work item 14 — Collector: a discovery batch above SQLite's variable limit fails (code, `T-064`)
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (code, `T-064`–`T-067`)
 
 **Status: open, not scheduled (added 2026-10-18; the maintainer schedules it).** Found by the `T-062` step 6 check: a
 `KLAC` discovery through `POST /collector/discover/cnbc/` on the real `urls.db` returned `too many SQL variables` and
@@ -1252,13 +1252,13 @@ inserted nothing. `enqueue_batch` and `_count_new_rejected` (`src/news_collector
 two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 32,766, so a batch above about 16,000 pairs
 is lost. The cause is the likely one, not yet confirmed by the batch size of that call (first step of `T-064`).
 **Fix:** chunk both lookups, same results, a loud failure instead of an error only in the response. **Acceptance and
-test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of 481,332 pairs) cannot add rows from a large
+test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of the 481,332 pairs before the two stray rows of `T-067`) cannot add rows from a large
 batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`; it blocks only the data half of the
 `T-062` step 6 check.
 
 `T-065`, `T-066`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
-collector API's request defaults are the literal `data/urls.db` (an empty file), not `$DATABASE_URL` (`T-065`); the container sets
-`DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`, and the gateway and one CLI never read `.env`; the maintainer
+collector API's routers and request schemas pass the literal `data/urls.db` (an empty file) as `db_path`, so the `$DATABASE_URL` fallback in `get_queue` is never reached (`T-065`); the container sets
+`DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`: `.env` is read today only as an import side effect of the sub-apps and of `news_collector/config.py`, each with `override=False`, and nothing logs which value won; the maintainer
 made reading `.env` a mandatory rule for every app and CLI (`T-066`, with a test that enforces it; the precedence is the maintainer's
 decision, because `news_collector/config.py` keeps a real variable above `.env` today); and a discovery request without
 `company_names` stores the ticker as the company and gets rejected (`T-067`). Workaround until fixed: start with
@@ -1271,6 +1271,7 @@ items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
+Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check, and `T-066` waits for the maintainer's `.env` precedence decision.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

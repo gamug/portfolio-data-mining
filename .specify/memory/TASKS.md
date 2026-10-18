@@ -64,10 +64,10 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
-## Work item 14 — Collector: a discovery batch above SQLite's variable limit fails (T-064)
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067)
 
 Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collector/discover/cnbc/` for `KLAC` returned
-`errors: ["too many SQL variables"]` and inserted nothing (`cnbc.com` holds 465,044 of the 481,332 pairs).
+`errors: ["too many SQL variables"]` and inserted nothing (`cnbc.com` holds 465,044 of the 481,332 pairs, counted before the two stray rows of T-067).
 
 - [ ] **T-064** *(Work item 14; bug in code from `T-056c`, not from `T-062`)* `enqueue_batch` and `_count_new_rejected` in
       `src/news_collector/storage/queue.py` build one `(url, ticker) IN (...)` with two bound variables per pair, so a batch
@@ -75,36 +75,43 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       the response. Chunk both lookups (about 5,000 pairs per query), keep the results identical, and make a failure of a
       batch loud (log at error level, non-empty `errors`, and the CLI exit code non-zero if it has one). Confirm the cause first:
       log the batch size of the failing `KLAC`/`cnbc` call. Acceptance: a test with a batch above the limit (20,000 pairs,
-      rejected and accepted mixed, so the test does not depend on the SQLite build's limit) inserts all rows, returns the right
+      rejected and accepted mixed) that lowers the limit on its own connection (`setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`,
+      Python 3.11+) or the chunk size, so it does not depend on the SQLite build, **and fails on the unfixed code** (run it
+      before the fix and say so in the PR); it inserts all rows, returns the right
       `last_inserted_rejected` and `last_promotion`, and a test that the chunked result equals the unchunked one on a small batch;
       then re-run the `KLAC` `cnbc` discovery on the real database and read the new rows with the step 6 query of
       `docs/modules/news-collector.md` (a new full-name URL is `review`/`loose_name`), which also closes the data half of the
       `T-062` step 6 check. Constitution AI behavior #10 does not apply (no schema change).
 - [ ] **T-065** *(Work item 14; configuration, found 2026-10-18 while validating the database after the gateway restart)*
-      The collector API reads the wrong database by default. Its request defaults are the literal `data/urls.db`
-      (`src/news_collector/api/routers/discovery.py`, `api/schemas.py`, `api/deps.py`), an empty file in the repo, so
-      `/collector/discovery/stats` showed `total: 0` while the real database held 481,332 pairs; the crawler already
-      reads `$DATABASE_URL`. Make every default come from `data_mining.resolve_db_path()` (also `src/news_collector/main.py`
-      and `cli/news_crawler_cli.py`). Acceptance: a test that the defaults follow `$DATABASE_URL`, and a plain
+      The collector API reads the wrong database by default. `api/deps.py` `get_queue()` already falls back to
+      `$DATABASE_URL`, but the routers (`src/news_collector/api/routers/discovery.py`, three `Query` defaults) and the request
+      schemas (`api/schemas.py`, two fields) pass the literal `data/urls.db` (an empty file in the repo) as `db_path`, so the
+      fallback is never reached and `/collector/discovery/stats` showed `total: 0` while the real database held 481,332 pairs.
+      Fix: `default=None` in those five places and one resolution, `data_mining.resolve_db_path()`, in `get_queue` (not five
+      edits). The same literal fallback is in `src/news_collector/main.py` (CLI `--db`), `apps/news_crawler_api.py` (`DEFAULT_DB`)
+      and `cli/news_crawler_cli.py` (`DEFAULT_DB`); move them to `resolve_db_path()` too. An empty `DATABASE_URL`
+      (`.env.example` ships `DATABASE_URL=`) counts as unset (see `T-066`). Acceptance: a test that the defaults follow `$DATABASE_URL`, and a plain
       `/collector/discovery/stats` reports the real counts. Until fixed, pass `db_path` in the request (documented in
       `docs/modules/news-collector.md`). The `.env` precedence part is `T-066`.
 
 - [ ] **T-066** *(Work item 14; configuration rule, asked by the maintainer 2026-10-18: reading `.env` is mandatory for every service)*
       Every entry point, the five apps (`apps/gateway.py`, `news_collector_api.py`, `news_crawler_api.py`, `pricing_api.py`,
       `sec_edgar_api.py`) and the four CLIs (`cli/news_collector_cli.py`, `news_crawler_cli.py`, `pricing_cli.py`,
-      `sec_edgar_cli.py`), must read the repository's `.env` the same way, before anything reads the environment. Today
-      `apps/gateway.py` and `cli/news_collector_cli.py` never call `load_dotenv()`, the others do it on their own with
-      the default `override=False`, and `src/news_collector/config.py` does it again with `override=False` on purpose
-      (a real variable such as `DISCOVERY_END_DATE` wins). A variable inherited from the container beat `.env` on
+      `sec_edgar_cli.py`), must read the repository's `.env` the same way, explicitly, before anything reads the environment. Today the reading is
+      implicit and scattered: `apps/gateway.py` and `cli/news_collector_cli.py` have no `load_dotenv()` call of their own and get
+      `.env` only as an import side effect (the gateway through the sub-apps it imports, the CLI through
+      `src/news_collector/config.py`); the other apps and CLIs each call it with the default `override=False`, and `config.py`
+      does it again with `override=False` on purpose (a real variable such as `DISCOVERY_END_DATE` wins), so an inherited value
+      always beats `.env` and nothing says so. A variable inherited from the container beat `.env` on
       2026-10-18: `/etc/environment` set `DATABASE_URL="../data/urls.db"`, the gateway answered `/crawler/status` with 500 and
       nothing said why. Do: one function (for example `data_mining.env.load_env()`) that every app and CLI calls first,
-      finds `.env` from the repo root rather than the working directory, applies one precedence rule, logs the effective
+      finds `.env` from the repo root rather than the working directory, applies one precedence rule, treats an empty `DATABASE_URL` (as in `.env.example`) as unset, logs the effective
       `DATABASE_URL` and where it came from (`.env`, inherited, default), warns when an inherited value differs from `.env`,
       and, in the gateway and the apps, refuses to start when the database file is missing or empty (unless a flag says a
       new one is intended). **Decide with the maintainer first:** `.env` beats the inherited environment (then
       `config.py`'s `override=False` and its `DISCOVERY_END_DATE` behavior change) or the other way round with the warning
-      only. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file) and of the start-up check;
-      **a test that fails when an app or CLI under `apps/` or `cli/` does not call it** (so the rule stays mandatory); a plain start of
+      only. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file, empty value) and of the start-up check;
+      **a test that fails when an app or CLI under `apps/` or `cli/` does not call it itself** (an import side effect does not count; so the rule stays mandatory); a plain start of
       the gateway on this machine serves the real counts or stops with the message; `.env.example` and the module docs
       state the rule. Scripts under `scripts/` that read `DATABASE_URL` take `--db`, so they are out of scope unless the
       maintainer adds them.
@@ -112,7 +119,8 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
 - [ ] **T-067** *(Work item 14; collector API, found 2026-10-18)*
       `POST /collector/discover/{domain}/` with `tickers` and no `company_names` stores the ticker as the company
       (`company = 'KLAC'`), and the matcher then classes a URL that spells `kla-corporation` as `reject`. The test run of
-      2026-10-18 left two such rows (ids 495519 and 495520) in the real `urls.db`. Resolve the name from the universe
+      2026-10-18 left two such rows (ids 495519 and 495520) in the real `urls.db` (find them with
+      `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519`, expect 2 rows). Resolve the name from the universe
       (`data_mining.portfolio`) when it is omitted, or refuse the request with a clear error; also reject a `company_names`
       list whose length differs from `tickers` (it is positional; a dict gives a validation error that does not say so).
       Acceptance: tests for the omitted, the mismatched and the explicit cases; the two stray rows are corrected or removed
