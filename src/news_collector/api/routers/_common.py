@@ -17,10 +17,15 @@ from news_collector.api.schemas import (
     DiscoverResponse,
     RunAllRequest,
 )
+from news_collector.companies import (
+    CompanyLookupError,
+    companies_from_names,
+    lookup_companies,
+    sp500_companies,
+)
 from news_collector.config import default_end_date, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
-from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
@@ -40,25 +45,26 @@ async def resolve_companies(
     and the /discovery/run-all handler so both orchestration paths resolve
     companies identically.
 
-    Raises:
-        HTTPException(502): if req.tickers is omitted and the Wikipedia fetch/parse fails.
-    """
-    if not req.tickers:
-        try:
-            return await fetch_sp500_companies(client)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Failed to resolve S&P 500 company list from Wikipedia: {exc}",
-            ) from exc
+    With tickers, company_names is positional (one name per ticker) and must match
+    in length. When it is omitted, each ticker is looked up by exact symbol in the
+    current S&P 500 list, then, for a ticker that has left the index, in the
+    point-in-time store as of the request's start date (T-067). A ticker's name is
+    never defaulted to the ticker: the matcher compares URLs to the name.
 
-    names = req.company_names or []
-    companies = []
-    for i, raw_ticker in enumerate(req.tickers):
-        ticker = raw_ticker.upper().strip()
-        name = names[i].strip() if i < len(names) else ticker
-        companies.append(Company(ticker=ticker, name=name))
-    return companies
+    Raises:
+        HTTPException(422): company_names has a different length than tickers or a blank
+            name, or a ticker is in neither source.
+        HTTPException(502): the Wikipedia fetch/parse fails.
+    """
+    try:
+        if not req.tickers:
+            return await sp500_companies(client)
+        tickers = [t.upper().strip() for t in req.tickers]
+        if req.company_names:
+            return companies_from_names(tickers, req.company_names)
+        return await lookup_companies(tickers, client, req.start_date or default_start_date())
+    except CompanyLookupError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 def _to_out(url: DiscoveredURL) -> DiscoveredURLOut:

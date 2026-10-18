@@ -19,9 +19,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 from data_mining.db import resolve_db_path
+from news_collector.companies import CompanyLookupError, lookup_companies
 from news_collector.config import default_end_date, default_start_date
 from news_collector.models import Company, DateRange
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
@@ -58,6 +60,27 @@ def _load_sp500_csv(path: str) -> list[Company]:
     return companies
 
 
+async def _load_companies(
+    args: argparse.Namespace, client: httpx.AsyncClient, start: date
+) -> list[Company]:
+    """Neither --tickers nor --sp500 given => run the entire S&P 500, fetched live from Wikipedia.
+
+    --tickers are named by exact symbol (T-067), never by the ticker itself.
+    """
+    if args.sp500:
+        companies = _load_sp500_csv(args.sp500)
+        log.info("Loaded %d companies from %s", len(companies), args.sp500)
+        return companies
+    if args.tickers:
+        return await lookup_companies([t.upper().strip() for t in args.tickers], client, start)
+    log.info("No --tickers/--sp500 given - fetching the full S&P 500 list from Wikipedia")
+    try:
+        return await fetch_sp500_companies(client)
+    except ValueError:
+        log.exception("Failed to fetch S&P 500 list from Wikipedia")
+        sys.exit(1)
+
+
 async def cmd_discover(args: argparse.Namespace) -> int:
     log_path = setup_logging(args.log_level, log_dir=args.log_dir, run_name="discover")
     if log_path:
@@ -72,21 +95,11 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     queue = URLQueue(db_path)
 
     async with build_client() as client:
-        # Build company list. Neither --tickers nor --sp500 given => run the
-        # entire S&P 500, fetched live from Wikipedia.
-        companies: list[Company] = []
-        if args.sp500:
-            companies = _load_sp500_csv(args.sp500)
-            log.info("Loaded %d companies from %s", len(companies), args.sp500)
-        elif args.tickers:
-            companies = [Company(ticker=t.upper(), name=t.upper()) for t in args.tickers]
-        else:
-            log.info("No --tickers/--sp500 given - fetching the full S&P 500 list from Wikipedia")
-            try:
-                companies = await fetch_sp500_companies(client)
-            except ValueError:
-                log.exception("Failed to fetch S&P 500 list from Wikipedia")
-                sys.exit(1)
+        try:
+            companies = await _load_companies(args, client, date_range.start)
+        except CompanyLookupError as exc:
+            log.error("%s", exc)  # noqa: TRY400 - the message is the whole story, no stack
+            return 1
 
         connectors = build_connectors(client)
         orchestrator = DiscoveryOrchestrator(

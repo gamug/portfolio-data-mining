@@ -119,7 +119,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       under `apps/` or `cli/` has no top-level call before its first project import that reads the environment (`news_collector…`, `data_mining…`,
       `pricing…`, `sec_edgar…`; an import side effect does not count; the test globs both directories); module docs state the rule.
       `scripts/` is out of scope (they take `--db`).
-- [ ] **T-067** *(collector API)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
+- [x] **T-067** *(collector API; done 2026-10-18, PR #81: `news_collector/companies.py` (shared by `resolve_companies` and the CLI's `--tickers`), tests in `tests/news_collector/test_resolve_companies.py` and `test_main_exit_code.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
       request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a
       `company_names` list whose length differs from `tickers` (422 that says it is positional); when names are omitted, look each ticker up by
       **exact symbol** in `fetch_sp500_companies` (one Wikipedia request, 502 on failure as today). Only for a ticker the current list
@@ -130,7 +130,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       today is in neither, so it is refused (the caller passes `company_names` for it). The leaver lookup is the maintainer's to confirm.
       Acceptance (hermetic): omitted, mismatched and explicit cases; a leaver ticker; an unknown ticker that is a substring of a company name; an
       out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520): on 2026-10-18 the real file already reads `company = 'KLA Corporation'` for both, corrected by hand by the maintainer
-      after the 13:14 backup (the 13:14 backup `urls.pre-t064.db` still has them as strays). Acceptance check: `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519` returns 0 (already true on 2026-10-18, so it guards against a regression, it no longer shows a fix).
+      after the 13:14 backup (the 13:14 backup `urls.pre-t064.db` still has them as strays). Acceptance check: `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519` returns 0 (already true on 2026-10-18, so it guards against a regression, it no longer shows a fix). Re-run read-only after the code change: 0 rows.
       The `id >= 495519` bound is why 939 older rows with `company = ticker` are not counted (measured 2026-10-18: `IBM` 892, `MSCI` 44, `AAPL` 3, all from August 2026). `IBM` and `MSCI` may be correct (the company is known by its ticker);
       the 3 `AAPL` rows (ids 484806, 484810, 484811, all `accept`) are **not investigated and out of scope** here; maintainer decision 2026-10-18: widening the scope waits until the bug tasks of Work item 14 (`T-065`, `T-066a`, `T-067`, `T-076`) are closed or dropped, then the 939 rows are looked at (no new task now; `PLAN.md` Work item 14 carries the reminder).
 - [x] **T-075** *(bug, found 2026-10-18; code and tests in PR #75)* `_parse_date` in `src/news_collector/strategies/sitemap.py` returned `None` for every

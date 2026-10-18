@@ -87,6 +87,11 @@ def _db_path() -> str:
     return os.environ.get("UNIVERSE_DB_PATH") or "data/universe.db"
 
 
+def universe_db_path() -> str:
+    """The file `connect()` opens by default (`$UNIVERSE_DB_PATH`, else `data/universe.db`)."""
+    return _db_path()
+
+
 def connect(path: str | Path | None = None) -> Database:
     """Open (creating the schema if absent) the universe.db `Database`.
 
