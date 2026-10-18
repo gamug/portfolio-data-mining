@@ -1253,7 +1253,7 @@ two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 3
 is lost. The cause is the likely one, not yet confirmed by the batch size of that call (first step of `T-064`).
 **Fix:** chunk both lookups, same results, a loud failure instead of an error only in the response. **Acceptance and
 test:** `TASKS.md` `T-064`. **Impact:** the CNBC connector (465,044 of the 481,332 pairs before the two stray rows of `T-067`) cannot add rows from a large
-batch; nothing is corrupted (it fails before the insert). Not caused by `T-062`; it blocks only the data half of the
+batch; nothing is corrupted when the rejects exceed the limit (it fails before the insert, as in the KLAC call); with few rejects the rows are stored and the ids and the promotion are lost, so a retry is needed (`T-064` tests both). Not caused by `T-062`; it blocks only the data half of the
 `T-062` step 6 check.
 
 `T-065`, `T-066`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
