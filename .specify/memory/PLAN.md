@@ -1264,6 +1264,33 @@ environment stays above `.env`, as `news_collector/config.py` has it, and that a
 `company_names` stores the ticker as the company and gets rejected (`T-067`). Workaround until fixed: start with
 `DATABASE_URL=/workspaces/thesis/data/urls.db`, pass `db_path` and `company_names`.
 
+## Work item 15 — Collector: stop the sitemap from multiplying the database by the number of tickers (code + schema + data, `T-068`–`T-074`)
+
+**Status: open, not scheduled (added 2026-10-18; the maintainer chose option B that day and schedules the work). Every gate below (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.**
+
+**Problem (measured 2026-10-18 on the real database).** The `KLAC` `cnbc.com` discovery of `T-064` step 5 added 578,117 `reject`/`skipped` rows
+(+243 MB, about 420 bytes a row with five indexes; `discovered_urls` 481,334 → 1,059,452 rows, the file 2.27 → 2.51 GB). The cause is the
+design of `T-056c`, not of `T-064`: the sitemap strategy turns every URL of the domain's sitemap into a `(url, ticker)` pair and the queue
+stores every matcher-rejected pair. The cnbc sitemap (`sitemapAll.xml`) holds about 578,000 article URLs and is the same for every ticker,
+so a full run of the 503 tickers would add about 503 × 578,000 ≈ 290 million rows (about 120 GB at the same row size). Facts that bound the fix:
+- Only `cnbc.com` has sitemap rows today (1,040,939 rows, 597,559 distinct urls); the sitemap rows carry **no title** (0 of 1,040,939), so the class comes from the URL alone.
+- 901,977 of the 903,092 `reject` rows come from the sitemap; 1,115 from `ddg` (a ticker-specific search hit, a real near miss). `portfolio-nlp` reads `accept`/`review` only, and a `reject` row is never fetched.
+- The sitemap crawl and the matching of 578,124 URLs took about one minute; the orchestrator runs one ticker at a time per domain (`Semaphore(1)` per domain), so the same file is downloaded and parsed once per ticker.
+- The stored rejects served one purpose: re-classing after a matcher fix without a new crawl (`T-062` promoted 448 of about 325,000, 0.14%).
+
+**Decision (maintainer, 2026-10-18): option B.** Keep the sitemap once per domain, not once per ticker: a ticker-agnostic cache of the sitemap entries; per ticker, match against the cache and write to `discovered_urls` only the pairs that are `accept` or `review`. Option A (drop the sitemap rejects and re-crawl on every matcher fix) was not chosen; B also removes the repeated download and gives a re-class from the cache with no network.
+
+**Guardrails for the whole item**
+1. **Additive schema only** (new tables; `discovered_urls`, `articles` and what `portfolio-nlp` reads do not change). It is still a shared-schema and DB-contract change, so constitution AI behavior #10 applies: **G2** is the maintainer's explicit approval of the DDL, the migration and the rollback before any code that creates the tables is merged.
+2. **Equivalence before anything else:** for every ticker, the `accept`/`review` pairs the new path writes must equal the ones today's full scan produces (same class and reason), proven on a corpus (`T-068`, `T-071`). A faster path that changes a class is a defect.
+3. **Development on a copy of `urls.db`**, never on the real file; the real database only at **G3** with a backup that passes `quick_check`, the gateway and crawler stopped for the data step, and a row-count fingerprint taken before and after.
+4. **Unchanged:** the `ddg` and `api` paths (including their `reject` rows), the `--resume` checkpoint (`discovery_progress`), the fetch selection (`status='pending'`), and what `portfolio-nlp` sees.
+5. **Interim caution (docs, this PR):** until `T-071` is merged, do not run a `cnbc.com` discovery for more tickers on the real database; `KLAC` is the one that was run.
+
+**Tasks.** `TASKS.md` `T-068`–`T-074`, each with its acceptance: `T-068` measure and design (read-only, **G1**), `T-069` schema and migration (**G2**), `T-070` the per-domain cache and its refresh, `T-071` per-ticker matching from the cache, `T-072` re-class from the cache, `T-073` reclaim the stored sitemap rejects (data, **G3**), `T-074` close-out. Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` → `T-073` (G3) → `T-074`.
+
+**Risks the tasks must answer.** (a) Matching 578,000 URLs for each of 503 tickers in Python is about one minute each unless candidates are preselected, and a preselection (for example a token index on the URL slug) can miss a pair the full scan finds: `T-068` measures the recall on the real data before the design is fixed, and ordinary-word and one-letter tickers (`ON`, `A`, `IT`, `ARE`, `TTD`) are in the test set on purpose. (b) A sitemap changes over time and its entries are filtered by `lastmod` against the run's date range: the cache needs a coverage range and a refresh rule, and a failed crawl must leave the previous cache valid. (c) The orchestrator runs several tickers of different domains at once: the refresh of one domain's cache runs once and the others wait. (d) The SQL file size does not shrink by deleting rows: reclaiming the 2.5 GB needs a `VACUUM` with free disk and an exclusive window (`T-073`). (e) `reclass_rejects.py` and its `--revert` list work on stored rejects, and the 438-pair known gap is defined on them: both change meaning once sitemap rejects are not stored (`T-072`, `T-074`).
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
@@ -1272,6 +1299,7 @@ open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nl
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
 Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; then `T-065`, then `T-066a` (start-up check and visibility; the `.env` precedence is decided: the inherited environment wins, with a warning); `T-067` is independent; `T-066b` (the shared `.env` call and its test) waits for the maintainer's decision on constitution rule 7 (each service keeps its own `load_dotenv()`, with no shared bootstrap module).
+Work item 15 (`T-068`–`T-074`, the sitemap cache, option B chosen by the maintainer 2026-10-18) is open and maintainer-scheduled, behind its three gates (G1 the design numbers, G2 the schema, G3 the real-data step); it does not depend on Work item 14 except that `T-064` (PR #73) is the fix that let the large batch through.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
