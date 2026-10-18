@@ -1257,7 +1257,7 @@ batch; nothing is corrupted when the rejects exceed the limit (it fails before t
 `T-062` step 6 check.
 
 `T-065`, `T-066a`/`T-066b`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
-collector API's routers and request schemas pass the literal `data/urls.db` (an empty file) as `db_path`, so the `$DATABASE_URL` fallback in `get_queue` is never reached (`T-065`); the container sets
+collector API's routers and request schemas pass the literal `data/urls.db` (an empty file) as `db_path`, and seven sites open the queue without a shared resolver, so the `$DATABASE_URL` fallback is not applied (`T-065`); the container sets
 `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`: `.env` is read today only as an import side effect of the sub-apps and of `news_collector/config.py`, each with `override=False`, and nothing logs which value won; the maintainer
 made reading `.env` a mandatory rule for every app and CLI (`T-066a`/`T-066b`, the latter with a test that enforces it; the maintainer decided 2026-10-18 that the inherited
 environment stays above `.env`, as `news_collector/config.py` has it, and that a conflict is logged as a warning instead of being silent); and a discovery request without
