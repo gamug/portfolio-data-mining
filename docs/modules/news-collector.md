@@ -14,6 +14,8 @@ override) and points at a directory that does not exist; the collector API's rou
 Start the gateway with the real path explicit: `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, and check `GET /crawler/status` (it must
 show the real counts) before any discovery; for the collector pass `db_path` in the request. The fixes are `T-065` and `T-066a`/`T-066b` (`TASKS.md`); pass `company_names` (a list, one per ticker) too, or the ticker is stored as the company (`T-067`).
 
+**Caution until `PLAN.md` Work item 15 (`T-071`) is merged: do not run a `cnbc.com` discovery for more tickers on the real database.** The sitemap strategy turns every URL of the cnbc sitemap (about 578,000) into a pair for the ticker, and the queue stores the rejected ones: the `KLAC` run on 2026-10-18 added 578,117 rows (+243 MB); a run of all tickers would have added about 290 million. Since the sitemap date range is applied (PR #75, if merged) a ticker adds about 121,000 rows and a full run about 61 million (a projection, roughly 25 GB): smaller, still not acceptable. Work item 15 keeps the sitemap once per domain and stores only `accept`/`review` pairs.
+
 ## Architecture
 
 - **Connector-per-domain** (`src/news_collector/connectors/`) — one class per news source.

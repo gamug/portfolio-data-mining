@@ -711,7 +711,7 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       **Done 2026-10-17** (PRs #66, #67, #69, #70): the matcher reads a full name the URL spells loosely (suffix kept, `&`, possessive `s`,
       camel-case brand, a trailing `Corp` spelled out) as `review`/`loose_name`; the audited real run promoted **448** pairs
       (`reject` 325,423 → 324,975, `review` 51,295 → 51,743, `accept` and the readable `ok` articles unchanged, 93,224), with backup
-      `url_cat_backup.db`, audit list and run summary kept; `portfolio-nlp` hand-off prepared (`handoff-portfolio-nlp.md`), delivery pending with the maintainer. Figures and timings: `PLAN.md` Work item 12.
+      `url_cat_backup.db`, audit list and run summary kept; `portfolio-nlp` hand-off prepared, delivery pending with the maintainer. Figures and timings: `PLAN.md` Work item 12.
 
 
 ## Work item 13 — The News Corp pairs wait for the NER check (decision)
