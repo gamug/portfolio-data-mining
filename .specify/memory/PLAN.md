@@ -1271,7 +1271,7 @@ items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
-Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; the `.env` precedence of `T-066` is decided (the inherited environment wins, with a warning).
+Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; the `.env` precedence of `T-066` is decided (the inherited environment wins, with a warning), but `T-066` waits for a constitution amendment (rule 7 says each service keeps its own `load_dotenv()`, with no shared bootstrap module).
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
