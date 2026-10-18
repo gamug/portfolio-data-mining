@@ -64,11 +64,11 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
-## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067, T-075, T-076)
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067, T-075–T-077)
 
 Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
-`T-066b` is done in PR #83 (design in PR #82); the open choice (11) on `news_collector/config.py` stays with the maintainer.
+`T-066b` is done in PR #83 (design in PR #82); choice (11) on `news_collector/config.py` was answered 2026-10-18 (remove the import-time read) and is done in `T-077`, with the end date.
 
 - [x] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
       (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
@@ -134,8 +134,8 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (9) **Root:** walk up from `data_mining/env.py` to the first directory with `pyproject.toml`; none found means no file is read, the system values stand and one notice is logged.
       (10) **Order in an entry point:** the `sys.path` bootstrap of `src/` and the import of `load_env` itself are allowed before the call; every other project import that reads the
       environment must come after it. The AST test skips `apps/__init__.py` and covers `apps/gateway.py` (it reads the environment itself in its lifespan) and every other `apps/*.py` and `cli/*.py`.
-      (11) **`news_collector/config.py`** *(open choice, pending the maintainer's answer)*: its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
-      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. Until the maintainer answers, the code PR does not touch `config.py`'s own read; if the answer is to keep it, it calls `load_env()` instead.
+      (11) **`news_collector/config.py`** *(answered by the maintainer 2026-10-18: option 1, remove; the change is made in `T-077`)*: its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
+      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. PR #83 did not touch `config.py`'s own read; `T-077` removes it.
       **Known consequences (accepted with decision 2, no escape hatch):** a one-off value on the command line loses to `.env`: the documented
       `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A blank `.env` line cannot switch off an inherited variable (decision 5): a system `HTTP_PROXY` or `HTTPS_PROXY` stays on; unset it in the system or the shell. A one-off run is made by editing `.env`
       or with a flag applied after `load_env()` (`--db`, `--allow-new-db`, a request's `db_path`). The module docs and `.env.example` say so in the code PR.
@@ -176,6 +176,44 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       `ft`/`nasdaq` have `sitemap_roots=[]`; tests in `tests/news_collector/test_sitemap_failures.py`. **Out of scope, on purpose:** RSS and Wayback CDX failures stay warnings
       (Wayback is an optional source and the same call per ticker, so making it fatal would put `ft`, whose only other source is DDG, in a permanent failure). The unparseable-`lastmod`
       once-per-fetch log is left to `T-070`.
+
+- [ ] **T-077** *(collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`; design session with the maintainer 2026-10-18)* The discovery
+      end date is an **input** whose default is **today (UTC)**, not a configured value. Today `default_end_date()` reads `DISCOVERY_END_DATE` and falls back to today, and `.env`
+      on this machine has `DISCOVERY_END_DATE=2026-08-10`; since `T-066b` the `.env` wins, so every run that does not pass an end date silently stops at 2026-08-10.
+      Both entry points already accept the date (`news_collector.main discover --end-date`, and `end_date` in the discovery request bodies, optional); what is missing is a
+      default that is today and that nothing can pin. Decisions (maintainer, 2026-10-18, one question at a time):
+      (1) **Default:** `default_end_date()` returns the UTC date (`datetime.now(UTC).date()`) and no longer reads the environment; `ENV_END_DATE` goes away. The date is taken when the
+      command or the request runs, not when the module is imported (a long-lived API gets the day of each request). One clock function, `today_utc()` in `news_collector/config.py`, used by `default_end_date()` and `build_date_range()`'s callers, so the 23:59/00:01 UTC test patches one symbol. **Scope:** the collector only; `universe_history.py` and `universe_gics.py` keep the host-local `date.today()` and do not feed the end date.
+      (2) **Cost accepted:** `--resume` matches the exact `(start_date, end_date)` of a prior run (`discovery_progress` is keyed by both), and "today" changes every day, so a run
+      on a new day re-runs every `(ticker, domain)` pair from the start date. No duplicated rows: `UNIQUE(url, ticker)` rejects a repeat at insert time (a test runs the same pairs twice over the same range with `--no-resume`/`resume: false` and shows the second run inserts 0; a run over a different `end_date` with resume on re-runs the pairs). The cost is time and network; Work item 15 (`T-068`–`T-074`) cuts the sitemap part. To continue a batch the next day, pass the same `--end-date`.
+      Not chosen: an incremental start (last completed end date) and a resume that ignores the end date; either would be its own task.
+      (3) **API echoes the range:** `RunAllResponse` and `DiscoverResponse` gain `start_date` and `end_date` (ISO dates, the values actually used), so a caller copies them into the next
+      request to resume the same range. Additive, no database change. The CLI summary prints the same two dates.
+      (4) **Retired variable:** `data_mining/env.py` gets a retired-variable list with `DISCOVERY_END_DATE`. When the name is set to a non-blank value in `.env` or in the system environment (a blank `DISCOVERY_END_DATE=`, which `.env.example` ships today, does not trigger it: same blank rule as the rest of `load_env()`), `load_env()`
+      logs one line, by name only ("DISCOVERY_END_DATE is no longer read; pass --end-date or end_date"). It replaces the override line for that name (one line, not two), is replayed into
+      the file trace by the same path as the override notices, and covers every entry point. The value is ignored: a retired name from `.env` is **not applied** to `os.environ` at all. The name leaves the value allow-list (`LOGGED_VALUES`). **One line per process is enforced, not assumed:** `load_env()` runs once per entry-point module and the gateway imports the collector and crawler apps, and a retired name is never applied to `os.environ`, so every call would find it again; `env.py` keeps a set of retired names already noticed (reset by the `conftest.py` fixture that resets `_notices`), and a test calls `load_env()` three times with the stale line and expects one notice and one trace line.
+      (5) **`news_collector/config.py`** (**first step of the code PR, run alone with the full suite before the rest**, since it changes what `import news_collector.config` sees in tests) drops its import-time `load_dotenv(override=False)` (choice (11) of `T-066b`, option 1); its docstring and the module docs say that a script
+      importing it without an entry point must call `load_env()`. `DISCOVERY_START_DATE` is unchanged.
+      (6) **Governance, done in this docs PR (#84):** constitution rule 7 drops `DISCOVERY_END_DATE` from its variable list, version 2.0.1 (PATCH, wording), "Last Amended" 2026-10-18;
+      `SPEC.md` setup step 2 says the end date is an input. The code PR touches no constitution.
+      (7) **Text the code PR must change** (so none is missed): `.env.example` (remove `DISCOVERY_END_DATE`, comment says "end date: pass it, default today UTC"); `docs/modules/news-collector.md`
+      (the paragraph that says the run requests "`$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE`" and the universe-refresh "needs no code" claim: say "from the start date through today, and
+      every pair re-runs on a new day"); `api/schemas.py` (`_DATE_DEFAULT_NOTE`); the `--end-date` help in `news_collector/main.py`;
+      the `orchestrator.py` docstring ("Defaults to 2022-01-01 to today"); `data_mining/env.py` (allow-list, retired list); `tests/data_mining/test_env.py` (the allow-list test).
+      (7b) **An invalid range is refused, not a crash** *(round 2)*: `DateRange` raises `ValueError` when start > end, and with the new default a request that sets only a future `start_date`
+      reaches it. One function, `build_date_range(start, end) -> DateRange`, lives in `news_collector/config.py` next to the clock (not in the `api` package, which the CLI must not import) and raises `ValueError` with the message. Its own unit test covers start > end, start == end and a future end. Both API call sites (`api/routers/_common.py` and `discovery.py`) use it, so a third call site cannot bring back the unguarded `DateRange`. The API turns its error into **422** with the message; the CLI (`main.py`, which builds `DateRange` itself today) turns it into exit **1**
+      with one line (no traceback). **A future end date is allowed** (no clamp): the range echoed in the response is the one used. **A malformed `--end-date`** (`2026/10/18`) is rejected by argparse (`type=` on the date; usage error, exit 2) with a test; the API already answers 422 through pydantic. A bad `DISCOVERY_START_DATE` in the environment (it fails when the parser is built) is **out of scope** for `T-077`.
+      (7c) **Notice reaches the CLI trace** *(round 2)*: `data_mining/env.py` gets `replay_notices()` (logs the cached override and retired lines, each with its own label: the `.env override:` prefix belongs to the override notice, a retired line reads "`DISCOVERY_END_DATE` is no longer read" with no override prefix; tests check the text of both kinds in the trace); `startup_check.log_again()` calls it instead of its own loop (one path); `news_collector.main discover` calls it right after
+      `setup_logging`, as the collector API already does through `log_again()`, so the CLI's file trace has the line too. The crawler API and the gateway keep no file trace (as decided in `T-066b`), so for them the notice is console-only; the acceptance lines on the file trace name the collector API and the CLI only.
+      **The notice is logged by every entry point** (one line per process, by name): one mechanism in `load_env()`, no per-entry list; a stale line is a configuration error worth one line at each start.
+      **Merge order:** #84 (docs) then the T-077 code PR straight after, with nothing else merged between; `SPEC.md` says "from T-077 on" so the text is true once the code lands.
+      (8) **Real `.env`:** it is git-ignored, so no PR edits it; the maintainer deletes the stale `DISCOVERY_END_DATE=2026-08-10` line after the code PR merges. The acceptance run on this
+      machine keeps the line, to show it is ignored and logged.
+      Acceptance: tests that the default is the UTC date (patched clock; two calls on two days give two dates; a run at 23:59 and at 00:01 UTC); that an explicit `--end-date` and a request
+      `end_date` win; that a start after the end is refused: API 422 with the message on both call sites (also a request with only a future `start_date`), CLI exit code 1 with one line and no traceback; that a future `end_date` is accepted and echoed; that `DISCOVERY_END_DATE` set in `.env` or in the system environment is ignored and
+      logged once by name, with no value, also in the file trace of the collector API and of `news_collector.main discover` (`replay_notices()`); that `import news_collector.config` reads no `.env`; that both API responses and the CLI summary carry the
+      range used; that a second run over the same pairs and range with resume off (`--no-resume`/`resume: false`) inserts 0 rows, and that a run over a different `end_date` with resume on re-runs the pairs; that a blank `DISCOVERY_END_DATE=` logs nothing and a retired name from `.env` is not in `os.environ`. On this machine with the stale line still in `.env`: the run uses today's date and the log names the variable.
+      No database schema change.
 
 ## Work item 15 — Collector: the sitemap once per domain, not once per ticker (T-068–T-074)
 

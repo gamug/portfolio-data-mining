@@ -409,8 +409,8 @@ There is no formal CD pipeline for this repo; what exists:
 2. Configure `.env` from `.env.example`: `$FINNHUB_API_KEY` (required for
    `pricing`), `$NAME`/`$EMAIL` (required for `sec_edgar`, per SEC EDGAR's
    self-identification requirement), `$DATABASE_URL`/`$UNIVERSE_DB_PATH`
-   (optional, default under `data/`), `$DISCOVERY_START_DATE`/
-   `$DISCOVERY_END_DATE` (optional). `$TIINGO_API_KEY` is needed only for the
+   (optional, default under `data/`), `$DISCOVERY_START_DATE`
+   (optional; from T-077 on the end date is a `--end-date`/`end_date` input that defaults to today, UTC, and `$DISCOVERY_END_DATE` is no longer read). `$TIINGO_API_KEY` is needed only for the
    one-off `cli/pricing_cli.py leaver-prices` step (FR-015) and is set in the
    shell only, never in `.env` (`.env.example` documents the command).
 3. Run whichever service(s) are needed —
