@@ -99,7 +99,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       Acceptance: each handler follows `$DATABASE_URL`; a request without `db_path` creates no file named `None` or `data/urls.db`;
       `URLQueue(None)` and `URLQueue("")` raise; a plain `/collector/discovery/stats` reports the real counts; the `db_path` workaround
       is removed from `docs/modules/news-collector.md`.
-- [x] **T-066a** *(done 2026-10-18, PR below; `data_mining/startup_check.py`, wired in the lifespans of the gateway, crawler and collector apps; tests in `tests/data_mining/test_startup_check.py`; after `T-065`, whose `resolve_db_path()` decides the empty value; configuration)* Start-up check and visibility, in the apps that open
+- [x] **T-066a** *(done 2026-10-18, PR #80; `data_mining/startup_check.py`, wired in the lifespans of the gateway, crawler and collector apps; tests in `tests/data_mining/test_startup_check.py`; after `T-065`, whose `resolve_db_path()` decides the empty value; configuration)* Start-up check and visibility, in the apps that open
       `urls.db` (`apps/gateway.py`, `news_collector_api.py`, `news_crawler_api.py`; not `pricing_api.py` or `sec_edgar_api.py`, which never touch it).
       (1) Log the effective `DATABASE_URL`: its source (`.env`, inherited, default), the **resolved absolute path**, whether the file exists, and its
       size and `discovered_urls` row count. (2) Warn when an inherited value differs from `.env`, naming the variable and both values; read the
