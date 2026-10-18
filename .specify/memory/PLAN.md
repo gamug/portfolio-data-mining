@@ -1197,10 +1197,10 @@ same-mount copy and then done with a backup, and `portfolio-nlp` is told what ch
 - **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
   rule promotes 448, so `reject` is **324,975** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
-  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). **Re-measured on 2026-10-18** on the real `urls.db` after the run (read-only, same rule: a word of the normalized name
+  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). **Re-measured on 2026-10-18** on the real `urls.db` after the run (read-only; the rule is a reconstruction of the 2026-10-16 description, not the original script, and it reproduces the count 438, the set was not compared: a word of the normalized name
   other than the first, 5+ characters, not in `STOPWORDS`, whole word of the URL path; top words `service` 82, `nation` 69,
   `estate` 50, `semiconductor` 40): still **438** pairs on 438 URLs (tickers `LYV` 77, `ARE` 74, `PEG` 67, `ON` 40, `A` 31,
-  `UAL` 28), so the fix and the 11 legal-name pairs changed nothing here. Not
+  `UAL` 28), so the count did not change after the fix and the 11 legal-name pairs. Not
   fixed here, below the T-057 hand check's resolution.
 - **Owner of the hand-read lists:** `matching.PLURAL_PHRASES` and the camel-tail names are re-scanned by whoever changes
   the company universe (a new two-word name that is also a plural noun is read as a spelling and lands in `review`,
