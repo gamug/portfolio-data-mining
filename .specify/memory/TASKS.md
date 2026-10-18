@@ -91,13 +91,18 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       Acceptance: each handler follows `$DATABASE_URL`; a request without `db_path` creates no file named `None` or `data/urls.db`;
       `URLQueue(None)` and `URLQueue("")` raise; a plain `/collector/discovery/stats` reports the real counts; the `db_path` workaround
       is removed from `docs/modules/news-collector.md`.
-- [ ] **T-066a** *(after `T-065`; configuration)* Start-up check and visibility, in the apps that open `urls.db` (`apps/gateway.py`,
-      `news_collector_api.py`, `news_crawler_api.py`; not `pricing_api.py` or `sec_edgar_api.py`, which never touch it): log the effective
-      `DATABASE_URL` and its source (`.env`, inherited, default); warn when an inherited value differs from `.env`, naming the variable and both
-      values; refuse to start when the database file is missing or empty, unless `--allow-new-db` or `ALLOW_NEW_DB=1` (the collector creates
-      the file on first use). Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of
-      the warning, the refusal and the flag; a plain gateway start on this machine serves the real counts or stops with the message;
-      `.env.example` lists `ALLOW_NEW_DB` (unset by default).
+- [ ] **T-066a** *(after `T-065`, whose `resolve_db_path()` decides the empty value; configuration)* Start-up check and visibility, in the apps that open
+      `urls.db` (`apps/gateway.py`, `news_collector_api.py`, `news_crawler_api.py`; not `pricing_api.py` or `sec_edgar_api.py`, which never touch it).
+      (1) Log the effective `DATABASE_URL`: its source (`.env`, inherited, default), the **resolved absolute path**, whether the file exists, and its
+      size and `discovered_urls` row count. (2) Warn when an inherited value differs from `.env`, naming the variable and both values; read the
+      `.env` value with `dotenv_values()` (`load_dotenv(override=False)` leaves no trace of the value that lost). (3) Refuse to start when the
+      database is unusable, where **empty means the `discovered_urls` table is missing or has no rows, not a zero-byte file**: the literal default
+      `data/urls.db` is 49,152 bytes, a schema with no rows, and is exactly the file that served `total: 0`. The gateway and `news_crawler_api` refuse on a
+      missing file, a missing table or no rows; `news_collector_api` creates the database on first use, so it refuses only on a missing parent
+      directory or an unreadable file and logs a notice for a new one. `--allow-new-db` or `ALLOW_NEW_DB=1` lets the gateway and the crawler
+      start on an empty database. Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of the
+      log line, the warning, the refusal for a missing file, a schema-only file (the case that happened) and a populated file, and the flag; a plain
+      gateway start on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (unset by default).
 - [ ] **T-066b** *(blocked on the maintainer's constitution rule 7 decision)* Rule 7 says each service calls `load_dotenv()` itself,
       "deliberate, not debt", with no shared bootstrap module. The maintainer chooses (a) amend rule 7 to name a shared `data_mining.env.load_env()`,
       the AST test and the new variables, or (b) keep each service's own call and enforce the same behavior with the AST test plus a shared
