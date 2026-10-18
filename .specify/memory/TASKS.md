@@ -83,5 +83,5 @@ CI is wanted again.
 
 - **438 `reject` pairs** (438 URLs; re-measured 2026-10-18 after the T-062 run) have a distinctive non-first word of the company
   name in the URL, almost all generic words (`service`, `nation`, `estate`); a handful look real (`DIS`, `SCHW`, some `LYV`, `BAC`).
-  Below the T-057 hand check's resolution, so not fixed and not a Work item. Only the maintainer promotes it to a Work item; the trigger is a hand check of `reject` pairs that finds more than 1 of 40 correct (the T-057 criterion), or a `portfolio-nlp` request. They are quarantined, not deleted; `portfolio-nlp`'s
-  NER check reads only `review`, so it does not see them. Details: `PLAN.md` Work item 12, "Known gap".
+  Below the T-057 hand check's resolution, so not fixed and not a Work item. They are quarantined, not deleted; `portfolio-nlp`'s
+  NER check reads only `review`, so it does not see them. Details: `PLAN.md` Work item 12, "Known gap". Only the maintainer promotes it to a Work item; the trigger is a hand check of a sample drawn from these 438 that finds more than 1 of 40 correct (the T-057 threshold, applied to this subset), or a `portfolio-nlp` request.
