@@ -177,22 +177,37 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (Wayback is an optional source and the same call per ticker, so making it fatal would put `ft`, whose only other source is DDG, in a permanent failure). The unparseable-`lastmod`
       once-per-fetch log is left to `T-070`.
 
-- [ ] **T-077** *(collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`)* The discovery end date is an **input** whose
-      default is **today**, not a configured value. Today `default_end_date()` reads `DISCOVERY_END_DATE` and falls back to today, and `.env` on this machine
-      has `DISCOVERY_END_DATE=2026-08-10`; since `T-066b` the `.env` wins, so every run that does not pass an end date silently stops at 2026-08-10.
-      Both entry points already accept the date (`news_collector.main discover --end-date`, and `end_date` in the discovery request bodies, optional);
-      what is missing is a default that is today and that nothing can pin.
-      Change: (1) `default_end_date()` returns `date.today()` and no longer reads the environment; `ENV_END_DATE` goes away; the date is taken when the
-      command or the request runs, not when the module is imported (a long-lived API gets the day of each request). (2) `DISCOVERY_END_DATE` leaves the
-      allow-list of `data_mining/env.py`, `.env.example`, the module docs, `SPEC.md` and the constitution's variable list; the `--end-date` help and the
-      request-schema description say "default: today". An old `DISCOVERY_END_DATE` still set in `.env` is ignored, and the start-up logs one WARNING that it is
-      no longer read. (3) `news_collector/config.py` drops its import-time `load_dotenv(override=False)` (choice (11) of `T-066b`, option 1); its docstring and
-      the module docs say that a script importing it without an entry point must call `load_env()`. `DISCOVERY_START_DATE` is unchanged.
-      **Consequence to state in the docs:** `--resume` matches the exact `(start_date, end_date)` of a prior run, and "today" changes every day, so a batch resumed
-      the next day starts a new range unless it passes the same `--end-date`. The summary line of a run prints the end date used so it can be repeated.
-      Acceptance: tests that the default is today (with a patched clock, across a day boundary: two calls on two days give two dates), that an explicit `--end-date`
-      and a request `end_date` win, that `DISCOVERY_END_DATE` in the environment is ignored and the WARNING is logged, that `import news_collector.config` does not read a `.env`
-      (the AST/`load_env` tests still pass), and that the CLI summary prints the end date. No schema change.
+- [ ] **T-077** *(collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`; design session with the maintainer 2026-10-18)* The discovery
+      end date is an **input** whose default is **today (UTC)**, not a configured value. Today `default_end_date()` reads `DISCOVERY_END_DATE` and falls back to today, and `.env`
+      on this machine has `DISCOVERY_END_DATE=2026-08-10`; since `T-066b` the `.env` wins, so every run that does not pass an end date silently stops at 2026-08-10.
+      Both entry points already accept the date (`news_collector.main discover --end-date`, and `end_date` in the discovery request bodies, optional); what is missing is a
+      default that is today and that nothing can pin. Decisions (maintainer, 2026-10-18, one question at a time):
+      (1) **Default:** `default_end_date()` returns the UTC date (`datetime.now(UTC).date()`) and no longer reads the environment; `ENV_END_DATE` goes away. The date is taken when the
+      command or the request runs, not when the module is imported (a long-lived API gets the day of each request). One clock function so tests patch one place.
+      (2) **Cost accepted:** `--resume` matches the exact `(start_date, end_date)` of a prior run (`discovery_progress` is keyed by both), and "today" changes every day, so a run
+      on a new day re-runs every `(ticker, domain)` pair from the start date. No duplicated rows: `UNIQUE(url, ticker)` rejects a repeat at insert time (a test shows a second run over
+      the same pairs inserts 0). The cost is time and network; Work item 15 (`T-068`–`T-074`) cuts the sitemap part. To continue a batch the next day, pass the same `--end-date`.
+      Not chosen: an incremental start (last completed end date) and a resume that ignores the end date; either would be its own task.
+      (3) **API echoes the range:** `RunAllResponse` and `DiscoverResponse` gain `start_date` and `end_date` (ISO dates, the values actually used), so a caller copies them into the next
+      request to resume the same range. Additive, no database change. The CLI summary prints the same two dates.
+      (4) **Retired variable:** `data_mining/env.py` gets a retired-variable list with `DISCOVERY_END_DATE`. When the name is set in `.env` or in the system environment, `load_env()`
+      logs one line, by name only ("DISCOVERY_END_DATE is no longer read; pass --end-date or end_date"). It replaces the override line for that name (one line, not two), is replayed into
+      the file trace by the same path as the override notices, and covers every entry point. The value is ignored and the name leaves the value allow-list (`LOGGED_VALUES`).
+      (5) **`news_collector/config.py`** drops its import-time `load_dotenv(override=False)` (choice (11) of `T-066b`, option 1); its docstring and the module docs say that a script
+      importing it without an entry point must call `load_env()`. `DISCOVERY_START_DATE` is unchanged.
+      (6) **Governance, done in this docs PR (#84):** constitution rule 7 drops `DISCOVERY_END_DATE` from its variable list, version 2.0.1 (PATCH, wording), "Last Amended" 2026-10-18;
+      `SPEC.md` setup step 2 says the end date is an input. The code PR touches no constitution.
+      (7) **Text the code PR must change** (so none is missed): `.env.example` (remove `DISCOVERY_END_DATE`, comment says "end date: pass it, default today UTC"); `docs/modules/news-collector.md`
+      (the paragraph that says the run requests "`$DISCOVERY_START_DATE`–`$DISCOVERY_END_DATE`" and the universe-refresh "needs no code" claim: say "from the start date through today, and
+      every pair re-runs on a new day"); `README.md` if it names the variable; `api/schemas.py` (`_DATE_DEFAULT_NOTE`); the `--end-date` help in `news_collector/main.py`;
+      the `orchestrator.py` docstring ("Defaults to 2022-01-01 to today"); `data_mining/env.py` (allow-list, retired list); `tests/data_mining/test_env.py` (the allow-list test).
+      (8) **Real `.env`:** it is git-ignored, so no PR edits it; the maintainer deletes the stale `DISCOVERY_END_DATE=2026-08-10` line after the code PR merges. The acceptance run on this
+      machine keeps the line, to show it is ignored and logged.
+      Acceptance: tests that the default is the UTC date (patched clock; two calls on two days give two dates; a run at 23:59 and at 00:01 UTC); that an explicit `--end-date` and a request
+      `end_date` win; that an `--end-date` before the start date fails (`DateRange` already refuses it); that `DISCOVERY_END_DATE` set in `.env` or in the system environment is ignored and
+      logged once by name, with no value, also in the file trace of the collector API; that `import news_collector.config` reads no `.env`; that both API responses and the CLI summary carry the
+      range used; that a second run over the same pairs inserts 0 rows. On this machine with the stale line still in `.env`: the run uses today's date and the log names the variable.
+      No database schema change.
 
 ## Work item 15 — Collector: the sitemap once per domain, not once per ticker (T-068–T-074)
 

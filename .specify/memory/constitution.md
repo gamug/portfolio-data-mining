@@ -136,7 +136,7 @@ stack actually pinned in `pyproject.toml`.
    fork a second config file for a tool that already has one.
 7. **Environment**: `.env` (git-ignored) holds `DATABASE_URL`,
    `UNIVERSE_DB_PATH`, `FINNHUB_API_KEY`, `NAME`/`EMAIL`,
-   `DISCOVERY_START_DATE`/`DISCOVERY_END_DATE`, `SEEKINGALPHA_RAPIDAPI_KEY`,
+   `DISCOVERY_START_DATE`, `SEEKINGALPHA_RAPIDAPI_KEY`,
    and the optional proxy vars; `.env.example` is the committed template —
    keep it in sync with every env var a new feature reads. **`.env` wins
    over the inherited (system) environment**; the system value is the
@@ -432,4 +432,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-18
+**Version**: 2.0.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-18
