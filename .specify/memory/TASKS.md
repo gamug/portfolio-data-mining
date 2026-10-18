@@ -125,8 +125,9 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       2026-10-18; every other variable is logged by name only. The `T-066a` warning that an inherited value hides `.env` is reworded to this (the check's source label stays `.env`/`inherited`/`default`).
       (7) **Enforcement:** an AST test over `apps/` and `cli/` (5 apps, 4 CLIs, the test globs both) **and `src/news_collector/main.py`** (run as `python -m news_collector.main`, listed explicitly) fails when a file has no top-level `load_env()` before its first
       project import that reads the environment (`news_collector…`, `data_mining…`, `pricing…`, `sec_edgar…`; an import side effect does not count). `scripts/` out of scope (they take `--db`).
-      Also: replace the `load_dotenv()` calls in the sub-apps, `news_collector/main.py` and `news_collector/config.py` with `load_env()` (or remove them where the entry
-      point already called it); update `.env.example`, the module docs and the `T-066a` tests that assert the inherited value wins.
+      Also: replace the `load_dotenv()` calls with `load_env()` in the 4 sub-apps (`news_collector_api`, `news_crawler_api`, `pricing_api`, `sec_edgar_api`), the 3 CLIs
+      (`news_crawler_cli`, `sec_edgar_cli`, `pricing_cli`) and `news_collector/main.py`; **add** the call to the two entry points that have none today, `apps/gateway.py` and
+      `cli/news_collector_cli.py`; `news_collector/config.py` is left to the open choice in (11). Update `.env.example`, the module docs and the `T-066a` tests that assert the inherited value wins.
       **Details fixed after the manager's review (PR #82):**
       (8) **Secrets:** an **allow-list**, not a name pattern. The log line prints both values only for `DATABASE_URL`, `UNIVERSE_DB_PATH`, `DISCOVERY_START_DATE`,
       `DISCOVERY_END_DATE`, `ALLOW_NEW_DB`; for every other variable, including any added later, only the name (a proxy URL or another engine's `DATABASE_URL` can hold credentials).
@@ -139,7 +140,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A blank `.env` line cannot switch off an inherited variable (decision 5): a system `HTTP_PROXY` or `HTTPS_PROXY` stays on; unset it in the system or the shell. A one-off run is made by editing `.env`
       or with a flag applied after `load_env()` (`--db`, `--allow-new-db`, a request's `db_path`). The module docs and `.env.example` say so in the code PR.
       Acceptance: tests of precedence (`.env` over inherited), fallback (missing file, absent variable, blank value), root lookup from another working directory,
-      the notice (values printed only for the allow-list; a variable not on it is logged by name, with a value that must not appear in the log), the AST test (fails on a file without the call), and the real gateway start on this machine with the wrong inherited value
+      the notice (values printed only for the allow-list; a variable not on it is logged by name, with a value that must not appear in the log), the AST test (fails on a file without the call), a flag applied after `load_env()` still wins (`--allow-new-db` takes effect with `ALLOW_NEW_DB` absent from `.env`, and a `.env` value does not undo the flag), and the real gateway start on this machine with the wrong inherited value
       using the `.env` database.
 - [x] **T-067** *(collector API; done 2026-10-18, PR #81: `news_collector/companies.py` (shared by `resolve_companies` and the CLI's `--tickers`), tests in `tests/news_collector/test_resolve_companies.py` and `test_main_exit_code.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
       request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a
