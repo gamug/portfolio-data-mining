@@ -64,11 +64,11 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
-## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067, T-075, T-076)
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067, T-075–T-077)
 
 Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
-`T-066b` is done in PR #83 (design in PR #82); the open choice (11) on `news_collector/config.py` stays with the maintainer.
+`T-066b` is done in PR #83 (design in PR #82); choice (11) on `news_collector/config.py` was answered 2026-10-18 (remove the import-time read) and is done in `T-077`, with the end date.
 
 - [x] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
       (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
@@ -134,8 +134,8 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (9) **Root:** walk up from `data_mining/env.py` to the first directory with `pyproject.toml`; none found means no file is read, the system values stand and one notice is logged.
       (10) **Order in an entry point:** the `sys.path` bootstrap of `src/` and the import of `load_env` itself are allowed before the call; every other project import that reads the
       environment must come after it. The AST test skips `apps/__init__.py` and covers `apps/gateway.py` (it reads the environment itself in its lifespan) and every other `apps/*.py` and `cli/*.py`.
-      (11) **`news_collector/config.py`** *(open choice, pending the maintainer's answer)*: its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
-      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. Until the maintainer answers, the code PR does not touch `config.py`'s own read; if the answer is to keep it, it calls `load_env()` instead.
+      (11) **`news_collector/config.py`** *(answered by the maintainer 2026-10-18: option 1, remove; the change is made in `T-077`)*: its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
+      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. PR #83 did not touch `config.py`'s own read; `T-077` removes it.
       **Known consequences (accepted with decision 2, no escape hatch):** a one-off value on the command line loses to `.env`: the documented
       `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A blank `.env` line cannot switch off an inherited variable (decision 5): a system `HTTP_PROXY` or `HTTPS_PROXY` stays on; unset it in the system or the shell. A one-off run is made by editing `.env`
       or with a flag applied after `load_env()` (`--db`, `--allow-new-db`, a request's `db_path`). The module docs and `.env.example` say so in the code PR.
@@ -176,6 +176,23 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       `ft`/`nasdaq` have `sitemap_roots=[]`; tests in `tests/news_collector/test_sitemap_failures.py`. **Out of scope, on purpose:** RSS and Wayback CDX failures stay warnings
       (Wayback is an optional source and the same call per ticker, so making it fatal would put `ft`, whose only other source is DDG, in a permanent failure). The unparseable-`lastmod`
       once-per-fetch log is left to `T-070`.
+
+- [ ] **T-077** *(collector, CLI and API; asked by the maintainer 2026-10-18; also closes choice (11) of `T-066b`)* The discovery end date is an **input** whose
+      default is **today**, not a configured value. Today `default_end_date()` reads `DISCOVERY_END_DATE` and falls back to today, and `.env` on this machine
+      has `DISCOVERY_END_DATE=2026-08-10`; since `T-066b` the `.env` wins, so every run that does not pass an end date silently stops at 2026-08-10.
+      Both entry points already accept the date (`news_collector.main discover --end-date`, and `end_date` in the discovery request bodies, optional);
+      what is missing is a default that is today and that nothing can pin.
+      Change: (1) `default_end_date()` returns `date.today()` and no longer reads the environment; `ENV_END_DATE` goes away; the date is taken when the
+      command or the request runs, not when the module is imported (a long-lived API gets the day of each request). (2) `DISCOVERY_END_DATE` leaves the
+      allow-list of `data_mining/env.py`, `.env.example`, the module docs, `SPEC.md` and the constitution's variable list; the `--end-date` help and the
+      request-schema description say "default: today". An old `DISCOVERY_END_DATE` still set in `.env` is ignored, and the start-up logs one WARNING that it is
+      no longer read. (3) `news_collector/config.py` drops its import-time `load_dotenv(override=False)` (choice (11) of `T-066b`, option 1); its docstring and
+      the module docs say that a script importing it without an entry point must call `load_env()`. `DISCOVERY_START_DATE` is unchanged.
+      **Consequence to state in the docs:** `--resume` matches the exact `(start_date, end_date)` of a prior run, and "today" changes every day, so a batch resumed
+      the next day starts a new range unless it passes the same `--end-date`. The summary line of a run prints the end date used so it can be repeated.
+      Acceptance: tests that the default is today (with a patched clock, across a day boundary: two calls on two days give two dates), that an explicit `--end-date`
+      and a request `end_date` win, that `DISCOVERY_END_DATE` in the environment is ignored and the WARNING is logged, that `import news_collector.config` does not read a `.env`
+      (the AST/`load_env` tests still pass), and that the CLI summary prints the end date. No schema change.
 
 ## Work item 15 — Collector: the sitemap once per domain, not once per ticker (T-068–T-074)
 
