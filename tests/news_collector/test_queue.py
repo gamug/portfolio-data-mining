@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from collections.abc import Iterator
 from datetime import date, datetime
@@ -529,3 +530,101 @@ def test_last_inserted_rejected_counts_only_new_rejected_rows(tmp_path: Path) ->
         assert q.last_inserted_rejected == 0
     finally:
         q.close()
+
+
+# ---------------------------------------------------------------------------
+# Batches above SQLite's variable limit (T-064)
+# ---------------------------------------------------------------------------
+
+_LIMIT = 200  # variables per statement the test connection allows; 100 (url, ticker) pairs
+_CHUNK = 50  # pairs per query, 100 variables
+
+
+def _limit_variables(queue: URLQueue, limit: int = _LIMIT) -> None:
+    """Lower the statement's variable cap on this connection (the real one is 32,766 on 3.40.1,
+    which would need a batch of 20,000 pairs); `Database._conn` is the raw sqlite3 connection."""
+    assert queue._conn is not None
+    queue._conn._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, limit)
+
+
+def _batch(n: int, rejected_every: int | None = None) -> list[DiscoveredURL]:
+    urls = []
+    for i in range(n):
+        match_class = "reject" if rejected_every and i % rejected_every == 0 else "accept"
+        urls.append(_classed(f"https://cnbc.com/2024/01/01/story-{i}.html", match_class))
+    return urls
+
+
+def test_enqueue_batch_above_the_variable_limit_inserts_everything(
+    queue: URLQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("news_collector.storage.queue._LOOKUP_CHUNK_PAIRS", _CHUNK)
+    _limit_variables(queue)
+    urls = _batch(400, rejected_every=4)  # 400 pairs = 800 variables, 100 of them rejected
+
+    inserted = queue.enqueue_batch(urls)
+
+    assert inserted == 400
+    assert queue.last_inserted_rejected == 100
+    assert all(u.id is not None for u in urls)
+    assert queue.stats()["total"] == 400
+
+
+def test_enqueue_batch_above_the_limit_with_few_rejects_sets_ids_and_promotes(
+    queue: URLQueue, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The path the KLAC run did not take: the reject count is small, so only the id lookup
+    after the insert is above the limit."""
+    monkeypatch.setattr("news_collector.storage.queue._LOOKUP_CHUNK_PAIRS", _CHUNK)
+    _limit_variables(queue)
+    first = _batch(300)
+    for u in first[:10]:
+        u.match_class = "review"  # type: ignore[assignment]
+    queue.enqueue_batch(first)
+
+    again = _batch(300)  # the same pairs, now all accept: the 10 review rows are promoted
+    inserted = queue.enqueue_batch(again)
+
+    assert inserted == 0
+    assert all(u.id is not None for u in again)
+    assert queue.last_promotion.promoted == 10
+
+
+def test_enqueue_batch_chunked_equals_unchunked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results = []
+    for name, chunk in (("whole", 5_000), ("chunked", 7)):
+        monkeypatch.setattr("news_collector.storage.queue._LOOKUP_CHUNK_PAIRS", chunk)
+        q = URLQueue(str(tmp_path / f"{name}.db"))
+        q.initialize()
+        try:
+            urls = _batch(60, rejected_every=3)
+            inserted = q.enqueue_batch(urls)
+            redo = _batch(60)  # promotes the 20 rejected rows
+            inserted_again = q.enqueue_batch(redo)
+            results.append(
+                (
+                    inserted,
+                    inserted_again,
+                    q.last_inserted_rejected,
+                    q.last_promotion,
+                    [u.id for u in redo],
+                    q.stats(),
+                )
+            )
+        finally:
+            q.close()
+    assert results[0] == results[1]
+
+
+def test_enqueue_batch_logs_the_batch_size_when_it_fails(
+    queue: URLQueue, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("news_collector.storage.queue._LOOKUP_CHUNK_PAIRS", 10_000)  # no chunking
+    _limit_variables(queue)
+
+    with pytest.raises(sqlite3.Error), caplog.at_level("ERROR"):
+        queue.enqueue_batch(_batch(300, rejected_every=2))
+
+    assert "batch of 300 urls" in caplog.text

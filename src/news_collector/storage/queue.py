@@ -5,7 +5,8 @@ from __future__ import annotations
 import contextlib
 import csv
 import logging
-from collections.abc import Sequence
+import sqlite3
+from collections.abc import Iterator, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import NamedTuple, TypedDict
@@ -38,6 +39,17 @@ log = logging.getLogger(__name__)
 
 _HTTP_SUCCESS_MIN = 200
 _HTTP_SUCCESS_MAX = 300  # exclusive -- half-open [200, 300) range
+
+
+# `(url, ticker) IN (...)` binds two variables per pair and SQLite caps the variables of one
+# statement (32,766 on 3.40.1, 999 before 3.32), so the lookups below run in chunks. 5,000
+# pairs is 10,000 variables, well under the cap, and large enough that a batch is a few queries.
+_LOOKUP_CHUNK_PAIRS = 5_000
+
+
+def _chunks[T](items: Sequence[T], size: int) -> Iterator[Sequence[T]]:
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _is_success_status(status_code: int) -> bool:
@@ -133,6 +145,17 @@ class URLQueue:
         Returns:
             Number of newly inserted rows.
         """
+        try:
+            return self._enqueue_batch(urls)
+        except sqlite3.Error:
+            # The caller reports the error text only; the batch size is what says whether it is
+            # the statement-size limit or something else. The rows of the batch may be stored
+            # without ids or promotion if the failure came after the insert: retrying is safe
+            # (INSERT OR IGNORE) and redoes the promotion.
+            log.error("enqueue_batch failed for a batch of %d urls", len(urls), exc_info=True)
+            raise
+
+    def _enqueue_batch(self, urls: Sequence[DiscoveredURL]) -> int:
         assert self._conn is not None, "Call initialize() first"
         self.last_promotion = Promotion()
         self.last_inserted_rejected = 0
@@ -197,15 +220,17 @@ class URLQueue:
         # One in_clause() group per (url, ticker) pair -- in_clause() itself
         # only sizes a flat "(?,?,...)" group, so this row-value "(a,b) IN
         # (...)" shape is built by joining one per-row group.
-        placeholders = ",".join(in_clause((u.url, u.ticker)) for u in urls)
-        # S608: `placeholders` is just a run of in_clause()-built "(?,?)"
-        # groups -- values are bound as query params below, never
-        # interpolated into the SQL text.
-        id_rows = self._conn.execute(
-            "SELECT id, url, ticker, status, match_class, match_reason, query "  # noqa: S608
-            f"FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",
-            [v for u in urls for v in (u.url, u.ticker)],
-        ).fetchall()
+        id_rows: list[Row] = []
+        for chunk in _chunks(urls, _LOOKUP_CHUNK_PAIRS):
+            placeholders = ",".join(in_clause((u.url, u.ticker)) for u in chunk)
+            # S608: `placeholders` is just a run of in_clause()-built "(?,?)"
+            # groups -- values are bound as query params below, never
+            # interpolated into the SQL text.
+            id_rows += self._conn.execute(
+                "SELECT id, url, ticker, status, match_class, match_reason, query "  # noqa: S608
+                f"FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",
+                [v for u in chunk for v in (u.url, u.ticker)],
+            ).fetchall()
         stored = {(r["url"], r["ticker"]): dict(r) for r in id_rows}
         for u in urls:
             row = stored.get((u.url, u.ticker))
@@ -217,16 +242,18 @@ class URLQueue:
         """Matcher-rejected pairs of the batch that are not stored yet (read before the
         insert, since `INSERT OR IGNORE` does not say which rows it skipped)."""
         assert self._conn is not None
-        rejected = {(u.url, u.ticker) for u in urls if u.match_class == "reject"}
-        if not rejected:
-            return 0
-        placeholders = ",".join(in_clause(pair) for pair in rejected)
-        # S608: `placeholders` is a run of in_clause()-built "(?,?)" groups; values are bound.
-        rows = self._conn.execute(
-            f"SELECT url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
-            [v for pair in rejected for v in pair],
-        ).fetchall()
-        return len(rejected) - len(rows)
+        rejected = sorted({(u.url, u.ticker) for u in urls if u.match_class == "reject"})
+        stored = 0
+        for chunk in _chunks(rejected, _LOOKUP_CHUNK_PAIRS):
+            placeholders = ",".join(in_clause(pair) for pair in chunk)
+            # S608: `placeholders` is a run of in_clause()-built "(?,?)" groups; values are bound.
+            stored += len(
+                self._conn.execute(
+                    f"SELECT url, ticker FROM discovered_urls WHERE (url, ticker) IN ({placeholders})",  # noqa: S608
+                    [v for pair in chunk for v in pair],
+                ).fetchall()
+            )
+        return len(rejected) - stored
 
     def _promote_duplicates(
         self, urls: Sequence[DiscoveredURL], stored: dict[tuple[str, str], dict]
