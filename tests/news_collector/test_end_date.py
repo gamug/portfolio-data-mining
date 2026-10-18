@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import importlib
+import importlib.util
 import logging
 import os
 from datetime import UTC, date, datetime, timedelta
@@ -493,7 +493,14 @@ def test_importing_config_reads_no_env_file(monkeypatch: pytest.MonkeyPatch) -> 
     calls: list[object] = []
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: calls.append((a, k)) or True)
     monkeypatch.setattr(dotenv, "dotenv_values", lambda *a, **k: calls.append((a, k)) or {})
-    importlib.reload(config)
+    # A second copy under another name: reloading `config` itself would re-run its body in the
+    # real module and replace `InvalidRangeError`, which the call sites hold by name.
+    spec = importlib.util.spec_from_file_location("config_probe", config.__file__)
+    assert spec is not None
+    assert spec.loader is not None
+    probe = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(probe)
+    assert probe.InvalidRangeError is not config.InvalidRangeError  # it is a separate copy
     assert calls == []
 
 
@@ -520,9 +527,11 @@ async def test_the_collector_api_puts_the_retired_notice_in_its_file_trace(
 ) -> None:
     """The lifespan calls `log_again()` once the file handler exists (T-066b, T-077)."""
     trace = tmp_path / "api.log"
+    startup_log = logging.getLogger("data_mining.startup")
     handler = logging.FileHandler(trace)
-    logging.getLogger("data_mining.startup").addHandler(handler)
-    logging.getLogger("data_mining.startup").setLevel(logging.INFO)
+    previous_level = startup_log.level
+    startup_log.addHandler(handler)
+    startup_log.setLevel(logging.INFO)
 
     monkeypatch.setenv("DISCOVERY_END_DATE", "2026-08-10")
     env.load_env(tmp_path / "missing.env")  # what the app module did when it was imported
@@ -533,7 +542,8 @@ async def test_the_collector_api_puts_the_retired_notice_in_its_file_trace(
         async with news_collector_api.lifespan(FastAPI()):
             pass
     finally:
-        logging.getLogger("data_mining.startup").removeHandler(handler)
+        startup_log.removeHandler(handler)
+        startup_log.setLevel(previous_level)
         handler.close()
     text = trace.read_text(encoding="utf-8")
     assert text.count("retired variable: DISCOVERY_END_DATE") == 1
