@@ -10,17 +10,6 @@ from __future__ import annotations
 import os
 from datetime import date
 
-from dotenv import load_dotenv
-
-# Loaded once at import time, before any of this module's functions read
-# os.environ. Without this, values set in .env (e.g. DISCOVERY_END_DATE) are
-# never actually applied - os.environ.get() only sees real process env vars,
-# so default_end_date() would silently fall back to date.today() every time,
-# which changes daily and breaks --resume's exact-date-range checkpoint match
-# across a day boundary. override=False so a real environment variable (e.g.
-# set by the shell or a container) still wins over .env.
-load_dotenv(override=False)
-
 # Env var names
 ENV_START_DATE = "DISCOVERY_START_DATE"
 ENV_END_DATE = "DISCOVERY_END_DATE"
