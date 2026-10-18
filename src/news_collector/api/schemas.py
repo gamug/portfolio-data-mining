@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 _DATE_DEFAULT_NOTE = (
-    " Omit to fall back to the DISCOVERY_START_DATE/DISCOVERY_END_DATE env vars "
-    "(evaluated per-request), or 2022-01-01/today if those are unset."
+    " Omit start_date for $DISCOVERY_START_DATE (else 2022-01-01) and end_date for today, "
+    "UTC (both evaluated per request). Pass the same end_date to continue a batch on a later "
+    "day: resume skips only an exact range. start_date after end_date is a 422."
 )
 
 _TICKERS_NOTE = (
@@ -121,6 +122,8 @@ class DiscoverResponse(BaseModel):
     inserted: int
     elapsed_seconds: float
     errors: list[str] = Field(default_factory=list)
+    start_date: date = Field(description="Inclusive start of the range this run used.")
+    end_date: date = Field(description="Inclusive end of the range this run used.")
 
 
 class RunAllResponse(BaseModel):
@@ -140,6 +143,8 @@ class RunAllResponse(BaseModel):
         default=0,
         description="(ticker, domain) pairs skipped because resume=True and already completed",
     )
+    start_date: date = Field(description="Inclusive start of the range this run used.")
+    end_date: date = Field(description="Inclusive end of the range this run used.")
 
 
 class QueueStatsResponse(BaseModel):

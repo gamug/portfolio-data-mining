@@ -193,8 +193,7 @@ def log_again() -> None:
     `load_env()` runs before both, so none of these lines is in the run's `.log/` trace. The
     app calls this right after `setup_logging`.
     """
-    for notice in env.override_notices():
-        log.warning(".env override: %s", notice)
+    env.replay_notices(log)
     for report in _reports.values():
         log.info(_log_line(report))
         for warning in report.warnings:

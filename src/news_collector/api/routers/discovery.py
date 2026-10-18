@@ -18,8 +18,7 @@ from news_collector.api.schemas import (
     RunAllRequest,
     RunAllResponse,
 )
-from news_collector.config import default_end_date, default_start_date
-from news_collector.models import DateRange
+from news_collector.config import InvalidRangeError, build_date_range
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
 from news_collector.storage.queue import URLQueue
 
@@ -38,12 +37,11 @@ async def run_all(
     deduplicates results, and persists them to the SQLite queue. If req.tickers is
     omitted, runs across the entire S&P 500, fetched live from Wikipedia.
     """
+    try:
+        date_range = build_date_range(req.start_date, req.end_date)
+    except InvalidRangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     companies = await resolve_companies(req, client)
-
-    date_range = DateRange(
-        start=req.start_date or default_start_date(),
-        end=req.end_date or default_end_date(),
-    )
     queue = URLQueue(resolve_db_path(req.db_path))
 
     connectors = build_connectors(client)
@@ -72,6 +70,8 @@ async def run_all(
         by_company=stats.by_company,
         errors=stats.errors,
         elapsed_seconds=round(stats.elapsed_seconds, 3),
+        start_date=date_range.start,
+        end_date=date_range.end,
     )
 
 

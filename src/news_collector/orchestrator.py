@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import httpx
 
 from data_mining.matching import CLASS_RANK
-from news_collector.config import default_end_date, default_start_date
+from news_collector.config import build_date_range
 from news_collector.connectors.base import BaseConnector
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.connectors.ft import FTConnector
@@ -92,7 +92,7 @@ class DiscoveryOrchestrator:
         Args:
             companies: List of S&P 500 companies to discover news for.
             domains: Subset of domains to run. Defaults to all configured domains.
-            date_range: Date range for article filtering. Defaults to 2022-01-01 to today.
+            date_range: Date range for article filtering. Defaults to `DISCOVERY_START_DATE` (else 2022-01-01) to today, UTC.
             resume: If True (the default), skip (ticker, domain) pairs already completed
                 for this exact date_range on a prior run, per the queue's
                 discovery_progress checkpoint. Completion is always recorded regardless
@@ -103,7 +103,7 @@ class DiscoveryOrchestrator:
             Aggregated DiscoveryStats.
         """
         if date_range is None:
-            date_range = DateRange(start=default_start_date(), end=default_end_date())
+            date_range = build_date_range(None, None)
 
         active_domains = list(domains) if domains else list(self._connectors.keys())
         active_domains = [d for d in active_domains if d in self._connectors]

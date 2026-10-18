@@ -23,7 +23,7 @@ from news_collector.companies import (
     lookup_companies,
     sp500_companies,
 )
-from news_collector.config import default_end_date, default_start_date
+from news_collector.config import InvalidRangeError, build_date_range, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
 from news_collector.storage.queue import URLQueue
@@ -156,11 +156,11 @@ async def run_domain_discovery(
     req.tickers is omitted, for the entire S&P 500 fetched live from Wikipedia),
     deduplicates, persists to the queue, and returns DiscoverResponse per ticker.
     """
+    try:
+        date_range = build_date_range(req.start_date, req.end_date)
+    except InvalidRangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     companies = await resolve_companies(req, client)
-    date_range = DateRange(
-        start=req.start_date or default_start_date(),
-        end=req.end_date or default_end_date(),
-    )
     queue = URLQueue(resolve_db_path(req.db_path))
     queue.initialize()
 
@@ -194,6 +194,8 @@ async def run_domain_discovery(
                 inserted=inserted,
                 elapsed_seconds=round(time.monotonic() - t0, 3),
                 errors=errors,
+                start_date=date_range.start,
+                end_date=date_range.end,
             )
 
     results = await asyncio.gather(*[_handle(c) for c in companies], return_exceptions=True)
@@ -212,6 +214,8 @@ async def run_domain_discovery(
                     inserted=0,
                     elapsed_seconds=0.0,
                     errors=[str(result)],
+                    start_date=date_range.start,
+                    end_date=date_range.end,
                 )
             )
         else:
