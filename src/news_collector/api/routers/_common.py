@@ -6,23 +6,26 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from datetime import date
 
 import httpx
 from fastapi import HTTPException
 
 from data_mining.db import resolve_db_path
-from data_mining.universe_history import query_as_of
 from news_collector.api.schemas import (
     DiscoveredURLOut,
     DiscoverRequest,
     DiscoverResponse,
     RunAllRequest,
 )
+from news_collector.companies import (
+    CompanyLookupError,
+    companies_from_names,
+    lookup_companies,
+    sp500_companies,
+)
 from news_collector.config import default_end_date, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
-from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
@@ -53,80 +56,15 @@ async def resolve_companies(
             name, or a ticker is in neither source.
         HTTPException(502): the Wikipedia fetch/parse fails.
     """
-    if not req.tickers:
-        return await _sp500_or_502(client)
-
-    tickers = [t.upper().strip() for t in req.tickers]
-    if req.company_names:
-        return _companies_from_names(tickers, req.company_names)
-    return await _companies_from_lookup(tickers, client, req.start_date or default_start_date())
-
-
-async def _sp500_or_502(client: httpx.AsyncClient) -> list[Company]:
     try:
-        return await fetch_sp500_companies(client)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to resolve S&P 500 company list from Wikipedia: {exc}",
-        ) from exc
-
-
-def _companies_from_names(tickers: list[str], names: list[str]) -> list[Company]:
-    if len(names) != len(tickers):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"company_names is positional, one name per ticker: got {len(names)} names "
-                f"for {len(tickers)} tickers. Pass the same number, or omit company_names."
-            ),
-        )
-    blank = [t for t, n in zip(tickers, names, strict=True) if not n.strip()]
-    if blank:
-        raise HTTPException(
-            status_code=422, detail=f"company_names has a blank name for: {', '.join(blank)}"
-        )
-    return [Company(ticker=t, name=n.strip()) for t, n in zip(tickers, names, strict=True)]
-
-
-async def _companies_from_lookup(
-    tickers: list[str], client: httpx.AsyncClient, start_date: date
-) -> list[Company]:
-    current = {c.ticker.upper(): c for c in await _sp500_or_502(client)}
-    leavers: dict[str, str] = {}
-    unknown: list[str] = []
-    if any(t not in current for t in tickers):
-        leavers = await _leaver_names(start_date)
-    companies = []
-    for t in tickers:
-        if t in current:
-            companies.append(Company(ticker=t, name=current[t].name, sector=current[t].sector))
-        elif t in leavers:
-            companies.append(Company(ticker=t, name=leavers[t]))
-        else:
-            unknown.append(t)
-    if unknown:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"No company name for: {', '.join(unknown)}. Not in the current S&P 500 "
-                f"or in the index as of {start_date.isoformat()} (point-in-time store, or the "
-                "store is missing or does not cover that date). Pass company_names, one per ticker."
-            ),
-        )
-    return companies
-
-
-async def _leaver_names(start_date: date) -> dict[str, str]:
-    """Exact Symbol -> Security for the index as of start_date; empty if the store cannot answer."""
-    try:
-        rows = await asyncio.to_thread(query_as_of, start_date)
-    except ValueError as exc:
-        log.warning("No point-in-time universe for %s: %s", start_date, exc)
-        return {}
-    return {
-        r["Symbol"].upper(): r["Security"] for r in rows if r.get("Symbol") and r.get("Security")
-    }
+        if not req.tickers:
+            return await sp500_companies(client)
+        tickers = [t.upper().strip() for t in req.tickers]
+        if req.company_names:
+            return companies_from_names(tickers, req.company_names)
+        return await lookup_companies(tickers, client, req.start_date or default_start_date())
+    except CompanyLookupError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 def _to_out(url: DiscoveredURL) -> DiscoveredURLOut:

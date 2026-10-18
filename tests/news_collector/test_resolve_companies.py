@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date
+from pathlib import Path
 
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
-from news_collector.api.routers import _common
+from news_collector import companies as companies_module
+from news_collector.api.deps import get_client
+from news_collector.api.routers import _common, cnbc, discovery
 from news_collector.api.schemas import DiscoverRequest, RunAllRequest
 from news_collector.models import Company
 
-_CLIENT = httpx.AsyncClient()
+_CLIENT = httpx.AsyncClient()  # never used: every lookup is faked
 
 _SP500 = [
     Company(ticker="KLAC", name="KLA Corporation", sector="Information Technology"),
@@ -28,12 +33,21 @@ def wikipedia(monkeypatch: pytest.MonkeyPatch) -> list[int]:
         calls.append(1)
         return _SP500
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fake)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fake)
     return calls
 
 
 @pytest.fixture
-def universe(monkeypatch: pytest.MonkeyPatch) -> list[date]:
+def store_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A file where $UNIVERSE_DB_PATH points, so the existence check passes."""
+    path = tmp_path / "universe.db"
+    path.write_bytes(b"")
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(path))
+    return path
+
+
+@pytest.fixture
+def universe(monkeypatch: pytest.MonkeyPatch, store_file: Path) -> list[date]:
     asked: list[date] = []
 
     def fake(as_of: date) -> list[dict]:
@@ -43,8 +57,15 @@ def universe(monkeypatch: pytest.MonkeyPatch) -> list[date]:
             {"Symbol": "KLAC", "Security": "x"},
         ]
 
-    monkeypatch.setattr(_common, "query_as_of", fake)
+    monkeypatch.setattr(companies_module, "query_as_of", fake)
     return asked
+
+
+def _store_raises(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
+    def raises(as_of: date) -> list[dict]:
+        raise exc
+
+    monkeypatch.setattr(companies_module, "query_as_of", raises)
 
 
 @pytest.mark.parametrize("req_cls", [DiscoverRequest, RunAllRequest])
@@ -67,13 +88,11 @@ async def test_current_tickers_do_not_touch_the_universe_store(
     assert universe == []
 
 
-async def test_explicit_names_skip_every_lookup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_explicit_names_skip_every_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
     async def boom(client: httpx.AsyncClient) -> list[Company]:
         raise AssertionError("no lookup when names are given")
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", boom)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", boom)
     req = DiscoverRequest(tickers=["zzz"], company_names=[" Zed Corp "])
     assert await _common.resolve_companies(req, _CLIENT) == [Company(ticker="ZZZ", name="Zed Corp")]
 
@@ -129,50 +148,138 @@ async def test_an_unknown_ticker_that_is_a_substring_of_a_name_is_refused(
         assert "company_names" in exc.value.detail
 
 
-async def test_a_start_date_outside_the_coverage_is_a_clear_422(
-    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int]
+async def test_a_yahoo_style_symbol_is_not_normalized(
+    monkeypatch: pytest.MonkeyPatch, store_file: Path
 ) -> None:
-    def raises(as_of: date) -> list[dict]:
-        raise ValueError("as_of predates the earliest backfilled date")
+    async def fake(client: httpx.AsyncClient) -> list[Company]:
+        return [Company(ticker="BRK.B", name="Berkshire Hathaway")]
 
-    monkeypatch.setattr(_common, "query_as_of", raises)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fake)
+    _store_raises(monkeypatch, ValueError("no data"))
+    with pytest.raises(HTTPException) as exc:
+        await _common.resolve_companies(DiscoverRequest(tickers=["BRK-B"]), _CLIENT)
+    assert exc.value.status_code == 422
+    assert "BRK-B" in exc.value.detail
+
+
+async def test_a_start_date_outside_the_coverage_is_a_clear_422(
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], store_file: Path
+) -> None:
+    _store_raises(monkeypatch, ValueError("as_of predates the earliest backfilled date"))
     with pytest.raises(HTTPException) as exc:
         await _common.resolve_companies(
             DiscoverRequest(tickers=["XRX"], start_date=date(1990, 1, 1)), _CLIENT
         )
     assert exc.value.status_code == 422
     assert "1990-01-01" in exc.value.detail
+    assert "predates" in exc.value.detail
 
 
 async def test_a_missing_store_does_not_break_a_current_ticker(
-    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int]
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], tmp_path: Path
 ) -> None:
-    def raises(as_of: date) -> list[dict]:
-        raise AssertionError("must not be read for current tickers")
-
-    monkeypatch.setattr(_common, "query_as_of", raises)
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(tmp_path / "nope.db"))
     companies = await _common.resolve_companies(DiscoverRequest(tickers=["AAPL"]), _CLIENT)
     assert companies[0].name == "Apple Inc."
 
 
-async def test_a_missing_store_refuses_only_the_leaver(
-    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int]
+async def test_a_missing_store_file_is_reported_and_not_created(
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], tmp_path: Path
 ) -> None:
-    def raises(as_of: date) -> list[dict]:
-        raise ValueError("no backfill has been run yet")
-
-    monkeypatch.setattr(_common, "query_as_of", raises)
+    missing = tmp_path / "nope.db"
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(missing))
     with pytest.raises(HTTPException) as exc:
         await _common.resolve_companies(DiscoverRequest(tickers=["AAPL", "XRX"]), _CLIENT)
     assert exc.value.status_code == 422
     assert "XRX" in exc.value.detail and "AAPL" not in exc.value.detail
+    assert "does not exist" in exc.value.detail
+    assert not missing.exists()  # a read does not write
 
 
-async def test_a_wikipedia_failure_is_a_502(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "error", [PermissionError(13, "Permission denied"), sqlite3.DatabaseError("not a database")]
+)
+async def test_a_store_that_cannot_be_opened_is_a_422_not_a_500(
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], store_file: Path, error: Exception
+) -> None:
+    _store_raises(monkeypatch, error)
+    with pytest.raises(HTTPException) as exc:
+        await _common.resolve_companies(DiscoverRequest(tickers=["XRX"]), _CLIENT)
+    assert exc.value.status_code == 422
+    assert "XRX" in exc.value.detail
+
+
+async def test_a_real_unreadable_file_is_a_422(
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], store_file: Path
+) -> None:
+    store_file.write_bytes(b"this is not a sqlite file" * 100)
+    with pytest.raises(HTTPException) as exc:
+        await _common.resolve_companies(DiscoverRequest(tickers=["XRX"]), _CLIENT)
+    assert exc.value.status_code == 422
+
+
+async def test_a_wikipedia_failure_is_a_502(
+    monkeypatch: pytest.MonkeyPatch, store_file: Path
+) -> None:
     async def fail(client: httpx.AsyncClient) -> list[Company]:
         raise ValueError("markup changed")
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fail)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fail)
+    _store_raises(monkeypatch, ValueError("no data"))
     with pytest.raises(HTTPException) as exc:
         await _common.resolve_companies(DiscoverRequest(tickers=["AAPL"]), _CLIENT)
     assert exc.value.status_code == 502
+    assert "markup changed" in exc.value.detail
+
+
+async def test_when_wikipedia_is_down_the_store_still_names_what_it_knows(
+    monkeypatch: pytest.MonkeyPatch, universe: list[date]
+) -> None:
+    async def fail(client: httpx.AsyncClient) -> list[Company]:
+        raise ValueError("markup changed")
+
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fail)
+    companies = await _common.resolve_companies(DiscoverRequest(tickers=["XRX"]), _CLIENT)
+    assert [(c.ticker, c.name) for c in companies] == [("XRX", "Xerox Holdings")]
+
+
+async def test_when_wikipedia_is_down_a_ticker_the_store_lacks_is_a_502_naming_both(
+    monkeypatch: pytest.MonkeyPatch, universe: list[date]
+) -> None:
+    async def fail(client: httpx.AsyncClient) -> list[Company]:
+        raise ValueError("markup changed")
+
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fail)
+    with pytest.raises(HTTPException) as exc:
+        await _common.resolve_companies(DiscoverRequest(tickers=["XRX", "AAPL"]), _CLIENT)
+    assert exc.value.status_code == 502
+    assert "markup changed" in exc.value.detail
+    assert "AAPL" in exc.value.detail and "XRX" not in exc.value.detail.split("No company")[1]
+
+
+# --- through the routes: the status reaches the caller -------------------------------------
+
+
+def _app() -> TestClient:
+    app = FastAPI()
+    app.include_router(discovery.router)
+    app.include_router(cnbc.router)
+    app.dependency_overrides[get_client] = lambda: None
+    return TestClient(app)
+
+
+def test_run_all_returns_422_for_a_mismatched_names_list() -> None:
+    body = {"tickers": ["AAPL", "KLAC"], "company_names": ["Apple"]}
+    res = _app().post("/discovery/run-all", json=body)
+    assert res.status_code == 422
+    assert "positional" in res.json()["detail"]
+
+
+def test_a_per_domain_route_returns_422_for_an_unknown_ticker(
+    monkeypatch: pytest.MonkeyPatch, wikipedia: list[int], tmp_path: Path
+) -> None:
+    monkeypatch.setenv("UNIVERSE_DB_PATH", str(tmp_path / "nope.db"))
+    res = _app().post("/discover/cnbc", json={"tickers": ["ZZZ"]})
+    assert res.status_code == 422
+    assert "ZZZ" in res.json()["detail"]
+    assert "company_names" in res.json()["detail"]

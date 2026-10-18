@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
+from news_collector import companies as companies_module
 from news_collector.api.routers import _common
 from news_collector.api.schemas import DiscoverRequest, RunAllRequest
 from news_collector.connectors.base import BaseConnector
@@ -112,7 +113,7 @@ async def test_resolve_companies_uses_explicit_tickers_when_given(
     async def fail_if_called(client: httpx.AsyncClient) -> list[Company]:
         raise AssertionError("fetch_sp500_companies should not be called when tickers is given")
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fail_if_called)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fail_if_called)
 
     req = DiscoverRequest(tickers=["aapl", "MSFT"], company_names=["Apple Inc.", "Microsoft Corp."])
     companies = await _common.resolve_companies(req, client=_FAKE_CLIENT)
@@ -132,7 +133,7 @@ async def test_resolve_companies_falls_back_to_wikipedia_when_tickers_omitted(
     async def fake_fetch_sp500(client: httpx.AsyncClient) -> list[Company]:
         return fake_companies
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fake_fetch_sp500)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fake_fetch_sp500)
 
     req = req_cls()  # tickers omitted entirely
     companies = await _common.resolve_companies(req, client=_FAKE_CLIENT)
@@ -148,7 +149,7 @@ async def test_resolve_companies_empty_tickers_list_also_falls_back(
     async def fake_fetch_sp500(client: httpx.AsyncClient) -> list[Company]:
         return fake_companies
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fake_fetch_sp500)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fake_fetch_sp500)
 
     req = DiscoverRequest(tickers=[])
     companies = await _common.resolve_companies(req, client=_FAKE_CLIENT)
@@ -162,7 +163,7 @@ async def test_resolve_companies_translates_wikipedia_failure_to_502(
     async def fake_fetch_sp500(client: httpx.AsyncClient) -> list[Company]:
         raise ValueError("Wikipedia's page markup may have changed")
 
-    monkeypatch.setattr(_common, "fetch_sp500_companies", fake_fetch_sp500)
+    monkeypatch.setattr(companies_module, "fetch_sp500_companies", fake_fetch_sp500)
 
     req = DiscoverRequest()
     with pytest.raises(HTTPException) as exc_info:

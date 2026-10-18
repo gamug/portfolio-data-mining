@@ -119,7 +119,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       under `apps/` or `cli/` has no top-level call before its first project import that reads the environment (`news_collector…`, `data_mining…`,
       `pricing…`, `sec_edgar…`; an import side effect does not count; the test globs both directories); module docs state the rule.
       `scripts/` is out of scope (they take `--db`).
-- [x] **T-067** *(collector API; done 2026-10-18, PR #81: `resolve_companies`, tests in `tests/news_collector/test_resolve_companies.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
+- [x] **T-067** *(collector API; done 2026-10-18, PR #81: `news_collector/companies.py` (shared by `resolve_companies` and the CLI's `--tickers`), tests in `tests/news_collector/test_resolve_companies.py` and `test_main_exit_code.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
       request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a
       `company_names` list whose length differs from `tickers` (422 that says it is positional); when names are omitted, look each ticker up by
       **exact symbol** in `fetch_sp500_companies` (one Wikipedia request, 502 on failure as today). Only for a ticker the current list
