@@ -220,12 +220,14 @@ ordinary word once its suffix is removed, a possessive `s`, an `&` the URL drops
 `PYTHONPATH=src uv run python scripts/known_false_rejects.py` scans `data/retag/removed_articles.csv` for the name as whole words of
 the URL path and writes `data/retag_known_false_rejects.csv` (committed: 433 pairs on 234 URLs, a lower bound; the hand check
 estimates 2.5% of the `reject` class, interval 0.4%-12.9%); `--check` exits 1 when the file differs from the scan. The 19 reviewed
-non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted; `T-062` (below) fixes the matcher.
+non-company hits are `NOISE` (by article id). The rows are quarantined, not deleted. Since the T-062 run (2026-10-17) all 433 are `review`/`loose_name`; the file stays as the historical scan and `--check` still passes (433 rows). About 438 other `reject` pairs have a distinctive non-first word of the name in the URL; they are not fixed, see `TASKS.md` "Known gaps".
 
 `--verdict` prints the `unclear` count per class: an `unclear` label is neither wrong nor correct, so read it
 before trusting a pass.
 
 ## Re-class the rejected pairs (T-062)
+
+**Done on 2026-10-17** on the real `urls.db`: 448 promotions (`reject` 325,423 → 324,975, `review` 51,295 → 51,743, `ok` articles unchanged at 93,224), backup `url_cat_backup.db`, audit list `data/retag/reclass_promoted.csv`, summary `reclass_apply_summary_20261017T232931362685Z.json`. The steps below are kept as the record and the rollback guide; a second `--apply` writes nothing. If `--apply` refuses because the audit list exists, move the old file or pass another `--list` (a leftover test file caused the first attempt's refusal).
 
 The matcher reads a name the URL spells loosely as `review` with reason `loose_name`, never `reject`: the
 name with its corporate suffix kept (`kla-corporation`, `news-corp`), with the `and` of an `&` dropped,
@@ -301,17 +303,9 @@ inside the backup leaves a partial file that the next run refuses until it is mo
 into the file, and a reader on `portfolio-common` 1.2.1 refuses a database whose `-wal` is not empty (1.2.2 refuses
 only a non-empty `-wal` with no `-shm`). If a reader holds the log the run says so and the log clears when it closes.
 
-**Rehearse first** (once, with the collector running or not; it never writes to the real file):
-`PYTHONPATH=src uv run python scripts/rehearse_reclass.py --real-db /workspaces/thesis/data/urls.db --workdir
-/workspaces/thesis/data/rehearsal --lock-test --articles`. It needs about 9 GB free on the **same drive** (it refuses a
-directory on another filesystem), copies the database with SQLite's online backup, then runs a second writer holding the
-lock (apply must refuse), apply with a backup, the `-wal`/`-shm` state, a second apply (writes nothing), revert, and the
-`EXCEPT` comparison with the pristine copy, prints a Markdown report, writes `rehearsal_report.json`, asserts the real
-file's size and mtime are unchanged, removes its copies (`--keep` to keep them) and exits 1 if any check fails. It takes
-about 50 minutes with `--articles`.
+The rehearsal script that exercised this sequence on a copy (`scripts/rehearse_reclass.py`) was removed after the real run of
+2026-10-17; it is in the git history (added in `417af01`, last present at `4bfa812^`: `git show 4bfa812^:scripts/rehearse_reclass.py`).
 
-0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
-   50 minutes, and never writes to the real file.
 1. T-062 (PR #66), the docs PR #67 and the remedy fix PR #69 are merged (step 6 below prints a `python3 -c` command, not
    `sqlite3`, and the reader-problem remedy printed by the script is a `python3 -c` command too) and the code is updated
    on the machine that runs the collector and the crawler (`git pull`, then `uv sync`: master pins `portfolio-common`
@@ -319,7 +313,8 @@ about 50 minutes with `--articles`.
    the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
-3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
+3. Dry run on the real database and check the counts (the plan line must show the expected number of promotions; on 2026-10-17 it
+   showed 448): `PYTHONPATH=src uv run python
    scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db`.
 4. Apply with a new backup name:
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup

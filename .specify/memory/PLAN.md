@@ -1147,8 +1147,7 @@ estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, sc
 re-measured and the figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, the real run is rehearsed on a
 same-mount copy and then done with a backup, and `portfolio-nlp` is told what changes for it. No schema change.
 
-**Status: in progress** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The
-code, the tests, the rehearsal and the hand checks are done; the real run and the hand-off are open.
+**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is prepared as `handoff-portfolio-nlp.md` (delivery pending with the maintainer).
 
 - **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never `reject`:
   the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name (`pepsi` for
@@ -1170,14 +1169,14 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   prints the backup, list and summary paths absolute. `--revert LIST` validates its list before anything (columns,
   integer unique ids, each row a promotion, same ticker and url as the database) and touches only the listed pair. A
   failure prints the remedy that fits (data: how to undo; reader: checkpoint or `uv sync`, no revert). Each stage prints
-  its duration. `scripts/rehearse_reclass.py` runs the whole sequence on a same-mount copy and reports.
+  its duration. The whole sequence was rehearsed on a same-mount copy with `scripts/rehearse_reclass.py` (removed after the real run; see git history).
   `ticker_validation_sample.py --refresh` and `loose_name_precision.py` keep the hand-check sheets current.
 - **Real-database evidence** (read-only, `urls.db`, 2026-10-17). Dry run: **448 promotions**, all `review`/`loose_name`,
   none `accept`: 448 of 448 promoted articles are already quarantined (before quarantine `ok` 417, `failed` 25,
   `thin_content` 6), none is `skipped`, `api` has no `reject` row, predicted sync 0 quarantined / 0 released, the `ok`
   articles stay 93,224 (News Corp 413 pairs: `NWSA` 207, `NWS` 206, on 210 distinct URLs; `KLAC` 16, `SO` 11, `BAC` 4,
   `DG`/`IFF`/`PEP`/`TTD` 1). Classes: `reject` 325,423 -> 324,975, `review` 51,295 -> 51,743, `accept` 104,614.
-  Rehearsal with `rehearse_reclass.py` on a copy (2.3 GB) on the same mounted drive, commit `ff51985`,
+  Rehearsal with `rehearse_reclass.py` (removed 2026-10-18, see `4bfa812`) on a copy (2.3 GB) on the same mounted drive, commit `ff51985`,
   `portfolio-common` 1.2.2: 12 checks, all held. Apply **925.3 s** (fingerprint 46.9 s, plan 63.6 s, report 146.7 s,
   backup + `quick_check` + SHA-256 346.0 s, update + sync 120.8 s, verify 130.6 s), `-wal` 0 bytes afterwards; a second
   apply wrote nothing (581.3 s); revert **773.8 s**, `-wal` 0 bytes; the reverted copy equals the pristine one (`EXCEPT`
@@ -1198,8 +1197,10 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
 - **Known gap** (read-only scan of 2026-10-16, on the rule of that day: 442 promotions, `reject` 324,981; the shipped
   rule promotes 448, so `reject` is **324,975** after the run, 325,423 before): 438 `reject` rows have a distinctive
   non-first word of the company name in the URL, almost all generic words (`service`, `estate`, `equities`), a handful
-  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). The 438 was not re-measured after the fix; it can differ by at most the 5
-  pairs the fix put back to `reject` (`AT&T`, `target-corporations`) and by the 11 legal-name pairs now promoted. Not
+  real (`DIS` 3, `SCHW` 3, some `LYV`, `BAC`). **Re-measured on 2026-10-18** on the real `urls.db` after the run (read-only; the rule is a reconstruction of the 2026-10-16 description, not the original script, and it reproduces the count 438, the set was not compared: a word of the normalized name
+  other than the first, 5+ characters, not in `STOPWORDS`, whole word of the URL path; top words `service` 82, `nation` 69,
+  `estate` 50, `semiconductor` 40): still **438** pairs on 438 URLs (tickers `LYV` 77, `ARE` 74, `PEG` 67, `ON` 40, `A` 31,
+  `UAL` 28), so the count did not change after the fix and the 11 legal-name pairs. Not
   fixed here, below the T-057 hand check's resolution.
 - **Owner of the hand-read lists:** `matching.PLURAL_PHRASES` and the camel-tail names are re-scanned by whoever changes
   the company universe (a new two-word name that is also a plural noun is read as a spelling and lands in `review`,
@@ -1207,18 +1208,10 @@ code, the tests, the rehearsal and the hand checks are done; the real run and th
   universe-change task, and `loose_name_precision.py sample` re-measures the rate. The legal-name gap found in Work item
   13 (11 News Corp pairs on 8 URLs, `news-corporation` in the slug) is closed: the rule reads a trailing `Corp` spelled
   out, the pairs are `review`, the figures of this item are on 448.
-- **Open:** the maintainer's go-ahead and the real `--apply` (collector and crawler stopped, merged code deployed, `uv
-  sync` to `portfolio-common` 1.2.2, new backup path; the checklist is in `docs/modules/news-collector.md`), then the
-  close-out (move `T-062` to `CHANGELOG.md`, update `SPEC.md`/`PLAN.md`/`TASKS.md`, reconcile the two architecture
-  artifacts content-only, constitution #11 and #12) and the `portfolio-nlp` hand-off; the News Corp pairs stay `review`
-  for the NER check (Work item 13, closed by decision). The close-out also drops `T-063` from the docstrings of
-  `scripts/rehearse_reclass.py` and `tests/scripts/test_rehearse_reclass.py`, and checks that `SPEC.md` FR-014 (the
-  doubt rule, confirmed by the maintainer) still matches. The runbook fixes (#67, #69) are merged; the real run needs
-  the legal-name PR merged first, because without it the run promotes 437, not 448.
-- **Scripts after the run (maintainer decides):** `T-063` needs no script, so the only reason to keep
-  `reclass_rejects.py` is its `--revert` as the rollback of the run; recommended: keep both scripts until the maintainer
-  has checked the run, then remove them with their tests in `T-062`'s close-out commit. The audit list, the run summary
-  and the backup are the record.
+- **Real run (2026-10-17, `urls.db`, collector and crawler stopped, `portfolio-common` 1.2.2, master `0c14a5a`).** Dry run **448 promotions** (all `review`/`loose_name`; `ok` 417, `failed` 25, `thin_content` 6 before quarantine; 448 of 448 articles already quarantined; predicted sync 0/0; 5 min). Apply 22 min 7 s on the shared drive (fingerprint 54.5 s, plan 77.6 s, report 168.0 s, backup + `quick_check` + SHA-256 402.6 s, update + sync 137.2 s, verify 150.9 s), backup `/workspaces/thesis/data/url_cat_backup.db` (SHA-256 `5cfb1b21…c8887`), audit list `data/retag/reclass_promoted.csv` (448 rows), summary `data/retag/reclass_apply_summary_20261017T232931362685Z.json`; post-conditions ok, rows changed 448, sync 0 quarantined / 0 released, WAL truncated, reader check `attach(read_only=True)` ok (481,332 pairs, 93,224 readable articles). Classes: `reject` 325,423 → **324,975**, `review` 51,295 → **51,743**, `accept` 104,614 unchanged, `loose_name` 448, `articles.fetch_status` unchanged (`ok` 93,224). Read back afterwards: no `accept` pair holds a quarantined article; `news-corporation` URLs are 13 `review` pairs; no `Coherent Corp.` or `Vistra Corp.` URL spells `corporation` yet. The first apply attempt of the same day wrote nothing: it refused because a leftover 2-row test file sat at the `--list` path (the script's refusal worked as designed; the file was moved to `data/retag/reclass_promoted.fixture-2026-10-16.csv`).
+- **Closed:** the follow-ups are the `portfolio-nlp` NER check on the `review` class (Work item 13; not built) and the known gap in Work item 12 above (438 pairs, re-measured after the run; no owner yet, listed in `TASKS.md`). `SPEC.md` FR-014 matches (the doubt rule, and a loosely spelled full name is `review`, never `reject`). The architecture artifacts were reconciled in the close-out.
+- **Scripts after the run:** `T-063` needs no script; `reclass_rejects.py` is kept for its `--revert` as the rollback of the run. `rehearse_reclass.py` and its test were removed after the real run (maintainer, 2026-10-18); `reclass_rejects.py` stays
+  as the rollback and as the pattern for the NER apply-verdicts pass. The audit list, the run summary and the backup are the record.
 
 ## Work item 13 — The News Corp pairs wait for the NER check (decision, T-063 closed without code)
 
@@ -1256,8 +1249,8 @@ no release: the News Corp pairs stay what `T-062` makes them.
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
-quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
-in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
+quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
+2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
