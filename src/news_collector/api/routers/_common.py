@@ -10,6 +10,7 @@ from collections.abc import Callable
 import httpx
 from fastapi import HTTPException
 
+from data_mining.db import resolve_db_path
 from news_collector.api.schemas import (
     DiscoveredURLOut,
     DiscoverRequest,
@@ -154,7 +155,7 @@ async def run_domain_discovery(
         start=req.start_date or default_start_date(),
         end=req.end_date or default_end_date(),
     )
-    queue = URLQueue(req.db_path)
+    queue = URLQueue(resolve_db_path(req.db_path))
     queue.initialize()
 
     # Bounds how many tickers are discovered in parallel for this single domain —

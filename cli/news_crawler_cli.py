@@ -17,7 +17,6 @@ Usage:
 
 import argparse
 import asyncio
-import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,6 +27,7 @@ import httpx
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+from data_mining.db import resolve_db_path
 from extractor.db import (
     connect,
     ensure_articles_table,
@@ -46,7 +46,7 @@ load_dotenv()
 # an env var so pointing this at a real connection string later is a
 # one-line env change, not a code change. Falls back to the pre-existing
 # default when unset.
-DEFAULT_DB = os.environ.get("DATABASE_URL", "data/urls.db")
+DEFAULT_DB = resolve_db_path()
 
 
 def parse_args() -> argparse.Namespace:

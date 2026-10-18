@@ -23,7 +23,6 @@ Run:
 
 from __future__ import annotations
 
-import os
 import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -38,6 +37,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from portfolio_common.db import Database
 from pydantic import BaseModel
 
+from data_mining.db import resolve_db_path
 from extractor.db import (
     connect,
     ensure_articles_table,
@@ -65,7 +65,7 @@ load_dotenv()
 # one-line env change, not a code change. Falls back to the pre-existing
 # default when unset. Same path news_collector defaults to, since both
 # pipeline stages share one physical database file.
-DEFAULT_DB = os.environ.get("DATABASE_URL", "data/urls.db")
+DEFAULT_DB = resolve_db_path()
 
 # Same defaults as run_extraction.py: cnbc.com gets its own budget since it's
 # ~86% of the corpus. One scheduler shared across requests, same as the CLI

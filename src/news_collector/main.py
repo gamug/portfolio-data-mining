@@ -15,13 +15,13 @@ import argparse
 import asyncio
 import csv
 import json
-import os
 import sys
 from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from data_mining.db import resolve_db_path
 from news_collector.config import default_end_date, default_start_date
 from news_collector.models import Company, DateRange
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
@@ -68,7 +68,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
         end=_parse_date(args.end_date),
     )
 
-    db_path = Path(args.db)
+    db_path = Path(resolve_db_path(args.db))
     queue = URLQueue(db_path)
 
     async with build_client() as client:
@@ -134,7 +134,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
 
 def cmd_stats(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
-    queue = URLQueue(args.db)
+    queue = URLQueue(resolve_db_path(args.db))
     queue.initialize()
     stats = queue.stats()
     print(json.dumps(stats, indent=2))
@@ -142,7 +142,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 def cmd_export(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
-    queue = URLQueue(args.db)
+    queue = URLQueue(resolve_db_path(args.db))
     queue.initialize()
     count = queue.export_pending_csv(args.output)
     print(f"Exported {count} pending URLs to {args.output}")
@@ -155,8 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--db",
-        default=os.environ.get("DATABASE_URL", "data/urls.db"),
-        help="SQLite database path (default: $DATABASE_URL if set, else data/urls.db)",
+        default=None,
+        help="SQLite database path (default: $DATABASE_URL if set and not empty, else data/urls.db)",
     )
     parser.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
