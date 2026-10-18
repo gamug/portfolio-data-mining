@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from data_mining.db import resolve_db_path
 from news_collector.api.deps import get_client
 from news_collector.api.routers._common import _to_out, resolve_companies
 from news_collector.api.schemas import (
@@ -43,7 +44,7 @@ async def run_all(
         start=req.start_date or default_start_date(),
         end=req.end_date or default_end_date(),
     )
-    queue = URLQueue(req.db_path)
+    queue = URLQueue(resolve_db_path(req.db_path))
 
     connectors = build_connectors(client)
     orchestrator = DiscoveryOrchestrator(
@@ -76,10 +77,12 @@ async def run_all(
 
 @router.get("/stats", response_model=QueueStatsResponse)
 async def queue_stats(
-    db_path: str = Query(default="data/urls.db", description="Path to the SQLite queue database"),
+    db_path: str | None = Query(
+        default=None, description="Path to the SQLite queue database (default: $DATABASE_URL)"
+    ),
 ) -> QueueStatsResponse:
     """Return current queue statistics (total, by status, by domain)."""
-    queue = URLQueue(db_path)
+    queue = URLQueue(resolve_db_path(db_path))
     queue.initialize()
     raw = queue.stats()
     return QueueStatsResponse(
@@ -95,10 +98,12 @@ async def get_pending(
     domain: str | None = Query(default=None, description="Filter by domain"),
     ticker: str | None = Query(default=None, description="Filter by ticker"),
     limit: int = Query(default=100, ge=1, le=5000, description="Maximum rows to return"),
-    db_path: str = Query(default="data/urls.db", description="Path to the SQLite queue database"),
+    db_path: str | None = Query(
+        default=None, description="Path to the SQLite queue database (default: $DATABASE_URL)"
+    ),
 ) -> list[DiscoveredURLOut]:
     """Return pending URLs from the queue, with optional domain/ticker filters."""
-    queue = URLQueue(db_path)
+    queue = URLQueue(resolve_db_path(db_path))
     queue.initialize()
     pending = queue.get_pending(domain=domain, ticker=ticker, limit=limit)
     return [_to_out(u) for u in pending]
@@ -138,7 +143,9 @@ async def query_urls(
     descending: bool = Query(default=True, description="Sort descending (default) or ascending"),
     limit: int = Query(default=100, ge=1, le=5000, description="Maximum rows to return"),
     offset: int = Query(default=0, ge=0, description="Rows to skip, for pagination"),
-    db_path: str = Query(default="data/urls.db", description="Path to the SQLite queue database"),
+    db_path: str | None = Query(
+        default=None, description="Path to the SQLite queue database (default: $DATABASE_URL)"
+    ),
 ) -> QueryResponse:
     """
     Ad-hoc query over the URL queue.
@@ -147,7 +154,7 @@ async def query_urls(
     filters to inspect the database directly (e.g. failed fetches for a ticker,
     or everything discovered via a given source in a date range).
     """
-    queue = URLQueue(db_path)
+    queue = URLQueue(resolve_db_path(db_path))
     queue.initialize()
     try:
         rows, total = queue.query(

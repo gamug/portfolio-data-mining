@@ -38,7 +38,9 @@ class DiscoverRequest(BaseModel):
     end_date: date | None = Field(
         default=None, description="Inclusive end date for discovery." + _DATE_DEFAULT_NOTE
     )
-    db_path: str = Field(default="data/urls.db", description="Path to the SQLite queue database")
+    db_path: str | None = Field(
+        default=None, description="Path to the SQLite queue database (default: $DATABASE_URL)"
+    )
     concurrency: int = Field(
         default=5, ge=1, le=20, description="Max tickers discovered in parallel for this domain"
     )
@@ -65,7 +67,9 @@ class RunAllRequest(BaseModel):
         default=None,
         description="Subset of the 7 supported domains. None means all.",
     )
-    db_path: str = Field(default="data/urls.db", description="SQLite queue path")
+    db_path: str | None = Field(
+        default=None, description="SQLite queue path (default: $DATABASE_URL)"
+    )
     concurrency: int = Field(default=5, ge=1, le=20, description="Max parallel discovery tasks")
     resume: bool = Field(
         default=True,

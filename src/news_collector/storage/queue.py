@@ -83,6 +83,10 @@ class URLQueue:
     """
 
     def __init__(self, db_path: str | Path) -> None:
+        # `str(None)` is "None": a caller that forgot to resolve its path would create a
+        # file named `None` (T-065). Callers resolve with `data_mining.resolve_db_path`.
+        if db_path is None or str(db_path).strip() in ("", "."):  # Path("") is "."
+            raise ValueError("URLQueue needs a database path (use data_mining.resolve_db_path)")
         self._db_path = str(db_path)
         self._conn: Database | None = None
         # Read by the caller right after `enqueue_batch` (it has no await in it).
