@@ -138,11 +138,16 @@ stack actually pinned in `pyproject.toml`.
    `UNIVERSE_DB_PATH`, `FINNHUB_API_KEY`, `NAME`/`EMAIL`,
    `DISCOVERY_START_DATE`/`DISCOVERY_END_DATE`, `SEEKINGALPHA_RAPIDAPI_KEY`,
    and the optional proxy vars; `.env.example` is the committed template —
-   keep it in sync with every env var a new feature reads. Unlike a
-   single-service repo, **every** `apps/*_api.py` calls `load_dotenv()`
-   itself (plus `news_collector.config`/`news_collector.main`) — that
-   repetition is deliberate, not debt, so each service stays independently
-   runnable with no shared bootstrap module to import first.
+   keep it in sync with every env var a new feature reads. **`.env` wins
+   over the inherited (system) environment**; the system value is the
+   fallback when the file is missing or the variable is absent or empty in
+   it. Every `apps/*.py` and `cli/*.py` entry point calls
+   `data_mining.env.load_env()` first, before any project import that reads
+   the environment (`load_env(path)` takes an explicit file for tests); it
+   logs one line per variable it overrides and never prints a secret's
+   value. The shared function replaces the earlier per-service
+   `load_dotenv()` calls so the rule cannot drift between files; an AST
+   test over `apps/` and `cli/` fails when an entry point lacks the call.
 8. **Naming**: modules and functions describe the pipeline stage or
    Finnhub/EDGAR domain they implement, matching the stage/table pairing
    (`discover` → `discovered_urls`, `extract` → `articles`) and each
@@ -423,4 +428,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.8.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-15
+**Version**: 2.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-18

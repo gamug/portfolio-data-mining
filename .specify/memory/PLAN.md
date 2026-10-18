@@ -1246,7 +1246,7 @@ no release: the News Corp pairs stay what `T-062` makes them.
 
 ## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (code, `T-064`–`T-067`)
 
-**Status: `T-064` closed 2026-10-18 (PR #73; its step 5 was redefined as a read-only check, see `TASKS.md`); `T-075` done in PR #75; `T-065` done in PR #79; `T-076` done in PR #78 (option: drop the dead `ft`/`nasdaq` roots, failures loud); `T-066a` done in PR #80; `T-067` done in PR #81; `T-066b` open, not scheduled (added 2026-10-18; the maintainer schedules them).** Found by the `T-062` step 6 check: a
+**Status: `T-064` closed 2026-10-18 (PR #73; its step 5 was redefined as a read-only check, see `TASKS.md`); `T-075` done in PR #75; `T-065` done in PR #79; `T-076` done in PR #78 (option: drop the dead `ft`/`nasdaq` roots, failures loud); `T-066a` done in PR #80; `T-066b` design agreed, code not started; `T-067` done in PR #81 (added 2026-10-18; the maintainer schedules them).** Found by the `T-062` step 6 check: a
 `KLAC` discovery through `POST /collector/discover/cnbc/` on the real `urls.db` returned `too many SQL variables` and
 inserted nothing. `enqueue_batch` and `_count_new_rejected` (`src/news_collector/storage/queue.py`, from `T-056c`) bind
 two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 32,766, so a batch above about 16,000 pairs
@@ -1259,8 +1259,8 @@ batch; nothing is corrupted when the rejects exceed the limit (it fails before t
 `T-065`, `T-066a`/`T-066b`, `T-067` (same Work item, found the same day while validating the database after the gateway restart): the
 collector API's routers and request schemas pass the literal `data/urls.db` (an empty file) as `db_path`, and seven sites open the queue without a shared resolver, so the `$DATABASE_URL` fallback is not applied (`T-065`); the container sets
 `DATABASE_URL="../data/urls.db"` in `/etc/environment`, which beat `.env`: `.env` is read today only as an import side effect of the sub-apps and of `news_collector/config.py`, each with `override=False`, and nothing logs which value won; the maintainer
-made reading `.env` a mandatory rule for every app and CLI (`T-066a`/`T-066b`, the latter with a test that enforces it; the maintainer decided 2026-10-18 that the inherited
-environment stays above `.env`, as `news_collector/config.py` has it, and that a conflict is logged as a warning instead of being silent); and a discovery request without
+made reading `.env` a mandatory rule for every app and CLI (`T-066a`/`T-066b`, the latter with a test that enforces it; the maintainer first decided 2026-10-18 that the inherited
+environment stays above `.env`, and then, in the `T-066b` design session the same day, reversed it: `.env` wins, the system value is the fallback, every variable, through a shared `load_env()`; constitution rule 7 amended, version 2.0.0); and a discovery request without
 `company_names` stored the ticker as the company and got rejected (`T-067`, fixed in PR #81: names are positional and looked up when omitted). Workaround until `T-066b`: start with
 `DATABASE_URL=/workspaces/thesis/data/urls.db`, pass `db_path`.
 

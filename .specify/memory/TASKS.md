@@ -68,7 +68,7 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
-`T-066b` waits for the maintainer's constitution rule 7 decision.
+`T-066b` has its design (rule 7 amended, `.env` wins) and is next in the code.
 
 - [x] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
       (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
@@ -111,14 +111,25 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       start on an empty database. Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of the
       log line, the warning, the refusal for a missing file, a schema-only file (the case that happened) and a populated file, and the flag; a plain
       gateway start on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (unset by default).
-- [ ] **T-066b** *(blocked on the maintainer's constitution rule 7 decision)* Rule 7 says each service calls `load_dotenv()` itself,
-      "deliberate, not debt", with no shared bootstrap module. The maintainer chooses (a) amend rule 7 to name a shared `data_mining.env.load_env()`,
-      the AST test and the new variables, or (b) keep each service's own call and enforce the same behavior with the AST test plus a shared
-      behavior test. Then, for all five apps and four CLIs: an explicit top-level call first (repo-root `.env` lookup, `override=False`,
-      `config.py` unchanged in behavior). Acceptance: tests of precedence, root lookup and a missing file; an AST test that fails when a file
-      under `apps/` or `cli/` has no top-level call before its first project import that reads the environment (`news_collector…`, `data_mining…`,
-      `pricing…`, `sec_edgar…`; an import side effect does not count; the test globs both directories); module docs state the rule.
-      `scripts/` is out of scope (they take `--db`).
+- [ ] **T-066b** *(design agreed with the maintainer 2026-10-18; rule 7 amended in the same docs PR, code in the next PR)* `.env` wins over the
+      inherited environment (this machine's `/etc/environment` sets `DATABASE_URL="../data/urls.db"`); the system value is the fallback.
+      Design, in the order the maintainer decided it:
+      (1) **Goal:** `.env` first; if the file or the variable is missing, the system variable. This supersedes the 2026-10-18 option B
+      (inherited above `.env`).
+      (2) **Scope:** every variable in `.env`, not only `DATABASE_URL`.
+      (3) **Mechanism (rule 7 option a):** `data_mining/env.py` with `load_env(path=None)`: finds the repo-root `.env` (not the current directory),
+      and sets each non-empty value in it over the inherited one.
+      (4) **Tests:** `load_env(path)` takes a tmp file; an autouse fixture in `tests/conftest.py` points the root lookup at a missing file so no test reads the real `.env`.
+      (5) **Empty value:** a blank `.env` value counts as absent (the system value stays), as an empty `DATABASE_URL` means unset in `T-065`.
+      (6) **Notice:** one log line per overridden variable naming the inherited and the used value; for a secret (key, token, password, proxy credentials) only the
+      name, never a value. The `T-066a` warning that an inherited value hides `.env` is reworded to this (the check's source label stays `.env`/`inherited`/`default`).
+      (7) **Enforcement:** an AST test over `apps/` and `cli/` (5 apps, 4 CLIs, the test globs both) fails when a file has no top-level `load_env()` before its first
+      project import that reads the environment (`news_collector…`, `data_mining…`, `pricing…`, `sec_edgar…`; an import side effect does not count). `scripts/` out of scope (they take `--db`).
+      Also: replace the `load_dotenv()` calls in the sub-apps, `news_collector/main.py` and `news_collector/config.py` with `load_env()` (or remove them where the entry
+      point already called it); update `.env.example`, the module docs and the `T-066a` tests that assert the inherited value wins.
+      Acceptance: tests of precedence (`.env` over inherited), fallback (missing file, absent variable, blank value), root lookup from another working directory,
+      the notice without a secret's value, the AST test (fails on a file without the call), and the real gateway start on this machine with the wrong inherited value
+      using the `.env` database.
 - [x] **T-067** *(collector API; done 2026-10-18, PR #81: `news_collector/companies.py` (shared by `resolve_companies` and the CLI's `--tickers`), tests in `tests/news_collector/test_resolve_companies.py` and `test_main_exit_code.py`; the leaver lookup is the maintainer's to confirm)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
       request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a
       `company_names` list whose length differs from `tickers` (422 that says it is positional); when names are omitted, look each ticker up by
