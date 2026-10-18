@@ -303,17 +303,9 @@ inside the backup leaves a partial file that the next run refuses until it is mo
 into the file, and a reader on `portfolio-common` 1.2.1 refuses a database whose `-wal` is not empty (1.2.2 refuses
 only a non-empty `-wal` with no `-shm`). If a reader holds the log the run says so and the log clears when it closes.
 
-**Rehearse first** (once, with the collector running or not; it never writes to the real file):
-`PYTHONPATH=src uv run python scripts/rehearse_reclass.py --real-db /workspaces/thesis/data/urls.db --workdir
-/workspaces/thesis/data/rehearsal --lock-test --articles`. It needs about 9 GB free on the **same drive** (it refuses a
-directory on another filesystem), copies the database with SQLite's online backup, then runs a second writer holding the
-lock (apply must refuse), apply with a backup, the `-wal`/`-shm` state, a second apply (writes nothing), revert, and the
-`EXCEPT` comparison with the pristine copy, prints a Markdown report, writes `rehearsal_report.json`, asserts the real
-file's size and mtime are unchanged, removes its copies (`--keep` to keep them) and exits 1 if any check fails. It takes
-about 50 minutes with `--articles`.
+The rehearsal script that exercised this sequence on a copy (`scripts/rehearse_reclass.py`) was removed after the real run of
+2026-10-17; it is in the git history (commit `ff51985` and before) if a similar run ever needs it.
 
-0. Rehearse (optional, once, recommended): the paragraph above. It needs about 9 GB free on the same drive and about
-   50 minutes, and never writes to the real file.
 1. T-062 (PR #66), the docs PR #67 and the remedy fix PR #69 are merged (step 6 below prints a `python3 -c` command, not
    `sqlite3`, and the reader-problem remedy printed by the script is a `python3 -c` command too) and the code is updated
    on the machine that runs the collector and the crawler (`git pull`, then `uv sync`: master pins `portfolio-common`
@@ -321,7 +313,7 @@ about 50 minutes with `--articles`.
    the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
-3. Dry run on the real database and compare it with the rehearsal: `PYTHONPATH=src uv run python
+3. Dry run on the real database and check the counts: `PYTHONPATH=src uv run python
    scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db`.
 4. Apply with a new backup name:
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup
