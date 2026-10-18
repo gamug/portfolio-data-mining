@@ -27,9 +27,10 @@ ALLOW_NEW_DB_FLAG = "--allow-new-db"
 _ALLOW_NEW_DB_ENV = "ALLOW_NEW_DB"
 _TRUE = {"1", "true", "yes", "on"}
 
-# What was reported in this process already: the gateway forwards the lifespan of the
-# services it mounts, so each of them would repeat the same lines.
-_reported: set[str] = set()
+# What was inspected in this process already, by resolved path and source: the gateway forwards
+# the lifespan of the services it mounts, so each of them would repeat the same lines and the
+# same read of the file (a `COUNT(*)` over about a million rows takes 0.65 s).
+_reports: dict[str, DbReport] = {}
 
 
 class StartupCheckError(RuntimeError):
@@ -59,8 +60,12 @@ def allow_new_db() -> bool:
     return os.environ.get(_ALLOW_NEW_DB_ENV, "").strip().lower() in _TRUE
 
 
-def inspect_database(dotenv_path: str | Path | None = None) -> DbReport:
-    """Resolve `DATABASE_URL` the way the services do and look at the file, read-only."""
+def _resolve_source(dotenv_path: str | Path | None) -> tuple[Path, str, list[str]]:
+    """The absolute path, where the value came from, and the warnings about it. No file access.
+
+    The source is `.env`, `inherited` or `default`. A value that is both inherited and in `.env`
+    (identical) reports `.env`.
+    """
     inherited = os.environ.get("DATABASE_URL", "").strip()
     # `load_dotenv(override=False)` leaves no trace of the value that lost, so read the file.
     from_env_file = (dotenv_values(dotenv_path).get("DATABASE_URL") or "").strip()
@@ -81,8 +86,10 @@ def inspect_database(dotenv_path: str | Path | None = None) -> DbReport:
                 f"DATABASE_URL is inherited from the environment ({inherited!r}) and differs "
                 f"from .env ({from_env_file!r}); the inherited value wins"
             )
+    return Path(resolve_db_path()).resolve(), source, warnings
 
-    path = Path(resolve_db_path()).resolve()
+
+def _look(path: Path, source: str, warnings: list[str]) -> DbReport:
     report = DbReport(
         path=path,
         source=source,
@@ -94,6 +101,11 @@ def inspect_database(dotenv_path: str | Path | None = None) -> DbReport:
     if report.exists:
         _read_counts(report)
     return report
+
+
+def inspect_database(dotenv_path: str | Path | None = None) -> DbReport:
+    """Resolve `DATABASE_URL` the way the services do and look at the file, read-only."""
+    return _look(*_resolve_source(dotenv_path))
 
 
 def _read_counts(report: DbReport) -> None:
@@ -109,7 +121,7 @@ def _read_counts(report: DbReport) -> None:
         report.has_table = row is not None
         if report.has_table:
             report.rows = conn.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()[0]
-    except sqlite3.Error as exc:  # not a database, or locked, or a stale WAL
+    except sqlite3.Error as exc:  # not a database, or locked, or a stale WAL (see _problem)
         report.error = str(exc)
     finally:
         conn.close()
@@ -135,6 +147,8 @@ def check_startup(
 ) -> DbReport:
     """Log the effective database, warn on a hidden `.env` value, refuse an unusable one.
 
+    The first call per process inspects the file and logs; later calls (the gateway forwards the
+    lifespan of the apps it mounts) reuse that report and apply their own rule to it.
     `creates_db=False` (gateway, crawler): refuse a missing file, a missing `discovered_urls`
     table or no rows (a schema with no rows is exactly the file that once served `total: 0`).
     `creates_db=True` (collector, which creates the database on first use): refuse only a
@@ -143,10 +157,12 @@ def check_startup(
     `apply_allow_new_db_flag`) lets the first kind start on an empty database.
     Raises `StartupCheckError`.
     """
-    report = inspect_database(dotenv_path)
-    key = f"{report.path}|{report.source}"
-    first = key not in _reported
-    _reported.add(key)
+    path, source, warnings = _resolve_source(dotenv_path)
+    key = f"{path}|{source}"
+    first = key not in _reports
+    if first:
+        _reports[key] = _look(path, source, warnings)
+    report = _reports[key]
     if first:
         log.info(_log_line(report))
         for warning in report.warnings:
@@ -154,6 +170,7 @@ def check_startup(
 
     problem = _problem(report, creates_db, allow_new_db() if allow_new is None else allow_new)
     if problem:
+        log.error("Refusing to start: %s. %s", _log_line(report), problem)
         raise StartupCheckError(
             f"{_log_line(report)}. {problem} Set DATABASE_URL to the real database (or unset the "
             f"inherited value so .env applies); to start on an empty database on purpose, set "
@@ -167,7 +184,10 @@ def check_startup(
 def _problem(report: DbReport, creates_db: bool, allow_new: bool) -> str | None:
     """Why this service must not start on `report`, or None."""
     if report.error:
-        return "The file cannot be read as a database."
+        return (
+            "The file could not be opened read-only: this can be a stale or locked WAL "
+            "(a leftover -wal/-shm beside it), not necessarily a corrupt file."
+        )
     if creates_db:
         return (
             None if report.parent_exists else f"The directory {report.path.parent} does not exist."

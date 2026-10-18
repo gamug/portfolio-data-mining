@@ -25,11 +25,11 @@ from news_collector.storage.queue import URLQueue
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    startup_check._reported.clear()
+    startup_check._reports.clear()
     monkeypatch.delenv("ALLOW_NEW_DB", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     yield
-    startup_check._reported.clear()
+    startup_check._reports.clear()
 
 
 def _schema_only(path: Path) -> Path:
@@ -188,7 +188,7 @@ def test_a_file_that_is_not_a_database_is_refused_by_both(
     bad.write_bytes(b"this is not sqlite" * 100)
     monkeypatch.setenv("DATABASE_URL", str(bad))
     for creates in (False, True):
-        with pytest.raises(StartupCheckError, match="cannot be read"):
+        with pytest.raises(StartupCheckError, match="could not be opened"):
             check_startup(creates_db=creates, dotenv_path=_env_file(tmp_path, None))
 
 
@@ -217,7 +217,7 @@ def test_crawler_app_refuses_to_start_on_an_empty_database(
     with pytest.raises(StartupCheckError), TestClient(news_crawler_api.app):
         pass
     monkeypatch.setenv("DATABASE_URL", str(_populated(tmp_path / "real.db")))
-    startup_check._reported.clear()
+    startup_check._reports.clear()
     with TestClient(news_crawler_api.app):
         pass
 
@@ -239,3 +239,57 @@ def test_collector_app_starts_on_a_new_database_and_refuses_a_missing_directory(
     monkeypatch.setenv("DATABASE_URL", str(tmp_path / "no-dir" / "urls.db"))
     with pytest.raises(StartupCheckError, match="directory"), TestClient(news_collector_api.app):
         pass
+
+
+def test_second_check_reuses_the_report_and_does_not_open_the_database_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", str(_populated(tmp_path / "real.db")))
+    reads: list[Path] = []
+    real_read = startup_check._read_counts
+    monkeypatch.setattr(
+        startup_check, "_read_counts", lambda r: (reads.append(r.path), real_read(r))[1]
+    )
+    env_file = _env_file(tmp_path, None)
+    check_startup(creates_db=False, dotenv_path=env_file)
+    check_startup(creates_db=True, dotenv_path=env_file)
+    check_startup(creates_db=False, dotenv_path=env_file)
+    assert len(reads) == 1
+
+
+def test_a_repeat_applies_its_own_rule_to_the_shared_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema-only file: the collector (creates_db) starts, the crawler refuses."""
+    monkeypatch.setenv("DATABASE_URL", str(_schema_only(tmp_path / "urls.db")))
+    env_file = _env_file(tmp_path, None)
+    check_startup(creates_db=True, dotenv_path=env_file)
+    with pytest.raises(StartupCheckError, match="no rows"):
+        check_startup(creates_db=False, dotenv_path=env_file)
+
+
+def test_a_read_only_open_failure_is_worded_as_a_possible_stale_wal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    db = _populated(tmp_path / "real.db")
+    monkeypatch.setenv("DATABASE_URL", str(db))
+
+    def locked(*_: object, **__: object) -> sqlite3.Connection:
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(startup_check.sqlite3, "connect", locked)
+    with (
+        caplog.at_level(logging.ERROR, logger="data_mining.startup"),
+        pytest.raises(StartupCheckError, match="stale or locked WAL") as info,
+    ):
+        check_startup(creates_db=False, dotenv_path=_env_file(tmp_path, None))
+    assert "unable to open database file" in str(info.value)
+    assert any("Refusing to start" in r.getMessage() for r in caplog.records)
+
+
+def test_gateway_starts_on_a_populated_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", str(_populated(tmp_path / "real.db")))
+    with TestClient(gateway.app) as client:
+        assert client.get("/health").status_code == 200
