@@ -1246,7 +1246,7 @@ no release: the News Corp pairs stay what `T-062` makes them.
 
 ## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (code, `T-064`–`T-067`)
 
-**Status: open, not scheduled (added 2026-10-18; the maintainer schedules it).** Found by the `T-062` step 6 check: a
+**Status: `T-064` closed 2026-10-18 (PR #73; its step 5 was redefined as a read-only check, see `TASKS.md`); `T-075` done in PR #75; `T-065`–`T-067` and `T-076` open, not scheduled (added 2026-10-18; the maintainer schedules them).** Found by the `T-062` step 6 check: a
 `KLAC` discovery through `POST /collector/discover/cnbc/` on the real `urls.db` returned `too many SQL variables` and
 inserted nothing. `enqueue_batch` and `_count_new_rejected` (`src/news_collector/storage/queue.py`, from `T-056c`) bind
 two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 32,766, so a batch above about 16,000 pairs
@@ -1265,6 +1265,8 @@ environment stays above `.env`, as `news_collector/config.py` has it, and that a
 `DATABASE_URL=/workspaces/thesis/data/urls.db`, pass `db_path` and `company_names`.
 
 `T-075` and `T-076` (same Work item, found 2026-10-18 while asking why only `cnbc.com` has sitemap rows): the sitemap date parser never parsed a date, so the run's date range was never applied to the sitemap and no row got a `pub_date` (`T-075`, fixed; the rows already stored are not touched); and a failed sitemap fetch (`ft.com` and `nasdaq.com` answer 403) is only a warning and the pair is recorded as completed (`T-076`, open, with a decision for the maintainer). `T-075` also changes the size of Work item 15's sitemap cache: a cnbc match per ticker is about 121,000 entries in range, not 619,000.
+
+**Before this Work item closes:** decide what to do with the 939 older rows with `company = ticker` (`IBM` 892, `MSCI` 44, `AAPL` 3; `TASKS.md` `T-067`): a note, not a task (maintainer decision 2026-10-18).
 
 ## Work item 15 — Collector: stop the sitemap from multiplying the database by the number of tickers (code + schema + data, `T-068`–`T-074`)
 
@@ -1305,7 +1307,7 @@ items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
-Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; then `T-065`, then `T-066a` (start-up check and visibility; the `.env` precedence is decided: the inherited environment wins, with a warning); `T-067` is independent; `T-066b` (the shared `.env` call and its test) waits for the maintainer's decision on constitution rule 7 (each service keeps its own `load_dotenv()`, with no shared bootstrap module).
+Work item 14 (`T-064`–`T-067`, found 2026-10-18) is open and maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; then `T-065`, then `T-066a` (start-up check and visibility; the `.env` precedence is decided: the inherited environment wins, with a warning); `T-067` is independent; `T-066b` (the shared `.env` call and its test) waits for the maintainer's decision on constitution rule 7 (each service keeps its own `load_dotenv()`, with no shared bootstrap module). The 939 older rows with `company = ticker` must be decided before Work item 14 closes (`T-067`; see that section).
 Work item 15 (`T-068`–`T-074`, the sitemap cache, option B chosen by the maintainer 2026-10-18) is open and maintainer-scheduled, behind its three gates (G1 the design numbers, G2 the schema, G3 the real-data step); it does not depend on Work item 14 except that `T-064` (PR #73) is the fix that let the large batch through.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
