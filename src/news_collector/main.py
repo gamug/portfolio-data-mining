@@ -58,7 +58,7 @@ def _load_sp500_csv(path: str) -> list[Company]:
     return companies
 
 
-async def cmd_discover(args: argparse.Namespace) -> None:
+async def cmd_discover(args: argparse.Namespace) -> int:
     log_path = setup_logging(args.log_level, log_dir=args.log_dir, run_name="discover")
     if log_path:
         log.info("Logging this run to %s", log_path)
@@ -126,6 +126,10 @@ async def cmd_discover(args: argparse.Namespace) -> None:
         queue.initialize()
         exported = queue.export_pending_csv(args.export)
         print(f"\nExported {exported} URLs to {args.export}")
+
+    # A run that recorded errors did not do all its work (a batch that failed to store, a
+    # task that raised): say so to the shell, not only in the summary above.
+    return 1 if stats.errors else 0
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
@@ -234,7 +238,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "discover":
-        asyncio.run(cmd_discover(args))
+        sys.exit(asyncio.run(cmd_discover(args)))
     elif args.command == "stats":
         cmd_stats(args)
     elif args.command == "export":
