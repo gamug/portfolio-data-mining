@@ -121,6 +121,16 @@ member is never silently under-covered. Operationally here: after `pricing_cli.p
 universe-snapshot` reports an `added` ticker, just re-run `news_collector discover` (default
 args) — it will pick up that ticker's full backlog on its own.
 
+## Sitemap dates: `pub_date` is the sitemap's `lastmod` (T-075)
+
+For a sitemap or RSS row, `discovered_urls.pub_date` is the entry's `lastmod` (last modified), not the publication date. The
+run's date range is applied to that same `lastmod`, and to a child sitemap's `lastmod` in an index (a child older than the range
+start is not fetched). So an article published inside the range but modified after the range end is not discovered, and an old
+article modified recently is. On the live cnbc sitemap the two readings agree for 99.8% of the entries in range (measured
+2026-10-18). An entry whose `lastmod` cannot be read is kept, and a warning counts it. `articles.pub_date` is a different
+column: it comes from the extractor, and it is the one to filter on for what an article says it was published. The `pub_date_from`
+and `pub_date_to` filters of the queue read `discovered_urls.pub_date`.
+
 ## Running
 
 ```bash

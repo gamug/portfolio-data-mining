@@ -6,14 +6,20 @@ range and no row got a `pub_date`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from defusedxml import ElementTree as DefusedET
 
+from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.models import DateRange
+from news_collector.storage.queue import URLQueue
 from news_collector.strategies.sitemap import (
+    SitemapRSSStrategy,
     _parse_date,
     _parse_sitemap_index,
     _parse_sitemap_leaf,
@@ -33,6 +39,9 @@ _NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
         ("2026-10-18", date(2026, 10, 18)),
         ("  2026-10-18  ", date(2026, 10, 18)),
         ("2026-10", date(2026, 10, 1)),
+        ("20261018", date(2026, 10, 18)),  # accepted by fromisoformat, pinned on purpose
+        ("2026-W42-7", date(2026, 10, 18)),
+        ("2026", None),  # a bare year is not a date; the entry is kept
         ("", None),
         ("not a date", None),
         ("2026-13-45", None),
@@ -80,7 +89,10 @@ def test_leaf_keeps_an_unparseable_lastmod_and_says_so(caplog: pytest.LogCapture
         entries = _parse_sitemap_leaf(root, _RANGE)  # type: ignore[arg-type]
 
     assert [e.url for e in entries] == ["https://x.com/odd"]
-    assert "1 sitemap entries with an unparseable lastmod were kept" in caplog.text
+    assert (
+        "1 sitemap entries with an unparseable lastmod were kept (first: 'yesterday')"
+        in caplog.text
+    )
 
 
 def test_index_skips_children_older_than_the_range_start() -> None:
@@ -96,3 +108,71 @@ def test_index_skips_children_older_than_the_range_start() -> None:
         "https://x.com/new.xml",
         "https://x.com/undated.xml",
     ]
+
+
+def test_index_keeps_an_unparseable_child_lastmod_and_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = DefusedET.fromstring(
+        f"<sitemapindex {_NS}>"
+        "<sitemap><loc>https://x.com/odd.xml</loc><lastmod>soon</lastmod></sitemap>"
+        "<sitemap><loc>https://x.com/old.xml</loc><lastmod>2019-05-01</lastmod></sitemap>"
+        "</sitemapindex>"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        urls = _parse_sitemap_index(root, _RANGE)  # type: ignore[arg-type]
+
+    assert urls == ["https://x.com/odd.xml"]
+    assert "1 child sitemaps with an unparseable lastmod were kept (first: 'soon')" in caplog.text
+
+
+def test_discover_applies_the_range_through_the_tree_and_stores_pub_date(
+    tmp_path: Path,
+) -> None:
+    """Index -> children -> filter -> DiscoveredURL.pub_date -> the stored row (T-075 end to end)."""
+    docs = {
+        "https://x.test/index.xml": (
+            f"<sitemapindex {_NS}>"
+            "<sitemap><loc>https://x.test/ancient.xml</loc><lastmod>2019-01-01T00:00:00Z</lastmod></sitemap>"
+            "<sitemap><loc>https://x.test/recent.xml</loc><lastmod>2026-10-18T00:00:00Z</lastmod></sitemap>"
+            "</sitemapindex>"
+        ),
+        "https://x.test/ancient.xml": "<boom/>",  # must never be fetched
+        "https://x.test/recent.xml": (
+            f"<urlset {_NS}>"
+            "<url><loc>https://www.cnbc.com/2024/03/05/apple-inc-earnings-beat.html</loc>"
+            "<lastmod>2024-03-05T10:00:00Z</lastmod></url>"
+            "<url><loc>https://www.cnbc.com/2012/03/05/apple-inc-old-story.html</loc>"
+            "<lastmod>2012-03-05T10:00:00Z</lastmod></url>"
+            "</urlset>"
+        ),
+    }
+    fetched: list[str] = []
+    connector = CNBCConnector(client=MagicMock())
+    connector.config.sitemap_roots = ["https://x.test/index.xml"]
+    connector.config.rss_feeds = []
+    connector.config.wayback_fallback = False
+    strategy = SitemapRSSStrategy(connector, MagicMock())
+
+    async def fake_fetch(url: str) -> str:
+        fetched.append(url)
+        return docs[url]
+
+    strategy._fetch = fake_fetch  # type: ignore[method-assign]
+
+    rows = asyncio.run(strategy.discover("Apple Inc.", "AAPL", _RANGE))
+
+    assert "https://x.test/ancient.xml" not in fetched
+    assert [(r.url, r.pub_date) for r in rows] == [
+        ("https://www.cnbc.com/2024/03/05/apple-inc-earnings-beat.html", date(2024, 3, 5))
+    ]
+    queue = URLQueue(str(tmp_path / "t.db"))
+    queue.initialize()
+    try:
+        queue.enqueue_batch(rows)
+        stored, total = queue.query(pub_date_from=date(2024, 1, 1))
+        assert total == 1
+        assert [d.pub_date for d in stored] == [date(2024, 3, 5)]
+    finally:
+        queue.close()

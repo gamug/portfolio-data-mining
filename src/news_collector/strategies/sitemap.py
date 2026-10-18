@@ -254,28 +254,32 @@ def _ns(tag: str) -> str:
 def _parse_sitemap_index(root: ET.Element, date_range: DateRange) -> list[str]:
     """Return child sitemap URLs from a <sitemapindex>; skip by lastmod if possible."""
     urls: list[str] = []
+    unparseable: list[str] = []
     for sitemap_el in root.iter(_ns("sitemap")):
         loc_el = sitemap_el.find(_ns("loc"))
         if loc_el is None or not loc_el.text:
             continue
         lastmod_el = sitemap_el.find(_ns("lastmod"))
         if lastmod_el is not None and lastmod_el.text:
-            try:
-                lm = _parse_date(lastmod_el.text.strip())
-                if lm and lm < date_range.start:
-                    continue  # entire child sitemap is too old
-            except Exception:
-                log.debug(
-                    "Unparseable child sitemap lastmod %r, not filtering by date", lastmod_el.text
-                )
+            lm = _parse_date(lastmod_el.text)
+            if lm is None:
+                unparseable.append(lastmod_el.text.strip())
+            elif lm < date_range.start:
+                continue  # entire child sitemap is too old
         urls.append(loc_el.text.strip())
+    if unparseable:
+        log.warning(
+            "%d child sitemaps with an unparseable lastmod were kept (first: %r)",
+            len(unparseable),
+            unparseable[0],
+        )
     return urls
 
 
 def _parse_sitemap_leaf(root: ET.Element, date_range: DateRange) -> list[SitemapEntry]:
     """Return SitemapEntry list from a <urlset> leaf sitemap."""
     entries: list[SitemapEntry] = []
-    unparseable = 0
+    unparseable: list[str] = []
     for url_el in root.iter(_ns("url")):
         loc_el = url_el.find(_ns("loc"))
         if loc_el is None or not loc_el.text:
@@ -287,7 +291,7 @@ def _parse_sitemap_leaf(root: ET.Element, date_range: DateRange) -> list[Sitemap
         if lastmod_el is not None and lastmod_el.text:
             lastmod = _parse_date(lastmod_el.text)
             if lastmod is None:
-                unparseable += 1
+                unparseable.append(lastmod_el.text.strip())
 
         if lastmod and not date_range.contains(lastmod):
             continue
@@ -301,7 +305,11 @@ def _parse_sitemap_leaf(root: ET.Element, date_range: DateRange) -> list[Sitemap
         entries.append(SitemapEntry(url=loc, lastmod=lastmod, title=title))
     if unparseable:
         # kept (a date we cannot read cannot exclude an entry), but not silently
-        log.warning("%d sitemap entries with an unparseable lastmod were kept", unparseable)
+        log.warning(
+            "%d sitemap entries with an unparseable lastmod were kept (first: %r)",
+            len(unparseable),
+            unparseable[0],
+        )
     return entries
 
 
@@ -309,6 +317,7 @@ def _parse_date(text: str) -> date | None:
     """Parse an ISO-8601 date (`YYYY-MM-DD`, `YYYY-MM`, or a datetime with `Z` or an offset).
 
     The date is the one written in the text, not converted to UTC. Returns None for anything else.
+    `datetime.fromisoformat` (Python 3.11+) also takes `20261018` and `2026-W42-7`; a bare year is None.
     (An earlier version cut the text to the length of the *format string*, so every real value failed.)
     """
     text = text.strip()
