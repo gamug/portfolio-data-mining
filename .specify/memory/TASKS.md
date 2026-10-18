@@ -64,6 +64,66 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067)
+
+Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
+decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
+`T-066b` waits for the maintainer's constitution rule 7 decision.
+
+- [ ] **T-064** *(bug from `T-056c`)* Chunk the `(url, ticker) IN (...)` lookups in `enqueue_batch` and `_count_new_rejected`
+      (`src/news_collector/storage/queue.py`, about 5,000 pairs per query) so a batch above about 16,000 pairs does not exceed
+      SQLite's variable limit (32,766 on 3.40.1). Make a failed batch loud: error log, non-empty `errors`, and a non-zero exit of
+      `news_collector/main.py`. First log the batch size of the failing `KLAC`/`cnbc` call to confirm the cause.
+      Acceptance: (1) a test with 20,000 mixed pairs that lowers the limit (`queue._conn._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`,
+      or monkeypatches the chunk size) and **fails on the unfixed code** (shown in the PR); it inserts all rows and returns the right
+      `last_inserted_rejected` and `last_promotion`; (2) a test with more than 16,000 urls and fewer than 100 rejects: every `u.id` set, promotion applied;
+      (3) chunked equals unchunked on a small batch; (4) a CLI test of the non-zero exit; (5) re-run `KLAC` `cnbc` on the real
+      database, only with the maintainer's explicit go-ahead, after a backup copy that passes `quick_check` (`data/url_cat_backup.db` is older than the
+      stray rows and the T-062 run), with `company_names` passed explicitly (T-067 is not fixed yet; without it the run repeats the 2026-10-18
+      mistake), and with the two stray rows corrected first or excluded from the check; then read the new rows with the step 6 query of `docs/modules/news-collector.md` (full-name URL is `review`/`loose_name`),
+      which closes the data half of `T-062` step 6. No schema change (constitution #10 N/A).
+- [ ] **T-065** *(configuration)* The collector API opens the wrong database by default. Change: (a) `default=None` (typed `str | None`,
+      description "default: $DATABASE_URL") for the five `db_path` defaults in `api/routers/discovery.py` (3) and `api/schemas.py` (2);
+      (b) `data_mining.resolve_db_path(value=None)` returns the value, else `$DATABASE_URL`, else the default, and treats an empty string as
+      unset (`.env.example` ships `DATABASE_URL=`); (c) the seven sites that build a `URLQueue` call it (`routers/discovery.py` 4 sites,
+      `routers/_common.py`, `api/deps.py` `get_queue`, `news_collector/main.py`); (d) `URLQueue.__init__` raises `ValueError` on `None` or
+      an empty path; (e) the literal fallback in `apps/news_crawler_api.py` and `cli/news_crawler_cli.py` (`DEFAULT_DB`) uses it too.
+      Acceptance: each handler follows `$DATABASE_URL`; a request without `db_path` creates no file named `None` or `data/urls.db`;
+      `URLQueue(None)` and `URLQueue("")` raise; a plain `/collector/discovery/stats` reports the real counts; the `db_path` workaround
+      is removed from `docs/modules/news-collector.md`.
+- [ ] **T-066a** *(after `T-065`, whose `resolve_db_path()` decides the empty value; configuration)* Start-up check and visibility, in the apps that open
+      `urls.db` (`apps/gateway.py`, `news_collector_api.py`, `news_crawler_api.py`; not `pricing_api.py` or `sec_edgar_api.py`, which never touch it).
+      (1) Log the effective `DATABASE_URL`: its source (`.env`, inherited, default), the **resolved absolute path**, whether the file exists, and its
+      size and `discovered_urls` row count. (2) Warn when an inherited value differs from `.env`, naming the variable and both values; read the
+      `.env` value with `dotenv_values()` (`load_dotenv(override=False)` leaves no trace of the value that lost). (3) Refuse to start when the
+      database is unusable, where **empty means the `discovered_urls` table is missing or has no rows, not a zero-byte file**: the literal default
+      `data/urls.db` is 49,152 bytes, a schema with no rows, and is exactly the file that served `total: 0`. The gateway and `news_crawler_api` refuse on a
+      missing file, a missing table or no rows; `news_collector_api` creates the database on first use, so it refuses only on a missing parent
+      directory or an unreadable file and logs a notice for a new one. `--allow-new-db` or `ALLOW_NEW_DB=1` lets the gateway and the crawler
+      start on an empty database. Precedence (maintainer, 2026-10-18, option B): the inherited environment stays above `.env`. Acceptance: tests of the
+      log line, the warning, the refusal for a missing file, a schema-only file (the case that happened) and a populated file, and the flag; a plain
+      gateway start on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (unset by default).
+- [ ] **T-066b** *(blocked on the maintainer's constitution rule 7 decision)* Rule 7 says each service calls `load_dotenv()` itself,
+      "deliberate, not debt", with no shared bootstrap module. The maintainer chooses (a) amend rule 7 to name a shared `data_mining.env.load_env()`,
+      the AST test and the new variables, or (b) keep each service's own call and enforce the same behavior with the AST test plus a shared
+      behavior test. Then, for all five apps and four CLIs: an explicit top-level call first (repo-root `.env` lookup, `override=False`,
+      `config.py` unchanged in behavior). Acceptance: tests of precedence, root lookup and a missing file; an AST test that fails when a file
+      under `apps/` or `cli/` has no top-level call before its first project import that reads the environment (`news_collector…`, `data_mining…`,
+      `pricing…`, `sec_edgar…`; an import side effect does not count; the test globs both directories); module docs state the rule.
+      `scripts/` is out of scope (they take `--db`).
+- [ ] **T-067** *(collector API)* `resolve_companies` (`api/routers/_common.py`) does `name = names[i].strip() if i < len(names) else ticker`, so a
+      request without `company_names` stores the ticker as the company and the matcher rejects a `kla-corporation` URL. Change: reject a
+      `company_names` list whose length differs from `tickers` (422 that says it is positional); when names are omitted, look each ticker up by
+      **exact symbol** in `fetch_sp500_companies` (one Wikipedia request, 502 on failure as today). Only for a ticker the current list
+      does not contain, look it up by exact `Symbol` in `data_mining.universe_history.query_as_of(start_date)` (never `resolve_as_of`, whose
+      partial name match could tag the wrong company), so a missing or un-backfilled `data/universe.db` (it raises `ValueError`) cannot break
+      requests for current tickers. `start_date` is the request's, else `config.default_start_date()`. A ticker found in neither, or a
+      `start_date` outside the store's coverage, gets a clear 422. Known limit, accepted and documented: a ticker added after `start_date` and removed before
+      today is in neither, so it is refused (the caller passes `company_names` for it). The leaver lookup is the maintainer's to confirm.
+      Acceptance (hermetic): omitted, mismatched and explicit cases; a leaver ticker; an unknown ticker that is a substring of a company name; an
+      out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520; find them with
+      `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519`, expect 2) are corrected or removed with the maintainer's approval.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12 and 13 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
