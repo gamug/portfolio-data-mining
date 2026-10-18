@@ -121,9 +121,9 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       and sets each non-empty value in it over the inherited one.
       (4) **Tests:** `load_env(path)` takes a tmp file; an autouse fixture in `tests/conftest.py` points the root lookup at a missing file so no test reads the real `.env`.
       (5) **Empty value:** a blank `.env` value counts as absent (the system value stays), as an empty `DATABASE_URL` means unset in `T-065`.
-      (6) **Notice:** one log line per overridden variable naming the inherited and the used value; for a secret (key, token, password, proxy credentials) only the
-      name, never a value. The `T-066a` warning that an inherited value hides `.env` is reworded to this (the check's source label stays `.env`/`inherited`/`default`).
-      (7) **Enforcement:** an AST test over `apps/` and `cli/` (5 apps, 4 CLIs, the test globs both) fails when a file has no top-level `load_env()` before its first
+      (6) **Notice:** one log line per overridden variable. The values (inherited and used) are printed only for the allow-list of (8), which the maintainer confirmed
+      2026-10-18; every other variable is logged by name only. The `T-066a` warning that an inherited value hides `.env` is reworded to this (the check's source label stays `.env`/`inherited`/`default`).
+      (7) **Enforcement:** an AST test over `apps/` and `cli/` (5 apps, 4 CLIs, the test globs both) **and `src/news_collector/main.py`** (run as `python -m news_collector.main`, listed explicitly) fails when a file has no top-level `load_env()` before its first
       project import that reads the environment (`news_collector…`, `data_mining…`, `pricing…`, `sec_edgar…`; an import side effect does not count). `scripts/` out of scope (they take `--db`).
       Also: replace the `load_dotenv()` calls in the sub-apps, `news_collector/main.py` and `news_collector/config.py` with `load_env()` (or remove them where the entry
       point already called it); update `.env.example`, the module docs and the `T-066a` tests that assert the inherited value wins.
@@ -133,10 +133,10 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       (9) **Root:** walk up from `data_mining/env.py` to the first directory with `pyproject.toml`; none found means no file is read, the system values stand and one notice is logged.
       (10) **Order in an entry point:** the `sys.path` bootstrap of `src/` and the import of `load_env` itself are allowed before the call; every other project import that reads the
       environment must come after it. The AST test skips `apps/__init__.py` and covers `apps/gateway.py` (it reads the environment itself in its lifespan) and every other `apps/*.py` and `cli/*.py`.
-      (11) **`news_collector/config.py`:** its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
-      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. The maintainer can reverse this choice.
+      (11) **`news_collector/config.py`** *(open choice, pending the maintainer's answer)*: its import-time `load_dotenv(override=False)` is **removed**: library code reads `os.environ` only and the entry points load `.env`
+      (`news_collector/main.py` is itself an entry point and calls `load_env()`). A plain `import news_collector.config` in a test or a notebook sees the system environment only. Until the maintainer answers, the code PR does not touch `config.py`'s own read; if the answer is to keep it, it calls `load_env()` instead.
       **Known consequences (accepted with decision 2, no escape hatch):** a one-off value on the command line loses to `.env`: the documented
-      `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A one-off run is made by editing `.env`
+      `DATABASE_URL=/workspaces/thesis/data/urls.db uv run apps/gateway.py`, `DISCOVERY_END_DATE=...`, `ALLOW_NEW_DB=1` stop working when `.env` sets the same variable. A blank `.env` line cannot switch off an inherited variable (decision 5): a system `HTTP_PROXY` or `HTTPS_PROXY` stays on; unset it in the system or the shell. A one-off run is made by editing `.env`
       or with a flag applied after `load_env()` (`--db`, `--allow-new-db`, a request's `db_path`). The module docs and `.env.example` say so in the code PR.
       Acceptance: tests of precedence (`.env` over inherited), fallback (missing file, absent variable, blank value), root lookup from another working directory,
       the notice (values printed only for the allow-list; a variable not on it is logged by name, with a value that must not appear in the log), the AST test (fails on a file without the call), and the real gateway start on this machine with the wrong inherited value

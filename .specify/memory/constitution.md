@@ -140,16 +140,18 @@ stack actually pinned in `pyproject.toml`.
    and the optional proxy vars; `.env.example` is the committed template —
    keep it in sync with every env var a new feature reads. **`.env` wins
    over the inherited (system) environment**; the system value is the
-   fallback when the file is missing or the variable is absent or empty in
-   it. Every `apps/*.py` and `cli/*.py` entry point calls
-   `data_mining.env.load_env()` first, before any project import that reads
-   the environment (`load_env(path)` takes an explicit file for tests); it
-   logs one line per variable it overrides, printing the values only of an
-   allow-list of path and date variables (never a key, token or proxy URL).
-   It finds `.env` at the first parent of `data_mining/env.py` that holds
-   `pyproject.toml`, not in the current directory. The shared function replaces the earlier per-service
+   fallback when the file is missing or the variable is absent or empty
+   in it. Every `apps/*.py` and `cli/*.py` entry point calls
+   `data_mining.env.load_env()` first, before any project import that
+   reads the environment (`load_env(path)` takes an explicit file for
+   tests); it logs one line per variable it overrides, printing the
+   values only of an allow-list of path and date variables (never a key,
+   token or proxy URL). It finds `.env` at the first parent of
+   `data_mining/env.py` that holds `pyproject.toml`, not in the current
+   directory. The shared function replaces the earlier per-service
    `load_dotenv()` calls so the rule cannot drift between files; an AST
-   test over `apps/` and `cli/` fails when an entry point lacks the call.
+   test over `apps/`, `cli/` and `news_collector/main.py` fails when an
+   entry point lacks the call.
 8. **Naming**: modules and functions describe the pipeline stage or
    Finnhub/EDGAR domain they implement, matching the stage/table pairing
    (`discover` → `discovered_urls`, `extract` → `articles`) and each
