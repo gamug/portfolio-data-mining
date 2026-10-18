@@ -123,7 +123,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       Acceptance (hermetic): omitted, mismatched and explicit cases; a leaver ticker; an unknown ticker that is a substring of a company name; an
       out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520; find them with
       `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519`, expect 2) are corrected or removed with the maintainer's approval.
-- [x] **T-075** *(bug, found 2026-10-18; code and tests in the PR that adds this line)* `_parse_date` in `src/news_collector/strategies/sitemap.py` returned `None` for every
+- [x] **T-075** *(bug, found 2026-10-18; code and tests in PR #75)* `_parse_date` in `src/news_collector/strategies/sitemap.py` returned `None` for every
       value (it cut the text to the length of the *format string*), so no sitemap entry was ever filtered by the run's date range and no sitemap row got a `pub_date`
       (0 of 1,040,939). Effect on the real database: the `KLAC` `cnbc.com` run took every URL back to 2006 for a 2022-01-01 to 2026-08-10 range (only 18.7% of its 578,117 rows are
       in range by the year in the URL), and about 65% of the `accept`/`review` sitemap rows are out of range. They were already fetched, none is `pending`: 62,379 of the 93,226 `ok` articles (66.9%) were published before 2022-01-01 (62,138 of them from sitemap rows), 67 after 2026-08-10. Fixed with `datetime.fromisoformat` (plus `YYYY-MM`); an entry with a
