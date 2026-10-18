@@ -1246,7 +1246,7 @@ no release: the News Corp pairs stay what `T-062` makes them.
 
 ## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (code, `T-064`–`T-067`)
 
-**Status: `T-064` closed 2026-10-18 (PR #73; its step 5 was redefined as a read-only check, see `TASKS.md`); `T-075` done in PR #75; `T-065` done (PR pending); `T-076` done in PR #78 (option: drop the dead `ft`/`nasdaq` roots, failures loud); `T-066a`, `T-066b`, `T-067` open, not scheduled (added 2026-10-18; the maintainer schedules them).** Found by the `T-062` step 6 check: a
+**Status: `T-064` closed 2026-10-18 (PR #73; its step 5 was redefined as a read-only check, see `TASKS.md`); `T-075` done in PR #75; `T-065` done in PR #79; `T-076` done in PR #78 (option: drop the dead `ft`/`nasdaq` roots, failures loud); `T-066a`, `T-066b`, `T-067` open, not scheduled (added 2026-10-18; the maintainer schedules them).** Found by the `T-062` step 6 check: a
 `KLAC` discovery through `POST /collector/discover/cnbc/` on the real `urls.db` returned `too many SQL variables` and
 inserted nothing. `enqueue_batch` and `_count_new_rejected` (`src/news_collector/storage/queue.py`, from `T-056c`) bind
 two variables per `(url, ticker)` pair in one `IN (...)`; SQLite 3.40.1 allows 32,766, so a batch above about 16,000 pairs

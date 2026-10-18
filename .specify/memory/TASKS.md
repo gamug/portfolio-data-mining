@@ -90,7 +90,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
         Their `query` is `site:seekingalpha.com "KLAC" analysis` (the 02:39 run); the 13:19 run searched only `site:cnbc.com …`, so it did not rediscover them and the change was made outside it.
         The promotion code does not write `company`; the maintainer confirmed on 2026-10-18 that the correction was a manual write after the 13:14 backup. A manual write is not matcher output, hence the one-row count above.
       No schema change (constitution #10 N/A).
-- [x] **T-065** *(configuration; done 2026-10-18, PR below; also `news_collector/main.py` `stats`/`export` used `args.db` directly, now resolved; tests in `tests/news_collector/test_db_path_default.py`)* The collector API opens the wrong database by default. Change: (a) `default=None` (typed `str | None`,
+- [x] **T-065** *(configuration; done 2026-10-18, PR #79; also `news_collector/main.py` `stats`/`export` used `args.db` directly, now resolved; tests in `tests/news_collector/test_db_path_default.py`)* The collector API opens the wrong database by default. Change: (a) `default=None` (typed `str | None`,
       description "default: $DATABASE_URL") for the five `db_path` defaults in `api/routers/discovery.py` (3) and `api/schemas.py` (2);
       (b) `data_mining.resolve_db_path(value=None)` returns the value, else `$DATABASE_URL`, else the default, and treats an empty string as
       unset (`.env.example` ships `DATABASE_URL=`); (c) the seven sites that build a `URLQueue` call it (`routers/discovery.py` 4 sites,

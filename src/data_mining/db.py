@@ -33,10 +33,10 @@ BUSY_TIMEOUT_MS = 30_000
 def resolve_db_path(value: str | None = None) -> str:
     """The shared pipeline DB path: `value`, else `$DATABASE_URL`, else the default.
 
-    An empty string is unset, for both: `.env.example` ships `DATABASE_URL=`, and an empty
-    `db_path` in a request is not a path (T-065).
+    An empty or blank string is unset, for both: `.env.example` ships `DATABASE_URL=`, and an
+    empty `db_path` in a request is not a path (T-065).
     """
-    return value or os.environ.get("DATABASE_URL") or DEFAULT_DB_PATH
+    return (value or "").strip() or os.environ.get("DATABASE_URL", "").strip() or DEFAULT_DB_PATH
 
 
 def connect(
