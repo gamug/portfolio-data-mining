@@ -70,7 +70,7 @@ Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12 and 13 are in `CHANGELOG.md` (Wor
 `portfolio-financial-analysis` re-verified the redeployed gateway and closed its own
 `T-117`/`T-118` in its PR #104; Work item 6, `T-043`, closed 2026-10-02 in PR #48;
 Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
-Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its open successor is Work item 12);
+Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its successor, Work item 12, closed 2026-10-17);
 Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 12, `T-062`, closed 2026-10-17 after the audited real run; Work item 13, `T-063`, closed 2026-10-17 by decision, no code).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
@@ -78,3 +78,10 @@ Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is ope
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
 CI is wanted again.
+
+## Known gaps (not scheduled; the maintainer decides)
+
+- **438 `reject` pairs** (438 URLs; re-measured 2026-10-18 after the T-062 run) have a distinctive non-first word of the company
+  name in the URL, almost all generic words (`service`, `nation`, `estate`); a handful look real (`DIS`, `SCHW`, some `LYV`, `BAC`).
+  Below the T-057 hand check's resolution, so not fixed and not a Work item. They are quarantined, not deleted; `portfolio-nlp`'s
+  NER check reads only `review`, so it does not see them. Details: `PLAN.md` Work item 12, "Known gap".
