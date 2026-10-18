@@ -23,7 +23,7 @@ from news_collector.companies import (
     lookup_companies,
     sp500_companies,
 )
-from news_collector.config import build_date_range, default_start_date
+from news_collector.config import InvalidRangeError, build_date_range, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
 from news_collector.storage.queue import URLQueue
@@ -158,7 +158,7 @@ async def run_domain_discovery(
     """
     try:
         date_range = build_date_range(req.start_date, req.end_date)
-    except ValueError as exc:
+    except InvalidRangeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     companies = await resolve_companies(req, client)
     queue = URLQueue(resolve_db_path(req.db_path))

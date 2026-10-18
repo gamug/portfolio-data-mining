@@ -29,7 +29,7 @@ load_env()  # .env wins over the inherited environment (T-066b)
 
 from data_mining.db import resolve_db_path
 from news_collector.companies import CompanyLookupError, lookup_companies
-from news_collector.config import build_date_range, default_start_date
+from news_collector.config import InvalidRangeError, build_date_range, default_start_date
 from news_collector.models import Company
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
 from news_collector.sp500 import fetch_sp500_companies
@@ -94,7 +94,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     replay_notices(log)  # load_env() ran before the file handler existed (T-066b, T-077)
     try:
         date_range = build_date_range(args.start_date, args.end_date)
-    except ValueError as exc:
+    except InvalidRangeError as exc:
         log.error("%s", exc)  # noqa: TRY400 - the message is the whole story, no stack
         return 1
 

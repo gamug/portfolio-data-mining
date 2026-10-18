@@ -35,10 +35,20 @@ def today_utc() -> date:
     return datetime.now(UTC).date()
 
 
+class InvalidRangeError(ValueError):
+    """The two dates of a run are in the wrong order: the caller's input, not the server's."""
+
+
 def build_date_range(start: date | None, end: date | None) -> DateRange:
     """The range of one run: `start` or the default start, `end` or today (UTC).
 
-    Raises ValueError when start > end (the API answers 422, the CLI exits 1). A future end
-    date is allowed.
+    Raises InvalidRangeError when start > end (the API answers 422, the CLI exits 1). A future
+    end date is allowed. A malformed `DISCOVERY_START_DATE` is the server's configuration, not
+    the caller's input: its plain ValueError is not an InvalidRangeError and passes through.
     """
-    return DateRange(start=start or default_start_date(), end=end or today_utc())
+    start = start or default_start_date()
+    end = end or today_utc()
+    try:
+        return DateRange(start=start, end=end)
+    except ValueError as exc:
+        raise InvalidRangeError(str(exc)) from exc
