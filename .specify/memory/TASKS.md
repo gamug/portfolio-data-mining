@@ -74,10 +74,11 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       above about 16,000 pairs exceeds SQLite's limit (32,766 on 3.40.1) and the batch is lost or half-done, with the error only in
       the response: `_count_new_rejected` runs before the insert, but the id lookup runs after the insert and commit, so a batch
       with few rejects stores its rows, then fails with no ids set and no promotion applied (a retry is needed). Chunk both lookups (about 5,000 pairs per query), keep the results identical, and make a failure of a
-      batch loud (log at error level, non-empty `errors`, and the CLI exit code non-zero if it has one). Confirm the cause first:
+      batch loud (log at error level, non-empty `errors`, and `news_collector/main.py`, which today prints the first five `stats.errors` and exits 0, exits non-zero when `errors` is non-empty, with a test). Confirm the cause first:
       log the batch size of the failing `KLAC`/`cnbc` call. Acceptance: a test with a batch above the limit (20,000 pairs,
-      rejected and accepted mixed) that lowers the limit on its own connection (`setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`,
-      Python 3.11+) or the chunk size, so it does not depend on the SQLite build, **and fails on the unfixed code** (run it
+      rejected and accepted mixed) that lowers the limit on its own connection (`queue._conn._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, ...)`:
+      `URLQueue._conn` is a `portfolio_common.db.Database` whose private `_conn` is the raw `sqlite3.Connection`; the repo runs Python 3.12) or,
+      if that private access is refused in review, monkeypatches the chunk size, so it does not depend on the SQLite build, **and fails on the unfixed code** (run it
       before the fix and say so in the PR); it inserts all rows, returns the right
       `last_inserted_rejected` and `last_promotion`; a second test with more than 16,000 urls and fewer than 100 rejects (the
       path the KLAC run did not take) asserts that every `u.id` is set and the promotion is applied; and a test that the chunked result equals the unchunked one on a small batch;
@@ -89,11 +90,15 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       `$DATABASE_URL`, but the routers (`src/news_collector/api/routers/discovery.py`, three `Query` defaults) and the request
       schemas (`api/schemas.py`, two fields) pass the literal `data/urls.db` (an empty file in the repo) as `db_path`, so the
       fallback is never reached and `/collector/discovery/stats` showed `total: 0` while the real database held 481,332 pairs.
-      Fix: `default=None` in those five places and one resolution, `data_mining.resolve_db_path()`, in `get_queue` (not five
-      edits). The same literal fallback is in `src/news_collector/main.py` (CLI `--db`), `apps/news_crawler_api.py` (`DEFAULT_DB`)
+      The routers do not go through `get_queue`: seven call sites build `URLQueue` themselves
+      (`routers/discovery.py` lines 46, 82, 101 and 150, and `routers/_common.py:152`; `get_queue` is the sixth and `main.py:72`
+      the seventh), so `default=None` alone would reach `URLQueue(None)`, which stores the path `"None"` and creates a file with that name.
+      Fix: `default=None` in the five `Query`/field places (typed `str | None`, description 'default: $DATABASE_URL'), one
+      helper `resolve_db_path(value=None)` in `data_mining/db.py` that every one of the seven sites calls with the request value, and
+      `URLQueue.__init__` raising `ValueError` on `None` or an empty path (so a missed site fails loudly instead of creating a file). The same literal fallback is in `src/news_collector/main.py` (CLI `--db`), `apps/news_crawler_api.py` (`DEFAULT_DB`)
       and `cli/news_crawler_cli.py` (`DEFAULT_DB`); move them to `resolve_db_path()` too. An empty `DATABASE_URL`
       (`.env.example` ships `DATABASE_URL=`) counts as unset, decided once inside `resolve_db_path()` (`data_mining/db.py`), which
-      `T-066` reuses. Acceptance: a test that the defaults follow `$DATABASE_URL`, and a plain
+      `T-066` reuses. Acceptance: a test that the defaults follow `$DATABASE_URL` for each handler, a test that a request without `db_path` creates no file named `None` or `data/urls.db`, a test that `URLQueue(None)` and `URLQueue("")` raise, and a plain
       `/collector/discovery/stats` reports the real counts, and the `db_path` workaround is removed from
       `docs/modules/news-collector.md`. Until fixed, pass `db_path` in the request (documented there). The `.env` precedence part is `T-066`.
 
@@ -118,11 +123,15 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       stays above `.env` (`override=False`, so a shell or container can still override a value for one run, as
       `config.py` documents for `DISCOVERY_END_DATE`), and a conflict is never silent: the warning above plus the start-up
       refusal on a missing or empty database. `config.py` keeps `override=False`; it moves to the shared `load_env`
-      with no change of behavior. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file, empty value) and of the start-up check;
+      with no change of behavior. **Blocked on a constitution amendment (maintainer):** rule 7 says each service calls `load_dotenv()` itself,
+      'deliberate, not debt', with 'no shared bootstrap module to import first'. A shared `load_env()` reverses that reason, so the
+      maintainer decides first between (a) amend rule 7 to name `load_env()`, the AST test and the new variables, or (b) keep each
+      service's own `load_dotenv()` call and enforce the same behavior with the AST test plus a shared behavior test; the build
+      starts after that decision. Acceptance: tests of `load_env` (precedence, root lookup, warning, missing file, empty value) and of the start-up check;
       **an AST test that fails when a file under `apps/` or `cli/` has no top-level `load_env()` call before its first project import that
       reads the environment (`news_collector…`, `data_mining…`, `pricing…`, `sec_edgar…`)** (an import side effect does not count; the test globs both
       directories, so a new entry point fails until it calls it; so the rule stays mandatory); a plain start of
-      the gateway on this machine serves the real counts or stops with the message; `.env.example` and the module docs
+      the gateway on this machine serves the real counts or stops with the message; `.env.example` lists `ALLOW_NEW_DB` (default unset: the collector refuses a missing database; `1` lets it create one) and the module docs
       state the rule. Scripts under `scripts/` that read `DATABASE_URL` take `--db`, so they are out of scope unless the
       maintainer adds them.
 
@@ -133,7 +142,9 @@ Found 2026-10-18 by the T-062 step 6 check on the real `urls.db`: `POST /collect
       `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519`, expect 2 rows). The defect is one line in `resolve_companies`
       (`src/news_collector/api/routers/_common.py`): `name = names[i].strip() if i < len(names) else ticker`. Resolve the name by
       looking the ticker up in the list `news_collector.sp500.fetch_sp500_companies` already returns when `tickers` is omitted
-      (one Wikipedia request per call, the 502 on failure as today; a ticker not in the list gets a 422), or refuse the request; also reject a `company_names`
+      (one Wikipedia request per call, the 502 on failure as today; a ticker not in the list gets a 422), or refuse the request. **Recommended, for the maintainer to confirm:** use the current list first, then the point-in-time universe
+      (`data_mining.universe_history.resolve_as_of`, for a leaver ticker; the pipeline tracks leavers, Work item 11), and only a ticker found in neither gets the 422, so
+      the check does not block leaver discovery; also reject a `company_names`
       list whose length differs from `tickers` (it is positional; a dict gives a validation error that does not say so).
       Acceptance: tests for the omitted, the mismatched and the explicit cases; the two stray rows are corrected or removed
       with the maintainer's approval.
