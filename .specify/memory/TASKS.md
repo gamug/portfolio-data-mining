@@ -129,7 +129,7 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
 Found 2026-10-18 by the `T-064` step 5 run: one ticker's cnbc discovery stored 578,117 rejected rows (+243 MB). Evidence, the decision (option B,
 the maintainer) and the guardrails are in `PLAN.md` Work item 15. **Gates (maintainer approvals): G1** the design numbers of `T-068`; **G2** the
 DDL, migration and rollback of `T-069` (constitution #10); **G3** the real-data step of `T-073`. Work on a **copy** of `urls.db` until G3.
-Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` → `T-073` (G3) → `T-074`. Each task's PR states what was run on which copy.
+The criteria of each gate were decided 2026-10-18 (`PLAN.md` Work item 15). Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` → `T-073` (G3) → `T-074`. Each task's PR states what was run on which copy.
 
 - [ ] **T-068** *(read-only measurement and design; ends at G1)* Measure, on a copy of the real database and a fresh crawl of the sitemaps (no
       write to the real file): for `cnbc.com`, `ft.com` and `nasdaq.com` the number of entries, the share with a title and with a `lastmod`, the
@@ -138,24 +138,24 @@ Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` →
       index of the URL slug) on at least 40 tickers that include the short and ordinary-word ones (`ON`, `A`, `IT`, `ARE`, `TTD`, `KLAC`, `NWS`, `NWSA`) and a
       random 20: report, per ticker, the `accept`/`review` pairs of each path and the recall. **Result: a design note** (table columns, indexes, the
       preselection with its measured recall, the refresh rule, the estimated size and the time of a 503-ticker run) in `PLAN.md`. A preselection that
-      loses a pair is rejected, or the full scan stays. **G1:** the maintainer approves the numbers and the design before `T-069`.
+      loses a pair is rejected (exact equality, no tolerance), or the full scan stays; there is no time limit for the 503-ticker match. **G1:** the maintainer approves the numbers and the design before `T-069`.
 - [ ] **T-069** *(schema and migration; ends at G2; constitution AI behavior #10)* Additive tables from the `T-068` design in `data_mining/schema.py`
       (canonical DDL plus an idempotent step in `run_migrations()`, no change to `discovered_urls` or `articles`): the cache of the entries of a domain's
       sitemap (url, lastmod, the keys the preselection needs, first and last seen) and one row per domain for its refresh (crawled at, the date range it covers,
-      the entry count, status). **Before the code is merged, G2:** the maintainer approves the DDL, the migration and the **rollback** (dropping the two
+      the entry count, status). **Criteria decided:** the cache covers any domain with `sitemap_roots` (a `domain` column), lives in `urls.db`, and is stale when the range is not covered or the last crawl is older than 7 days (a flag forces it). **Before the code is merged, G2:** the maintainer approves the DDL, the migration and the **rollback** (dropping the two
       tables restores the previous schema; the document says so and a test does it). Acceptance: the migration is idempotent on an old and on an empty database;
       `portfolio-nlp`'s read path is unaffected (a test opens the database as the extractor and the reader do); the old `apply_schema` callers still work.
 - [ ] **T-070** *(code; after G2)* The sitemap strategy fills and refreshes the cache **once per domain per run**: a per-domain guard so concurrent
       tickers wait for the one crawl; a refresh only when the cache does not cover the run's date range or is older than the rule of `T-068`; a failed or partial crawl
       leaves the previous cache valid (write the new entries in one transaction); the entries keep the `lastmod` filter semantics of today. Acceptance: tests
-      for two concurrent tickers causing one crawl, a failed crawl keeping the old cache, a wider date range triggering a refresh, a narrower one not; the log says
+      for two concurrent tickers causing one crawl, a failed crawl keeping the old cache, a wider date range triggering a refresh, a narrower one not; the age rule (7 days) and the force flag; the log says
       what was refreshed and how many entries.
 - [ ] **T-071** *(code)* Per-ticker matching from the cache: the strategy selects the candidates (as designed in `T-068`), classes them with the existing
       matcher, and returns only `accept` and `review` pairs; the number of `reject` pairs that were **not stored** is counted and reported (a new field next to
       `total_rejected`, which stays for the `ddg` rejects and the rows already stored; the API schema, the CLI summary and the orchestrator log are updated).
       `ddg`, `rss`, wayback and `api` behavior is unchanged. **Acceptance: the equivalence test of guardrail 2** on a fixture corpus (the `accept`/`review`
       pairs, their class and reason, equal to the full scan for the tickers of `T-068`), a test that a batch of a 578,000-entry cache writes no reject row, a test of
-      the stats, and, on a copy, a 10-ticker cnbc run whose row delta and time are reported against the 2026-10-18 baseline (578,117 rows for one ticker).
+      the stats, a `tqdm` progress bar in the CLI over the tickers (and entries) being matched, with a test that it does not break a non-tty run, and, on a copy, a 10-ticker cnbc run whose row delta and time are reported against the 2026-10-18 baseline (578,117 rows for one ticker).
       `SPEC.md` FR-014 and the `T-056c` wording of the module doc say that sitemap rejects are no longer stored.
 - [ ] **T-072** *(code)* Re-class from the cache with no network: a command (CLI and the matching API route) that classes the cached entries again for the
       given tickers (or all) and enqueues the pairs whose class is now `accept`/`review`, promote-only, through the same `enqueue_batch` path. Acceptance: idempotent
@@ -164,8 +164,8 @@ Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` →
 - [ ] **T-073** *(data; ends at G3; maintainer approval, backup, gateway and crawler stopped)* Reclaim the sitemap rejects already stored (901,977 rows of source `sitemap`,
       578,117 of them from the `KLAC` run; the 1,115 `ddg` rejects stay). **Before deleting:** fill the cache for cnbc, prove on the copy that `T-072` finds again every `accept`/`review`
       pair that is stored today for a sample of tickers (the stored `accept`/`review` rows are not touched), and list what the `--revert` file of the `T-062` run needs (its rows are
-      promoted ones and stay). **At G3** the maintainer approves the scope, then: a backup that passes `quick_check`, a row-count fingerprint, one transaction that deletes only
-      `match_class='reject' AND source IN ('sitemap','rss')`, the fingerprint checked after, and a `VACUUM` into a new file with the disk check (about twice the file size free) and the swap.
+      promoted ones and stay). **Scope decided:** only source `sitemap`/`rss`. **At G3** the maintainer approves the evidence, then: a backup that passes `quick_check`, a row-count fingerprint, one transaction that deletes only
+      `match_class='reject' AND source IN ('sitemap','rss')`, the fingerprint checked after, and `VACUUM INTO` a new file with the disk check (free space of the file size) and the swap, the old file kept as the backup until the maintainer deletes it.
       Acceptance: counts before and after in the PR, `quick_check` ok, `articles` and the `accept`/`review` rows unchanged, the file size reported.
 - [ ] **T-074** *(close-out)* `docs/modules/news-collector.md`, `SPEC.md`, the architecture artifacts content-only (constitution #11), the interim caution of this item removed, and the item's
       tasks moved to `CHANGELOG.md` (#12) with the test count of the day.
