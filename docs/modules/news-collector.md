@@ -304,7 +304,7 @@ into the file, and a reader on `portfolio-common` 1.2.1 refuses a database whose
 only a non-empty `-wal` with no `-shm`). If a reader holds the log the run says so and the log clears when it closes.
 
 The rehearsal script that exercised this sequence on a copy (`scripts/rehearse_reclass.py`) was removed after the real run of
-2026-10-17; it is in the git history (commit `ff51985` and before) if a similar run ever needs it.
+2026-10-17; it is in the git history (added in `417af01`, last present at `4bfa812^`: `git show 4bfa812^:scripts/rehearse_reclass.py`).
 
 1. T-062 (PR #66), the docs PR #67 and the remedy fix PR #69 are merged (step 6 below prints a `python3 -c` command, not
    `sqlite3`, and the reader-problem remedy printed by the script is a `python3 -c` command too) and the code is updated
@@ -313,7 +313,8 @@ The rehearsal script that exercised this sequence on a copy (`scripts/rehearse_r
    the script; `--apply` and `--revert` refuse before any backup if it is older, the dry run warns).
 2. Stop the collector (the API on port 8001, any `discover` run) and the crawler/extractor, and confirm nothing runs
    (port 8001 closed, no collector or extractor process). The script cannot prove this across hosts (see above).
-3. Dry run on the real database and check the counts: `PYTHONPATH=src uv run python
+3. Dry run on the real database and check the counts (the plan line must show the expected number of promotions; on 2026-10-17 it
+   showed 448): `PYTHONPATH=src uv run python
    scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db`.
 4. Apply with a new backup name:
    `PYTHONPATH=src uv run python scripts/reclass_rejects.py --db /workspaces/thesis/data/urls.db --apply --backup

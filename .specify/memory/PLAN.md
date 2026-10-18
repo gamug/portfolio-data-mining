@@ -1147,7 +1147,7 @@ estimates 2.5% of the whole `reject` class (95% interval 0.4%-12.9%). Causes, sc
 re-measured and the figures re-frozen, a fresh 60/40 sheet passes the T-057 criterion, the real run is rehearsed on a
 same-mount copy and then done with a backup, and `portfolio-nlp` is told what changes for it. No schema change.
 
-**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is delivered as `handoff-portfolio-nlp.md`.
+**Status: closed 2026-10-17** (scheduled by the maintainer 2026-10-16; found by the Work item 10 real run, 2026-10-15). The real run was done on 2026-10-17 on merged code (#66, #67, #69, #70) and its post-conditions held; the hand-off to `portfolio-nlp` is prepared as `handoff-portfolio-nlp.md` (delivery pending with the maintainer).
 
 - **Matcher.** `matching._loose_name` reads a full name the URL spells loosely as `review`/`loose_name`, never `reject`:
   the name with its corporate suffix kept, with the `and` of an `&` dropped, the brand of a camel-case name (`pepsi` for
@@ -1176,7 +1176,7 @@ same-mount copy and then done with a backup, and `portfolio-nlp` is told what ch
   `thin_content` 6), none is `skipped`, `api` has no `reject` row, predicted sync 0 quarantined / 0 released, the `ok`
   articles stay 93,224 (News Corp 413 pairs: `NWSA` 207, `NWS` 206, on 210 distinct URLs; `KLAC` 16, `SO` 11, `BAC` 4,
   `DG`/`IFF`/`PEP`/`TTD` 1). Classes: `reject` 325,423 -> 324,975, `review` 51,295 -> 51,743, `accept` 104,614.
-  Rehearsal with `rehearse_reclass.py` on a copy (2.3 GB) on the same mounted drive, commit `ff51985`,
+  Rehearsal with `rehearse_reclass.py` (removed 2026-10-18, see `4bfa812`) on a copy (2.3 GB) on the same mounted drive, commit `ff51985`,
   `portfolio-common` 1.2.2: 12 checks, all held. Apply **925.3 s** (fingerprint 46.9 s, plan 63.6 s, report 146.7 s,
   backup + `quick_check` + SHA-256 346.0 s, update + sync 120.8 s, verify 130.6 s), `-wal` 0 bytes afterwards; a second
   apply wrote nothing (581.3 s); revert **773.8 s**, `-wal` 0 bytes; the reverted copy equals the pristine one (`EXCEPT`
@@ -1247,8 +1247,8 @@ no release: the News Corp pairs stay what `T-062` makes them.
 Work items 3, 4, 5, 6, 7, 9, 10 and 11 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
-quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) is
-in progress (scheduled 2026-10-16); `portfolio-nlp` does not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
+quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
+2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 
