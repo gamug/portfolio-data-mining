@@ -351,8 +351,9 @@ The rehearsal script that exercised this sequence on a copy (`scripts/rehearse_r
    `python3 -c "import sqlite3; c = sqlite3.connect('file:/workspaces/thesis/data/urls.db?mode=ro', uri=True);
    print(*c.execute('SELECT id, ticker, match_class, match_reason, url FROM discovered_urls ORDER BY id DESC LIMIT 20'),
    sep='\\n')"`; a new row whose URL spells the full company name is `review` / `loose_name`, not `reject`.
-   Checked read-only on 2026-10-18 (`T-064` step 5): the 19 `KLAC` `review`/`loose_name` rows include a `cnbc.com` URL that spells `kla-corporation` (id 495526) and
-   two `seekingalpha.com` rows; no full-name URL was found as `reject`.
+   Checked read-only on 2026-10-18 (`T-064` step 5): of the 19 `KLAC` `review`/`loose_name` rows 16 predate the `T-062` run; the 3 written after it are search (`ddg`) rows
+   (ids 495519, 495520 and 495526, the last a `cnbc.com` URL through search). This shows the search path only; the 578,117 `KLAC` sitemap rows are all `reject`. No `KLAC` URL that spells
+   `kla-corporation` or `kla-corp-` is `reject` (the former name `kla-tencor` is, as expected).
 7. Rollback: `--revert data/retag/reclass_promoted.csv --backup NEW.db` puts back the class, reason and status of the
    rows that still hold what the run wrote. Restoring `url_cat_backup.db` instead also discards every row the collector and
    crawler wrote after the backup, so use it only if nothing has run since.
