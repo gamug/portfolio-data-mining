@@ -121,6 +121,15 @@ member is never silently under-covered. Operationally here: after `pricing_cli.p
 universe-snapshot` reports an `added` ticker, just re-run `news_collector discover` (default
 args) — it will pick up that ticker's full backlog on its own.
 
+## Sitemap dates: `pub_date` is the sitemap's `lastmod` (T-075)
+
+For a sitemap or RSS row, `discovered_urls.pub_date` is the entry's `lastmod` (last modified), not the publication date. The
+run's date range is applied to that same `lastmod`, and to a child sitemap's `lastmod` in an index (a child older than the range
+start is not fetched). So an article published inside the range but modified after the range end is not discovered, and an old
+article modified recently is. On the live cnbc sitemap (618,898 entries, measured 2026-10-18): `lastmod` in range for 121,233, the date in the URL in range for 120,351, both for 120,179. So 99.86% of the URL-dated rows in range have a `lastmod` in range, and 99.1% of the `lastmod`-in-range rows have a URL date in range (1,054 do not). The rows the filter wrongly drops are the 172 whose URL date is in range and `lastmod` is not. An entry whose `lastmod` cannot be read is kept, and a warning counts it. `articles.pub_date` is a different
+column: it comes from the extractor, and it is the one to filter on for what an article says it was published. The `pub_date_from`
+and `pub_date_to` filters of the queue read `discovered_urls.pub_date`. **The rows stored before this fix have a `NULL` `pub_date`** (all 1,040,939 sitemap rows on 2026-10-18), and a `NULL` fails the filter, so for them a date filter returns nothing: an empty result is not "no articles in that window". Rediscovery does not fill it in (the insert ignores an existing row); backfilling is the maintainer's decision.
+
 ## Running
 
 ```bash

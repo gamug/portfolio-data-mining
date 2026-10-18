@@ -64,7 +64,7 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
-## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067)
+## Work item 14 — Collector and gateway: a discovery batch above SQLite's variable limit, the database path, the `.env` rule (T-064–T-067, T-075, T-076)
 
 Found 2026-10-18 by the T-062 step 6 check and the database validation after the gateway restart. Evidence, line numbers and the
 decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`, then `T-066a` (which reuses `resolve_db_path()` and its empty-value rule from `T-065`); `T-067` is independent;
@@ -123,6 +123,21 @@ decisions taken are in `PLAN.md` Work item 14. **Order:** `T-064`, then `T-065`,
       Acceptance (hermetic): omitted, mismatched and explicit cases; a leaver ticker; an unknown ticker that is a substring of a company name; an
       out-of-coverage date; a current ticker still resolving when the store is missing. The two stray rows (ids 495519, 495520; find them with
       `SELECT id, url, ticker, company FROM discovered_urls WHERE company = ticker AND id >= 495519`, expect 2) are corrected or removed with the maintainer's approval.
+- [x] **T-075** *(bug, found 2026-10-18; code and tests in PR #75)* `_parse_date` in `src/news_collector/strategies/sitemap.py` returned `None` for every
+      value (it cut the text to the length of the *format string*), so no sitemap entry was ever filtered by the run's date range and no sitemap row got a `pub_date`
+      (0 of 1,040,939). Effect on the real database: the `KLAC` `cnbc.com` run took every URL back to 2006 for a 2022-01-01 to 2026-08-10 range (only 18.7% of its 578,117 rows are
+      in range by the year in the URL), and about 65% of the `accept`/`review` sitemap rows are out of range. They were already fetched, none is `pending`: 62,379 of the 93,226 `ok` articles (66.9%) were published before 2022-01-01 (62,138 of them from sitemap rows), 67 after 2026-08-10. Fixed with `datetime.fromisoformat` (plus `YYYY-MM`); an entry with a
+      `lastmod` that still cannot be read is kept and a warning counts them. Measured on the live cnbc sitemap (618,898 entries): `lastmod` in range for 121,233, the date in the URL in range for
+      120,351, both for 120,179, so `lastmod` is a faithful filter (range membership and `discovered_urls.pub_date` are the sitemap's `lastmod`, last modified, not the publication date; see `docs/modules/news-collector.md`) and a cnbc match per ticker drops from about 619,000 entries to about 121,000. Acceptance: tests of the formats, of
+      the leaf filter, of the index filter and of the warning (they fail on the old code). **Not done here:** the articles and rows already stored (out of range, empty `pub_date`) are
+      the maintainer's decision; they are not deleted.
+- [ ] **T-076** *(bug, found 2026-10-18; decide the option first)* A failed sitemap fetch is silent and counts as done. `_crawl_sitemaps` catches the error, logs a WARNING and continues, so the strategy returns 0 urls
+      and the orchestrator records the `(ticker, domain)` pair as completed (`orchestrator.py`, `mark_pair_completed` after `enqueue_batch`, unconditionally): `--resume` never retries it and the summary shows no error. This is why `ft.com` (`sitemap-index.xml` answers 403, the Wayback fallback also failed) and
+      `nasdaq.com` (the `/articles/sitemap.xml` child answers 403, `/education/sitemap.xml` 404) have 504 completed pairs and no sitemap rows. Change: the strategy reports the roots and children that failed;
+      the orchestrator adds them to `stats.errors` (so the summary lists them and, since `T-064`, the CLI exits non-zero) and does **not** record the pair as completed. No schema change (a flag column on `discovery_progress`
+      would be one, constitution #10). **Decide with the maintainer first:** a source that is blocked for good (`ft`, `nasdaq` today) would then fail on every run and make `--resume` redo its search queries each time;
+      the recommendation is that the `ft` and `nasdaq` connectors drop their dead `sitemap_roots` (with a comment: 403 on 2026-10-18) so a loud failure is left for a real regression (cnbc). Work item 15's sitemap cache (`T-070`) moves the sitemap fetch: **this task owns the error reporting and the checkpoint rule, `T-070` owns where the fetch happens**, and whichever lands second carries the other's tests; the cache should also log an unparseable `lastmod` once per fetch, not once per ticker (`discover` runs per ticker, so the leaf warning repeats about 503 times per run). Acceptance: tests of a failed root,
+      a failed child and a fully failed domain (error listed, pair not checkpointed, a later run retries it), and that a domain without `sitemap_roots` is unaffected.
 
 ## Work item 15 — Collector: the sitemap once per domain, not once per ticker (T-068–T-074)
 
