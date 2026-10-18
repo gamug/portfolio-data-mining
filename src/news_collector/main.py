@@ -21,8 +21,8 @@ from pathlib import Path
 
 import httpx
 
-# `python -m news_collector.main ...` goes through no apps/ or cli/ entry point, so it loads
-# `.env` itself, before the imports below read the environment.
+# `python -m news_collector.main ...` skips the `cli/news_collector_cli.py` wrapper, so this
+# module loads `.env` itself, before the imports below read the environment.
 from data_mining.env import load_env
 
 load_env()  # .env wins over the inherited environment (T-066b)

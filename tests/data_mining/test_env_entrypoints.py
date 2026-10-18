@@ -22,16 +22,23 @@ ENTRY_POINTS = sorted(
 )
 
 
-def _module(node: ast.stmt) -> str | None:
-    if isinstance(node, ast.ImportFrom) and node.level == 0:
-        return node.module
+def _modules(node: ast.AST) -> list[str]:
+    """The modules imported by `node` when it runs, in any nested block but not in a function body."""
+    if isinstance(node, ast.ImportFrom):
+        return [node.module] if node.level == 0 and node.module else []
     if isinstance(node, ast.Import):
-        return node.names[0].name
-    return None
+        return [alias.name for alias in node.names]
+    if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        return []  # runs when called, not at import
+    return [m for child in ast.iter_child_nodes(node) for m in _modules(child)]
 
 
 def problem(source: str) -> str | None:
-    """Why `source` does not load `.env` in time, or None."""
+    """Why `source` does not load `.env` in time, or None.
+
+    `portfolio_common` is not in `PROJECT_PACKAGES` on purpose: it reads no environment variable
+    (no `environ`/`getenv` in the package, checked when this test was written).
+    """
     body = ast.parse(source).body
     call = next(
         (
@@ -46,11 +53,11 @@ def problem(source: str) -> str | None:
     )
     if call is None:
         return "no top-level load_env() call"
-    if not any(_module(node) == "data_mining.env" for node in body[:call]):
+    before = [m for node in body[:call] for m in _modules(node)]
+    if "data_mining.env" not in before:
         return "load_env is not imported from data_mining.env before the call"
-    for node in body[:call]:
-        module = _module(node)
-        if module and module != "data_mining.env" and module.split(".")[0] in PROJECT_PACKAGES:
+    for module in before:
+        if module != "data_mining.env" and module.split(".")[0] in PROJECT_PACKAGES:
             return f"imports {module} before load_env()"
     return None
 
@@ -89,6 +96,21 @@ def test_the_expected_entry_points_are_covered() -> None:
             "no top-level load_env() call",
         ),
         ("load_env()\n", "load_env is not imported"),
+        (
+            "try:\n    import news_collector.x\nexcept ImportError:\n    pass\n"
+            "from data_mining.env import load_env\nload_env()\n",
+            "imports news_collector.x",
+        ),
+        (
+            "if True:\n    from pricing.fetcher import F\n"
+            "from data_mining.env import load_env\nload_env()\n",
+            "imports pricing.fetcher",
+        ),
+        (
+            "def f():\n    import news_collector.x\n"
+            "from data_mining.env import load_env\nload_env()\n",
+            None,
+        ),
     ],
 )
 def test_the_check_itself_fails_where_it_should(source: str, expected: str | None) -> None:

@@ -17,6 +17,13 @@ from data_mining.startup_check import allow_new_db, apply_allow_new_db_flag, ins
 REPO = Path(__file__).resolve().parents[2]
 
 
+def _unset(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
+    """Absent now, and removed again at teardown even if the test fails after `load_env()`."""
+    for name in names:
+        monkeypatch.setenv(name, "x")
+        monkeypatch.delenv(name)
+
+
 def _write(tmp_path: Path, text: str) -> Path:
     path = tmp_path / ".env"
     path.write_text(text)
@@ -35,11 +42,10 @@ def test_every_variable_in_the_file_applies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("FINNHUB_API_KEY", "old")
-    monkeypatch.delenv("NEW_ONE", raising=False)
+    _unset(monkeypatch, "NEW_ONE")
     load_env(_write(tmp_path, "FINNHUB_API_KEY=new\nNEW_ONE=1\n"))
     assert os.environ["FINNHUB_API_KEY"] == "new"
     assert os.environ["NEW_ONE"] == "1"
-    monkeypatch.delenv("NEW_ONE")
 
 
 @pytest.mark.parametrize(
@@ -49,9 +55,9 @@ def test_blank_or_absent_value_leaves_the_inherited_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, line: str
 ) -> None:
     monkeypatch.setenv("DATABASE_URL", "/system.db")
+    _unset(monkeypatch, "OTHER")
     assert "DATABASE_URL" not in load_env(_write(tmp_path, line))
     assert os.environ["DATABASE_URL"] == "/system.db"
-    monkeypatch.delenv("OTHER", raising=False)
 
 
 def test_missing_file_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,7 +139,7 @@ def test_start_up_check_reports_env_as_the_source_after_load_env(
 def test_a_flag_applied_after_load_env_still_wins(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.delenv("ALLOW_NEW_DB", raising=False)
+    _unset(monkeypatch, "ALLOW_NEW_DB")
     load_env(_write(tmp_path, "DATABASE_URL=/x.db\n"))  # ALLOW_NEW_DB absent from .env
     apply_allow_new_db_flag(["--allow-new-db"])
     assert allow_new_db()
@@ -141,7 +147,6 @@ def test_a_flag_applied_after_load_env_still_wins(
     load_env(_write(tmp_path, "ALLOW_NEW_DB=0\n"))
     apply_allow_new_db_flag(["--allow-new-db"])
     assert allow_new_db()
-    monkeypatch.delenv("ALLOW_NEW_DB", raising=False)
 
 
 def test_real_process_from_another_directory_picks_the_repo_env(tmp_path: Path) -> None:
@@ -169,3 +174,26 @@ def test_real_process_from_another_directory_picks_the_repo_env(tmp_path: Path) 
         check=True,
     )
     assert out.stdout.strip() == "/from-env-file.db"
+
+
+def test_start_up_check_without_a_path_ignores_the_real_env_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conftest guard points `root_env_file` at a missing file: no `.env` value, no warning."""
+    monkeypatch.setenv("DATABASE_URL", "/some/test.db")
+    report = inspect_database()
+    assert report.source == "inherited"
+    assert report.warnings == []
+
+
+def test_start_up_check_without_a_path_reads_the_file_load_env_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _write(tmp_path, f"DATABASE_URL={tmp_path / 'real.db'}\n")
+    monkeypatch.setattr(env, "root_env_file", lambda: path)
+    monkeypatch.setenv("DATABASE_URL", "../data/urls.db")
+    load_env()
+    report = inspect_database()
+    assert report.source == ".env"
+    assert report.warnings == []
+    assert report.path == (tmp_path / "real.db").resolve()

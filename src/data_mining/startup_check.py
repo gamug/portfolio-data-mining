@@ -19,6 +19,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from data_mining import env
 from data_mining.db import resolve_db_path
 
 log = logging.getLogger("data_mining.startup")
@@ -61,14 +62,18 @@ def allow_new_db() -> bool:
 
 
 def _resolve_source(dotenv_path: str | Path | None) -> tuple[Path, str, list[str]]:
-    """The absolute path, where the value came from, and the warnings about it. No file access.
+    """The absolute path, where the value came from, and the warnings about it.
+
+    `.env` is the file `load_env()` reads (`env.root_env_file()`, looked up at call time so a
+    test can replace it) unless `dotenv_path` names another.
 
     The source is `.env`, `inherited` or `default`. A value that is both inherited and in `.env`
     (identical) reports `.env`.
     """
     inherited = os.environ.get("DATABASE_URL", "").strip()
     # Read the file: after `load_env()` the two agree, and a difference means it was not applied.
-    from_env_file = (dotenv_values(dotenv_path).get("DATABASE_URL") or "").strip()
+    env_file = env.root_env_file() if dotenv_path is None else dotenv_path
+    from_env_file = (dotenv_values(env_file).get("DATABASE_URL") or "").strip() if env_file else ""
     warnings: list[str] = []
     if not inherited:
         source = "default"
