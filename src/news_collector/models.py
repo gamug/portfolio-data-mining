@@ -157,6 +157,9 @@ class PartialStats:
     )
     promoted_count: int = 0  # stored rows whose match class rose (rediscovery)
     error: str | None = None
+    # The error is the domain's (the sitemap cache of the domain is unusable), the same for every
+    # pair of it: the run reports it once per domain. Each pair is still not checkpointed.
+    error_of_domain: bool = False
 
 
 @dataclass
@@ -194,7 +197,10 @@ class DiscoveryStats:
             self.by_company.get(partial.company, 0) + partial.inserted_count
         )
         if partial.error:
-            self.errors.append(f"{partial.company}/{partial.domain}: {partial.error}")
+            if not partial.error_of_domain:
+                self.errors.append(f"{partial.company}/{partial.domain}: {partial.error}")
+            elif (line := f"{partial.domain}: {partial.error}") not in self.errors:
+                self.errors.append(line)
 
 
 # ---------------------------------------------------------------------------

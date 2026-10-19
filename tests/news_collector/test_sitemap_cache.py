@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
+from xml.sax.saxutils import escape
 
 import httpx
 import pytest
@@ -46,14 +47,23 @@ THREE_CRAWLS = 3
 TWO = 2
 LOOP_TICKS = 3
 MANY_ROWS = 30_000
+FIVE = 5
 
 
-def leaf(*items: tuple[str, str | None]) -> str:
-    urls = "".join(
-        f"<url><loc>{u}</loc>" + (f"<lastmod>{m}</lastmod>" if m else "") + "</url>"
-        for u, m in items
-    )
-    return f"<urlset {NS}>{urls}</urlset>"
+NEWS = 'xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"'
+
+
+def leaf(*items: tuple[str, str | None] | tuple[str, str | None, str]) -> str:
+    """A urlset; an item with a third element carries a `news:title`."""
+    urls = ""
+    for item in items:
+        url, lastmod = item[0], item[1]
+        title = item[2] if len(item) > TWO else None
+        urls += f"<url><loc>{escape(url)}</loc>"
+        urls += f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        urls += f"<news:news><news:title>{escape(title)}</news:title></news:news>" if title else ""
+        urls += "</url>"
+    return f"<urlset {NS} {NEWS}>{urls}</urlset>"
 
 
 def index(*children: str) -> str:
@@ -942,3 +952,139 @@ def test_the_cli_summary_prints_the_warnings(
     assert code == 0  # a warning is not a failure of the run
     assert "Warnings         : 1" in out
     assert "old crawl" in out
+
+
+# --- titles and undated entries through the cache ---------------------------------------------------
+
+CNBC_URL = "https://www.cnbc.com/2024/05/01/stock-picks-for-the-week.html"  # no company in the slug
+CNBC_PLAIN = "https://www.cnbc.com/2024/05/02/stock-picks-for-the-month.html"
+CNBC_UNDATED = "https://www.cnbc.com/2024/05/03/stock-picks-undated.html"
+TITLE = "Apple Inc. reports record earnings"
+ODD_TITLE = 'Café & Co\'s "Q4" <results> \u2014 \u6d4b\u8bd5'
+
+
+def cnbc_strategy(site: Site, cache: SitemapRun | None) -> SitemapRSSStrategy:
+    connector = CNBCConnector(MagicMock())
+    connector.config.sitemap_roots = [ROOT]
+    connector.config.rss_feeds = []
+    connector.config.wayback_fallback = False
+    strategy = SitemapRSSStrategy(connector, MagicMock(), cache)
+    strategy._fetch = site.fetch  # type: ignore[method-assign]
+    return strategy
+
+
+def seen(pairs: list) -> list[tuple]:
+    return sorted((p.url, p.match_class, p.match_reason, p.title, p.pub_date) for p in pairs)
+
+
+async def test_the_title_evidence_is_kept_through_the_cache(db: str) -> None:
+    site = Site(
+        {
+            ROOT: leaf(
+                (CNBC_URL, "2024-05-01", TITLE),  # only the title names the company
+                (CNBC_PLAIN, "2024-05-02"),  # nothing names it
+                (CNBC_UNDATED, None, TITLE),
+            )
+        }
+    )
+    connector = CNBCConnector(MagicMock())
+    cache = SitemapCache(DOMAIN, [ROOT], db, site.fetch, connector.is_article_url, Clock())
+    run = await cache.begin(RANGE)
+    cached = await cnbc_strategy(site, run).discover("Apple Inc.", "AAPL", RANGE)
+    live = await cnbc_strategy(site, None).discover("Apple Inc.", "AAPL", RANGE)
+    assert seen(cached) == seen(live)  # the same pairs, classes, reasons, titles and dates
+    by_url = {p.url: p for p in cached}
+    assert by_url[CNBC_URL].match_class == "accept"  # by the title, the slug has no name
+    assert by_url[CNBC_URL].title == TITLE
+    assert by_url[CNBC_PLAIN].match_class == "reject"
+    assert rows(db, "SELECT title FROM sitemap_entries WHERE url = ?", CNBC_URL) == [(TITLE,)]
+
+
+async def test_an_undated_entry_survives_the_end_filter_and_the_round_trip(db: str) -> None:
+    site = Site({ROOT: leaf((A1, "2024-05-01"), (A2, None), (A3, "2022-03-01"))})
+    run = await make(db, site, Clock()).begin(RANGE)
+    early = DateRange(start=START, end=date(2023, 1, 1))
+    assert read(run, early)[0] == sorted([A2, A3])  # A2 has no lastmod: kept whatever the end
+    assert read(run)[0] == sorted([A1, A2, A3])
+    assert rows(db, "SELECT lastmod FROM sitemap_entries WHERE url = ?", A2) == [(None,)]
+    fresh = await make(db, site, Clock(T0 + timedelta(minutes=1))).begin(
+        RANGE
+    )  # read back from the table
+    assert read(fresh, early)[0] == sorted([A2, A3])
+
+
+async def test_a_title_with_markup_and_non_ascii_comes_back_unchanged(db: str) -> None:
+    site = Site({ROOT: leaf((A1, "2024-05-01", ODD_TITLE))})
+    await make(db, site, Clock()).begin(RANGE)
+    assert rows(db, "SELECT title FROM sitemap_entries")[0][0] == ODD_TITLE
+    other = await make(db, site, Clock(T0 + timedelta(minutes=1))).begin(RANGE)  # a new process
+    assert [e.title for e in other.entries(RANGE)[0]] == [ODD_TITLE]
+
+
+# --- an outage: back-off, the purge of crawl rows, one error per domain ------------------------------
+
+
+async def test_during_an_outage_runs_do_not_retry_the_crawl_until_the_back_off_ends(
+    db: str,
+) -> None:
+    site = Site({})  # nothing answers
+    clock = Clock()
+    cache = make(db, site, clock)
+    for _ in range(FIVE):
+        run = await cache.begin(RANGE)
+        assert run.crawl is None  # case c, every time
+        assert run.failures
+    assert cache.crawls == 1  # one attempt, not five
+    await cache.begin(RANGE, force=True)  # a forced call tries again
+    assert cache.crawls == TWO
+    clock.advance(minutes=sc.RETRY_AFTER.total_seconds() / 60 + 1)
+    await cache.begin(RANGE)  # the back-off is over
+    assert cache.crawls == THREE_CRAWLS
+    site.pages[ROOT] = leaf((A1, "2024-05-01"))
+    await cache.begin(RANGE)  # still backing off after the third failure
+    assert cache.crawls == THREE_CRAWLS
+    clock.advance(minutes=sc.RETRY_AFTER.total_seconds() / 60 + 1)
+    run = await cache.begin(RANGE)  # the site is back: a crawl, and the back-off is cleared
+    assert cache.crawls == THREE_CRAWLS + 1
+    assert read(run)[0] == [A1]
+    await cache.begin(RANGE, force=True)
+    assert cache.crawls == THREE_CRAWLS + TWO
+
+
+async def test_a_failed_refresh_purges_crawl_rows_older_than_90_days_but_not_the_latest_complete(
+    db: str,
+) -> None:
+    site = standard_site()
+    clock = Clock()
+    cache = make(db, site, clock)
+    await cache.begin(RANGE)  # a complete crawl, the only one
+    site.down.add(ROOT)
+    for days in (10, DAYS_PURGE + 10):  # two failed attempts, 10 and 110 days later
+        clock.advance(days=days)
+        await cache.begin(RANGE, force=True)
+    rows_left = rows(db, "SELECT complete FROM sitemap_crawls ORDER BY started_at")
+    # the failed attempt of day 10 is older than 90 days at day 110 and is gone; the complete
+    # crawl of day 0 is older still but it is the latest complete one, so it stays
+    assert rows_left == [(1,), (0,)]
+    assert rows(db, "SELECT COUNT(*) FROM sitemap_entries") == [(TWO,)]  # its entries stay too
+
+
+async def test_an_unusable_domain_is_one_error_in_the_run_and_every_pair_is_not_checkpointed(
+    db: str, offline: Site
+) -> None:
+    offline.pages.clear()  # the sitemap is down
+    connector = fake_connector()
+    queue = URLQueue(db)
+    orchestrator = DiscoveryOrchestrator(connectors={DOMAIN: connector}, queue=queue, concurrency=1)
+
+    async def no_api(*_: object) -> list:
+        return []
+
+    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
+    companies = [Company(ticker=t, name=f"{t} Inc.") for t in ("AAA", "BBB", "CCC")]
+    stats = await orchestrator.run(companies, date_range=RANGE, resume=False)
+    assert len(stats.errors) == 1  # one line for the domain, not three
+    assert stats.errors[0].startswith(f"{DOMAIN}: ")
+    reader = URLQueue(db)
+    reader.initialize()
+    assert reader.completed_pairs([DOMAIN], RANGE.start, RANGE.end) == set()  # none checkpointed

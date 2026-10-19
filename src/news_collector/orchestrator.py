@@ -315,6 +315,13 @@ class DiscoveryOrchestrator:
         # Persist to queue
         inserted = self._queue.enqueue_batch(deduped)
 
+        # A failure that is the domain's cache being unusable is the same for every pair: the run
+        # summary names it once per domain (each pair is still not checkpointed).
+        run = self._caches.get(domain)
+        partial.error_of_domain = bool(run and run.failures) and sitemap_failures == list(
+            run.failures if run else ()
+        )
+
         # Checkpoint: record this (ticker, domain) pair as done for this date range
         # so a future resume run can skip it. Recorded whatever `resume` is (so any run
         # leaves a usable checkpoint for the next one), but not when a sitemap root or

@@ -46,6 +46,8 @@ log = logging.getLogger(__name__)
 # the old rule. A test pins the result of both on a dozen URLs and fails on a change without a bump.
 CACHE_VERSION = 1
 FRESH_DAYS = 7
+# After a failed refresh the process does not try again for this long unless the call is forced.
+RETRY_AFTER = timedelta(minutes=5)
 PURGE_DAYS = 90
 SIGNATURE_LENGTH = 16
 # A crawl keeps every entry from its start on: the run's end is applied when the rows are read.
@@ -129,6 +131,7 @@ class SitemapCache:
         fetch: Callable[[str], Awaitable[str]],
         is_article_url: Callable[[str], bool],
         clock: Callable[[], datetime] = utc_now,
+        retry_after: timedelta = RETRY_AFTER,
     ) -> None:
         self.domain = domain
         self._roots = list(roots)
@@ -136,6 +139,9 @@ class SitemapCache:
         self._fetch = fetch
         self._is_article_url = is_article_url
         self._clock = clock
+        self._retry_after = retry_after
+        self._failed_at: datetime | None = None  # the last failed refresh, for the back-off
+        self._last_failures: list[str] = []
         self._signature = signature(roots)
         # an asyncio.Lock binds to the loop that first waits on it, and the cache lives as long as
         # the process: it gets a new lock when the running loop is another one
@@ -189,7 +195,12 @@ class SitemapCache:
                 latest = await asyncio.to_thread(self._latest_complete)
                 refresh_failures: list[str] = []
                 if self._must_refresh(latest, date_range.start, force, requested, now):
-                    refresh_failures = await self._refresh(date_range.start, latest)
+                    if self._backing_off(force, now):
+                        refresh_failures = list(self._last_failures)  # the outage is still on
+                    else:
+                        refresh_failures = await self._refresh(date_range.start, latest)
+                        self._failed_at = now if refresh_failures else None
+                        self._last_failures = refresh_failures
                     latest = await asyncio.to_thread(self._latest_complete)
                 return await self._run_for(latest, date_range, refresh_failures, now)
         except Exception as exc:
@@ -197,6 +208,12 @@ class SitemapCache:
             return SitemapRun(
                 self.domain, None, (f"sitemap cache of {self.domain} unusable: {exc}",)
             )
+
+    def _backing_off(self, force: bool, now: datetime) -> bool:
+        """A refresh failed less than `retry_after` ago: do not crawl again (a forced call does)."""
+        return (
+            not force and self._failed_at is not None and now - self._failed_at < self._retry_after
+        )
 
     def _must_refresh(
         self, latest: Crawl | None, start: date, force: bool, requested: datetime, now: datetime
@@ -359,17 +376,19 @@ class SitemapCache:
                         failures,
                     ),
                 )
+                cutoff = stamp(datetime.fromisoformat(started_at) - timedelta(days=PURGE_DAYS))
                 if complete:
-                    cutoff = stamp(datetime.fromisoformat(started_at) - timedelta(days=PURGE_DAYS))
                     db.execute(
                         "DELETE FROM sitemap_entries WHERE domain = ? AND last_seen < ?",
                         (self.domain, cutoff),
                     )
-                    db.execute(
-                        "DELETE FROM sitemap_crawls WHERE domain = ? AND started_at < ? "
-                        "AND started_at <> ?",
-                        (self.domain, cutoff, started_at),
-                    )
+                # crawl rows, complete or not: 90 days of history and the latest complete row
+                db.execute(
+                    "DELETE FROM sitemap_crawls WHERE domain = ? AND started_at < ? AND NOT "
+                    "(complete = 1 AND started_at = (SELECT started_at FROM sitemap_crawls "
+                    "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1))",
+                    (self.domain, cutoff, self.domain),
+                )
         finally:
             db.close()
 

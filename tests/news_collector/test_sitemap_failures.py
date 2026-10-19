@@ -153,7 +153,9 @@ async def test_failed_domain_is_an_error_and_a_later_run_retries(
     assert _ROOT in stats.errors[0]
     assert not _done(queue)
 
-    # the source recovers: the next run is not skipped and checkpoints the pair
+    # the source recovers and the next run is a new process (the CLI; a gateway would wait out the
+    # 5-minute back-off of the cache, or be forced): the pair is not skipped and is checkpointed
+    sitemap_cache.reset_shared_caches()
     stats = await _run(orch, monkeypatch, {_ROOT: _LEAF})
     assert stats.errors == []
     assert _done(queue)
