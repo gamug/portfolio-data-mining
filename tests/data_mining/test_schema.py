@@ -521,7 +521,8 @@ def test_two_connections_starting_together_migrate_one_file_once(tmp_path: Path)
 
 def _apply_schema_as_version_3(db: Database) -> None:
     """The previous `apply_schema`: the same two DDL scripts (unchanged in version 4) and the
-    version stamp 3, with no knowledge of the cache."""
+    version stamp 3, with no knowledge of the cache. It is faithful only while those two scripts
+    stay as they are: if one changes, freeze a copy of the version-3 text here."""
     db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
     db.create_schema(_ARTICLES_DDL)
     db.set_schema_version(PREVIOUS_SCHEMA_VERSION)
