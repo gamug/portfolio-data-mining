@@ -86,9 +86,11 @@ print(before, q._conn.execute(
     " WHERE name='idx_match_class'), (SELECT * FROM pragma_user_version) FROM discovered_urls").fetchone()[:])
 PY
 ```
-Expect the same row count before and after, every row `accept`, the index present and user_version 3
+Expect the same row count before and after, every row `accept`, the index present and user_version 4
 (the 481,332-row corpus gave that on 2026-10-15, when the version was 2; `initialize()` now also adds
-`articles.prev_fetch_status` and stamps 3).
+`articles.prev_fetch_status` and, since T-069, the two empty sitemap-cache tables, and stamps **4**: the expected
+`user_version` is 4). The cache migration has its own rehearsal on a copy,
+`scripts/rehearse_sitemap_cache_migration.py` (`--source` is opened read-only, `--copy` must not exist).
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.

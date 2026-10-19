@@ -2,19 +2,21 @@
 idempotent application, and the forward-only migrations.
 """
 
-import importlib.util
 import sqlite3
-import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from portfolio_common.db import Database
 
+from data_mining.db import connect as connect_db
 from data_mining.schema import (
     ARTICLE_COLUMNS,
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_VERSION,
+    SITEMAP_CACHE_DDL,
     apply_schema,
     rollback_sitemap_cache,
     run_migrations,
@@ -152,7 +154,7 @@ def _index_names(db: Database) -> set[str]:
 
 
 def test_schema_version_is_4() -> None:
-    assert SCHEMA_VERSION == 4
+    assert SCHEMA_VERSION == PINNED_VERSION
 
 
 def test_fresh_schema_has_match_columns_and_index(db: Database) -> None:
@@ -250,6 +252,7 @@ def test_fresh_schema_has_prev_fetch_status_outside_the_upsert_columns(db: Datab
 # The sitemap cache (Work item 15, T-069)
 # ---------------------------------------------------------------------------------------------
 
+PINNED_VERSION = 4  # the history is in schema.py
 CACHE_TABLES = {"sitemap_entries", "sitemap_crawls"}
 CACHE_INDEXES = {
     "ix_sitemap_entries_lastmod",
@@ -294,35 +297,6 @@ def test_apply_schema_creates_the_cache_tables_and_indexes(db: Database) -> None
     assert _index_names(db) >= CACHE_INDEXES
 
 
-def test_the_cache_ddl_is_the_one_the_script_measured(db: Database) -> None:
-    """`PLAN.md` shows the DDL the script measured; the migration must run exactly it."""
-    scripts = Path(__file__).resolve().parents[2] / "scripts"
-    sys.path.insert(0, str(scripts))
-    spec = importlib.util.spec_from_file_location(
-        "sitemap_preselect_check", scripts / "sitemap_preselect_check.py"
-    )
-    assert spec is not None
-    assert spec.loader is not None
-    script = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(script)
-    measured = Database(sqlite3.connect(":memory:"))
-    measured.create_schema(script.CACHE_DDL)
-    apply_schema(db)
-    names = ("sitemap_entries", "sitemap_crawls", *sorted(CACHE_INDEXES))
-
-    def definitions(database: Database) -> dict[str, str]:
-        marks = ", ".join("?" * len(names))
-        rows = database.execute(
-            f"SELECT name, sql FROM sqlite_master WHERE name IN ({marks})",  # noqa: S608 - marks only
-            names,
-        ).fetchall()
-        return {r[0]: _norm(r[1]) for r in rows}
-
-    assert definitions(db) == definitions(measured)
-    assert len(definitions(db)) == len(names)
-    measured.close()
-
-
 def test_the_migration_adds_the_cache_to_a_version_3_database_and_changes_nothing_else(
     db: Database,
 ) -> None:
@@ -341,11 +315,11 @@ def test_the_migration_adds_the_cache_to_a_version_3_database_and_changes_nothin
     assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 0
 
 
-def test_the_migration_on_an_empty_database_creates_only_the_cache(db: Database) -> None:
+def test_the_migration_on_an_empty_database_is_a_noop_like_the_other_steps(db: Database) -> None:
     run_migrations(db)
     run_migrations(db)
 
-    assert _table_names(db) == CACHE_TABLES
+    assert _table_names(db) == set()  # apply_schema creates the whole schema there
 
 
 def test_the_rollback_restores_the_previous_schema_and_can_be_redone(db: Database) -> None:
@@ -448,3 +422,93 @@ def test_both_stages_and_a_read_only_reader_work_on_a_version_3_file(tmp_path: P
     assert {r[0] for r in check.execute("SELECT name FROM sqlite_master")} >= CACHE_TABLES
     assert check.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     check.close()
+
+
+def test_complete_refuses_a_value_other_than_0_or_1(db: Database) -> None:
+    apply_schema(db)
+    bad = ("cnbc.com", "2026-10-19T10:00:00.000000", None, 7, "2022-01-01", "sig", None, None)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", bad)
+    for flag in (0, 1):
+        ok = ("cnbc.com", f"2026-10-19T10:00:00.00000{flag}", None, flag, "2022-01-01", "s", 0, 0)
+        db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ok)
+
+
+def test_the_rollback_refuses_a_database_that_is_not_at_version_4(db: Database) -> None:
+    apply_schema(db)
+    rollback_sitemap_cache(db)  # version 3 now
+    with pytest.raises(ValueError, match="expects schema version 4"):
+        rollback_sitemap_cache(db)  # twice
+    db.set_schema_version(SCHEMA_VERSION + 1)
+    with pytest.raises(ValueError, match="found 5"):
+        rollback_sitemap_cache(db)  # a later version is never lowered
+    assert db.schema_version == SCHEMA_VERSION + 1
+
+
+def test_timestamps_that_differ_by_microseconds_are_two_keys_in_time_order(db: Database) -> None:
+    apply_schema(db)
+    first = "2026-10-19T10:00:00.000001"
+    second = "2026-10-19T10:00:00.000002"
+    for started in (second, first):  # inserted out of order
+        db.execute(
+            "INSERT INTO sitemap_crawls VALUES ('cnbc.com', ?, NULL, 0, '2022-01-01', 's', 0, 0)",
+            (started,),
+        )
+    rows = db.execute(
+        "SELECT started_at FROM sitemap_crawls WHERE domain = 'cnbc.com' ORDER BY started_at"
+    ).fetchall()
+    assert [r[0] for r in rows] == [first, second]
+
+
+def test_two_processes_starting_together_migrate_one_file_once(tmp_path: Path) -> None:
+    """The collector and the extractor start independently and both run the migration: the
+    second waits for the first's write lock (busy_timeout) and finds nothing to do."""
+    path = tmp_path / "urls.db"
+    old = Database(sqlite3.connect(path))
+    apply_schema(old)
+    rollback_sitemap_cache(old)  # a version-3 file
+    old.close()
+
+    first = connect_db(str(path), wal=True, check_same_thread=False)
+    second = connect_db(str(path), wal=True, check_same_thread=False)
+    holding = threading.Event()
+    release = threading.Event()
+    errors: list[BaseException] = []
+
+    def hold_the_lock() -> None:
+        try:
+            first.execute("BEGIN IMMEDIATE")  # the migration's write lock, held a moment
+            for statement in SITEMAP_CACHE_DDL.split(";"):  # the DDL, inside the transaction
+                if statement.strip():
+                    first.execute(statement)
+            holding.set()
+            release.wait(5)
+            first.commit()
+        except BaseException as exc:
+            errors.append(exc)
+            holding.set()
+
+    holder = threading.Thread(target=hold_the_lock)
+    holder.start()
+    assert holding.wait(5)
+    threading.Timer(0.3, release.set).start()
+    began = time.monotonic()
+    apply_schema(second)  # blocks on the lock, then runs as a no-op
+    run_migrations(second)
+    second.commit()
+    waited = time.monotonic() - began
+    holder.join(5)
+
+    assert errors == []
+    assert waited >= 0.2  # it really waited for the first
+    check = sqlite3.connect(path)
+    objects = [
+        r[0]
+        for r in check.execute(
+            "SELECT name FROM sqlite_master WHERE name LIKE '%sitemap%' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name"
+        )
+    ]
+    check.close()
+    assert objects == sorted([*CACHE_TABLES, *CACHE_INDEXES])  # one copy of each
+    first.close()
+    second.close()

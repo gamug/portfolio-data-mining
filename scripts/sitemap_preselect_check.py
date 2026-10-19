@@ -67,6 +67,7 @@ from multiprocessing import Pool
 from urllib.parse import urlsplit
 
 from data_mining import matching as M
+from data_mining.schema import SITEMAP_CACHE_DDL
 from news_collector.config import build_date_range
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.connectors.ft import FTConnector
@@ -81,40 +82,11 @@ Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO), title
 Pair = tuple[str, str, str | None]  # class, reason, pub_date (ISO)
 
 START = date(2022, 1, 1)
-# The design's DDL (T-068 note, G2); created only in memory or in a temporary file.
-CACHE_DDL = """
-CREATE TABLE sitemap_entries (
-    domain TEXT NOT NULL, url TEXT NOT NULL, lastmod TEXT, title TEXT,
-    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (domain, url)
-) WITHOUT ROWID;
-CREATE INDEX ix_sitemap_entries_lastmod ON sitemap_entries (domain, lastmod);
-CREATE TABLE sitemap_crawls (
-    domain TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    complete INTEGER NOT NULL, range_start TEXT NOT NULL, signature TEXT NOT NULL,
-    entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
-);
-CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
-CREATE INDEX ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at)
-    WHERE finished_at IS NULL;
-"""
+# The cache DDL is `data_mining.schema.SITEMAP_CACHE_DDL`; the script creates it only in memory
+# or in a temporary file.
 # Bumped when `is_article_url` or the normalization changes: the cached rows were filtered by the
 # old rule. The test of the pinned URLs fails when a result changes without a new version.
 CACHE_VERSION = 1
-# Rollback of the migration: the indexes go with their tables.
-CACHE_ROLLBACK = "DROP TABLE sitemap_crawls; DROP TABLE sitemap_entries;"
-# The three queries the design runs; the test shows each one uses an index.
-CACHE_QUERIES = {
-    "latest complete crawl": (
-        "SELECT started_at, finished_at, range_start, signature FROM sitemap_crawls "
-        "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1"
-    ),
-    "crawl in progress": (
-        "SELECT 1 FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL AND started_at > ?"
-    ),
-    "current entries": (
-        "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ?"
-    ),
-}
 # Cumulative shares of the synthetic URL variants, then the share of entries with a title and of
 # entries without a `lastmod`.
 P_TICKER_URL, P_NAME_S_URL, P_NAME_CORP_URL, P_TITLE, P_NO_LASTMOD = 0.25, 0.4, 0.5, 0.7, 0.03
@@ -266,7 +238,7 @@ def cache_rows(
     within one crawl the first entry of a URL wins (as `_dedupe_and_filter` does today).
     """
     db = sqlite3.connect(":memory:")
-    db.executescript(CACHE_DDL)
+    db.executescript(SITEMAP_CACHE_DDL)
     now = datetime.now(UTC).isoformat()
     db.executemany(
         "INSERT OR IGNORE INTO sitemap_entries VALUES (?, ?, ?, ?, ?, ?)",
@@ -578,7 +550,7 @@ def cmd_cache_size(args: argparse.Namespace) -> None:
             if args.wal:  # as `connect(wal=True)` does for the writer path
                 db.execute("PRAGMA journal_mode=WAL")
                 db.execute("PRAGMA synchronous=NORMAL")
-            db.executescript(CACHE_DDL)
+            db.executescript(SITEMAP_CACHE_DDL)
             db.executemany(
                 "INSERT INTO sitemap_entries VALUES ('cnbc.com', ?, ?, ?, '2026-10-19T00:00:00', '2026-10-19T00:00:00')",
                 rows,

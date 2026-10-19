@@ -90,8 +90,15 @@ CREATE TABLE IF NOT EXISTS articles (
 # `articles` is affected. `sitemap_crawls.signature` hashes the domain's `sitemap_roots` and a
 # cache version; a crawl in progress is a row with `finished_at IS NULL`. `WITHOUT ROWID` is
 # SQLite's (the engine is SQLite today, see `portfolio_common.db`). This text is the DDL that
-# `PLAN.md` Work item 15 shows for G2 and that `scripts/sitemap_preselect_check.py` measured.
-_SITEMAP_CACHE_DDL = """
+# `PLAN.md` Work item 15 shows for G2 and that `scripts/sitemap_preselect_check.py` measured
+# (the script imports this constant: there is one copy of the DDL).
+#
+# Formats, which the design compares as strings: `lastmod` is an ISO date `YYYY-MM-DD` (NULL when
+# the sitemap has none); `started_at`, `finished_at`, `first_seen`, `last_seen` and `range_start`
+# are UTC ISO-8601 with microseconds and no offset (`2026-10-19T10:00:00.000000`; `range_start`
+# is a date); `last_seen` equals the `started_at` of the crawl that saw the entry, which the
+# schema does not enforce; `complete` is 0 or 1.
+SITEMAP_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS sitemap_entries (
     domain TEXT NOT NULL, url TEXT NOT NULL, lastmod TEXT, title TEXT,
     first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (domain, url)
@@ -99,7 +106,8 @@ CREATE TABLE IF NOT EXISTS sitemap_entries (
 CREATE INDEX IF NOT EXISTS ix_sitemap_entries_lastmod ON sitemap_entries (domain, lastmod);
 CREATE TABLE IF NOT EXISTS sitemap_crawls (
     domain TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    complete INTEGER NOT NULL, range_start TEXT NOT NULL, signature TEXT NOT NULL,
+    complete INTEGER NOT NULL CHECK (complete IN (0, 1)), range_start TEXT NOT NULL,
+    signature TEXT NOT NULL,
     entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
 );
 CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
@@ -150,7 +158,7 @@ def apply_schema(db: Database) -> None:
     """
     db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
     db.create_schema(_ARTICLES_DDL)
-    db.create_schema(_SITEMAP_CACHE_DDL)
+    db.create_schema(SITEMAP_CACHE_DDL)
     db.set_schema_version(SCHEMA_VERSION)
 
 
@@ -168,7 +176,15 @@ def run_migrations(db: Database) -> None:
 def rollback_sitemap_cache(db: Database) -> None:
     """Undo schema version 4: drop the two cache tables and stamp version 3. Not called by any
     application path; it is the rollback the maintainer approves at G2, and a test runs it.
+
+    Refuses a database that is not at version 4, so an operator cannot lower a later version or
+    run it twice by mistake.
     """
+    if db.schema_version != SCHEMA_VERSION:
+        raise ValueError(
+            f"rollback_sitemap_cache expects schema version {SCHEMA_VERSION}, "
+            f"found {db.schema_version}"
+        )
     db.create_schema(SITEMAP_CACHE_ROLLBACK)
     db.set_schema_version(PREVIOUS_SCHEMA_VERSION)
 
@@ -221,5 +237,8 @@ def _migrate_prev_fetch_status(db: Database) -> None:
 
 def _migrate_sitemap_cache(db: Database) -> None:
     """A database of schema version < 4 has no sitemap cache. Create the two tables and their
-    indexes, empty. No-op on a current database (every statement is `IF NOT EXISTS`)."""
-    db.create_schema(_SITEMAP_CACHE_DDL)
+    indexes, empty. No-op on a current database (every statement is `IF NOT EXISTS`) and on an
+    empty one, like the other steps (`apply_schema` creates the whole schema there)."""
+    if not db.table_columns("discovered_urls"):
+        return  # table doesn't exist yet -- nothing to migrate
+    db.create_schema(SITEMAP_CACHE_DDL)
