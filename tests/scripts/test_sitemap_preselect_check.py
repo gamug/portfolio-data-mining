@@ -26,6 +26,8 @@ mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(mod)
 
 MIN_PAIRS = 100
+ARGPARSE_ERROR = 2
+OLD_YEAR = 2015
 COMPANIES = [
     ("KLAC", "KLA Corporation"),
     ("AAPL", "Apple Inc."),
@@ -202,6 +204,7 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "in range today: 1" in out
     assert "left the sitemap: 1" in out
     assert "crawl article urls not stored: 0" in out
+    assert "an old article re-dated into the range): 0 of 1" in out
     assert "(with an `ok` article) with a URL year before 2022: 0 of 1" in out
     assert "(all) with a URL year before 2022: 1 of 3" in out
     assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
@@ -224,4 +227,14 @@ def test_check_takes_an_end_date_and_refuses_a_malformed_one(
     monkeypatch.setattr(sys, "argv", ["x", "check", "--entries", "e", "--end", "30/06/2025"])
     with pytest.raises(SystemExit) as bad:
         mod.main()
-    assert bad.value.code == 2  # argparse: invalid date
+    assert bad.value.code == ARGPARSE_ERROR  # argparse: invalid date
+
+
+def test_redated_counts_old_urls_in_the_range() -> None:
+    rows = [
+        ("https://www.cnbc.com/2015/01/01/old.html", "2026-01-01", None),
+        ("https://www.cnbc.com/2024/01/01/new.html", "2026-01-01", None),
+        ("https://www.cnbc.com/id/100.html", "2026-01-01", None),  # no year in the path
+    ]
+    assert mod.url_year(rows[0][0]) == OLD_YEAR
+    assert mod.redated(rows) == (1, 2)

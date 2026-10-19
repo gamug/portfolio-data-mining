@@ -195,6 +195,18 @@ def in_range(raw: list[SitemapEntry], start: date, end: date | None = None) -> l
     return [e for e in raw if e.lastmod is None or window.contains(e.lastmod)]
 
 
+def url_year(url: str) -> int | None:
+    """The year in a cnbc URL path (`/2024/05/01/...`): the publication date, not the `lastmod`."""
+    m = re.match(r"https?://[^/]+/(\d{4})/", url)
+    return int(m.group(1)) if m else None
+
+
+def redated(rows: list[Row], start: date = START) -> tuple[int, int]:
+    """(rows whose URL year is before `start`'s year, rows with a URL year), of cache rows in range."""
+    years = [y for url, _lastmod, _title in rows if (y := url_year(url)) is not None]
+    return sum(1 for y in years if y < start.year), len(years)
+
+
 UPSERT = (
     "INSERT INTO sitemap_entries VALUES ('cnbc.com', ?, ?, ?, '2026-10-19T00:00:00', '2026-10-26T00:00:00') "
     "ON CONFLICT (domain, url) DO UPDATE SET lastmod = excluded.lastmod, "
@@ -509,10 +521,19 @@ def cmd_cache_size(args: argparse.Namespace) -> None:
         ("in range, each with a 70-character title", titled),
     ):
         rows = cache_rows(entries, connector)
+        if label == "in range":
+            old, dated = redated(rows)
+            print(
+                f"in range, URL year before {START.year} (an old article re-dated into the range): "
+                f"{old} of {dated} rows with a URL year ({old / dated:.1%})"
+            )
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         try:
             db = sqlite3.connect(path)
+            if args.wal:  # as `connect(wal=True)` does for the writer path
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("PRAGMA synchronous=NORMAL")
             db.executescript(CACHE_DDL)
             db.executemany(
                 "INSERT INTO sitemap_entries VALUES ('cnbc.com', ?, ?, ?, '2026-10-19T00:00:00', '2026-10-19T00:00:00')",
@@ -530,7 +551,7 @@ def cmd_cache_size(args: argparse.Namespace) -> None:
             os.remove(path)
         print(
             f"{label}: {len(rows)} rows, {size} bytes, {size / len(rows):.0f} bytes a row; "
-            f"a refresh upserts them all in {upsert:.2f} s"
+            f"a refresh upserts them all in {upsert:.2f} s ({'WAL' if args.wal else 'rollback journal'})"
         )
 
 
@@ -594,6 +615,24 @@ def cmd_timing(args: argparse.Namespace) -> None:
     )
 
 
+def kind_of_stored(
+    urls: list[str], lastmod: dict[str, date | None]
+) -> tuple[collections.Counter[str], int]:
+    """Each stored URL: left the sitemap, in range today, or before the start; and the re-dated."""
+    kinds: collections.Counter[str] = collections.Counter()
+    redated_rows = 0
+    for url in urls:
+        if url not in lastmod:
+            kinds["left the sitemap"] += 1
+        elif (modified := lastmod[url]) is None or modified >= START:
+            kinds["in range today"] += 1
+            if (y := url_year(url)) is not None and y < START.year:
+                redated_rows += 1
+        else:
+            kinds[f"before {START} (lastmod in the crawl)"] += 1
+    return kinds, redated_rows
+
+
 def cmd_stored(args: argparse.Namespace) -> None:
     """Stored cnbc sitemap rows against today's crawl; read-only on the database."""
     raw = read_raw(args.entries)
@@ -632,14 +671,7 @@ def cmd_stored(args: argparse.Namespace) -> None:
         "SELECT url FROM discovered_urls WHERE domain = 'cnbc.com' AND source = 'sitemap' "
         "AND match_class IN ('accept', 'review')"
     ).fetchall()
-    kinds: collections.Counter[str] = collections.Counter()
-    for (url,) in rows:
-        if url not in lastmod:
-            kinds["left the sitemap"] += 1
-        elif (modified := lastmod[url]) is None or modified >= START:
-            kinds["in range today"] += 1
-        else:
-            kinds[f"before {START} (lastmod in the crawl)"] += 1
+    kinds, redated_rows = kind_of_stored([u for (u,) in rows], lastmod)
     year = "CAST(substr(d.url, instr(d.url, '.com/') + 5, 4) AS INT)"
     for label, join in (
         ("all", ""),
@@ -655,6 +687,10 @@ def cmd_stored(args: argparse.Namespace) -> None:
     print(f"stored accept/review cnbc sitemap rows: {len(rows)}")
     for kind, n in kinds.most_common():
         print(f"  {kind}: {n} ({n / len(rows):.1%})")
+    print(
+        f"  in range today with a URL year before {START.year} (an old article re-dated "
+        f"into the range): {redated_rows} of {kinds['in range today']}"
+    )
     db.close()
 
 
@@ -678,6 +714,8 @@ def main() -> None:
             cmd.add_argument("--start", type=date.fromisoformat, default=START)
             cmd.add_argument("--end", type=date.fromisoformat, default=None)
             cmd.add_argument("--csv")
+        if name == "cache-size":
+            cmd.add_argument("--wal", action="store_true")
         if name == "timing":
             cmd.add_argument("--per-ticker", type=int, default=3000)
         if name == "synthetic":
