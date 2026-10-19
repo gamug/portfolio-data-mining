@@ -1302,7 +1302,7 @@ so a full run of the 503 tickers would have added about 503 × 578,000 ≈ 290 m
 
 ## Sequencing
 
-Work items 3, 4, 5, 6, 7, 9, 10, 11 and 14 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
+Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13 and 14 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
 items 1–2 stay reverted/on hold at the maintainer's prior request. Work item 8 (`T-045`) is
 open and active. Work item 10 (wrong-company tagging, requested by `portfolio-nlp`) closed 2026-10-16; `portfolio-nlp` has the
 quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) closed
