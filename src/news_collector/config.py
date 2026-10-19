@@ -7,8 +7,10 @@ literal dates across `main.py`, `api/schemas.py`, and `orchestrator.py`.
 
 from __future__ import annotations
 
+import logging
+import math
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from news_collector.models import DateRange
 
@@ -18,11 +20,43 @@ ENV_START_DATE = "DISCOVERY_START_DATE"
 # Fallback when the env var is unset
 _FALLBACK_START_DATE = date(2022, 1, 1)
 
+# Minutes a process waits after a failed sitemap refresh before it crawls again (T-070a);
+# 0 turns the back-off off. A forced refresh ignores it.
+ENV_SITEMAP_RETRY_MINUTES = "SITEMAP_RETRY_MINUTES"
+_FALLBACK_SITEMAP_RETRY_MINUTES = 5.0
+_MAX_SITEMAP_RETRY_MINUTES = 30 * 24 * 60  # a month: more is a typo, not a policy
+
+log = logging.getLogger(__name__)
+
 
 def default_start_date() -> date:
     """Inclusive discovery start date. Set via DISCOVERY_START_DATE (YYYY-MM-DD)."""
     raw = os.environ.get(ENV_START_DATE)
     return date.fromisoformat(raw) if raw else _FALLBACK_START_DATE
+
+
+def sitemap_retry_after() -> timedelta:
+    """The back-off after a failed sitemap refresh. Set via SITEMAP_RETRY_MINUTES (>= 0).
+
+    A value that is not a finite number between 0 and a month is ignored, with a warning: a typo in `.env` must
+    not turn the back-off off or stop the run.
+    """
+    raw = (os.environ.get(ENV_SITEMAP_RETRY_MINUTES) or "").strip()
+    if not raw:
+        return timedelta(minutes=_FALLBACK_SITEMAP_RETRY_MINUTES)
+    try:
+        minutes = float(raw)
+    except ValueError:
+        minutes = -1.0
+    if not (math.isfinite(minutes) and 0 <= minutes <= _MAX_SITEMAP_RETRY_MINUTES):
+        log.warning(
+            "%s=%r is not a number of minutes between 0 and a month: using %s",
+            ENV_SITEMAP_RETRY_MINUTES,
+            raw,
+            _FALLBACK_SITEMAP_RETRY_MINUTES,
+        )
+        minutes = _FALLBACK_SITEMAP_RETRY_MINUTES
+    return timedelta(minutes=minutes)
 
 
 def today_utc() -> date:

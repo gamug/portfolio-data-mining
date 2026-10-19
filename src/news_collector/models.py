@@ -178,8 +178,21 @@ class DiscoveryStats:
     errors: list[str] = field(default_factory=list)
     # Not errors (the pairs are checkpointed): a sitemap cache used after a failed refresh (T-070a).
     warnings: list[str] = field(default_factory=list)
+    # pairs that carried each domain-level error (T-070a): the run says how much was left undone
+    domain_error_pairs: dict[str, int] = field(default_factory=dict)
     elapsed_seconds: float = 0.0
     skipped_pairs: int = 0
+
+    def _add_domain_error(self, line: str) -> None:
+        """One error line per domain-level failure, with the number of pairs it left undone."""
+        count = self.domain_error_pairs.get(line, 0) + 1
+        self.domain_error_pairs[line] = count
+        shown = f"{line} ({count} pair{'s' if count != 1 else ''} not checkpointed)"
+        if count == 1:
+            self.errors.append(shown)
+        else:
+            previous = f"{line} ({count - 1} pair{'s' if count - 1 != 1 else ''} not checkpointed)"
+            self.errors[self.errors.index(previous)] = shown
 
     def merge(self, partial: PartialStats) -> None:
         discovered = partial.ddg_count + partial.sitemap_count
@@ -199,8 +212,8 @@ class DiscoveryStats:
         if partial.error:
             if not partial.error_of_domain:
                 self.errors.append(f"{partial.company}/{partial.domain}: {partial.error}")
-            elif (line := f"{partial.domain}: {partial.error}") not in self.errors:
-                self.errors.append(line)
+            else:
+                self._add_domain_error(f"{partial.domain}: {partial.error}")
 
 
 # ---------------------------------------------------------------------------

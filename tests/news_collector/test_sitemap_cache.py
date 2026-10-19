@@ -7,142 +7,56 @@ import hashlib
 import logging
 import sqlite3
 import time
-from collections.abc import Iterator
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock
-from xml.sax.saxutils import escape
 
-import httpx
 import pytest
+from sitemap_helpers import (
+    A1,
+    A2,
+    A3,
+    CHILD_A,
+    CHILD_B,
+    CNBC_PLAIN,
+    CNBC_UNDATED,
+    CNBC_URL,
+    DAYS_FRESH,
+    DAYS_PURGE,
+    DOMAIN,
+    FIVE,
+    INDEX_ROOT,
+    LOOP_TICKS,
+    MANY_ROWS,
+    ODD_TITLE,
+    RANGE,
+    RETRY_MINUTES,
+    ROOT,
+    START,
+    T0,
+    THREE_CRAWLS,
+    TITLE,
+    TWO,
+    Clock,
+    Site,
+    cnbc_strategy,
+    index,
+    leaf,
+    make,
+    read,
+    rows,
+    seen,
+    standard_site,
+    strategy_for,
+)
 
 import news_collector.sitemap_cache as sc
 from data_mining.db import connect
-from data_mining.matching import Match
-from news_collector import main as collector_main
-from news_collector.api.routers import _common
-from news_collector.api.schemas import DiscoverRequest, RunAllRequest
+from news_collector.config import sitemap_retry_after
 from news_collector.connectors.cnbc import CNBCConnector
-from news_collector.models import Company, DateRange, DiscoveryStats
-from news_collector.orchestrator import DiscoveryOrchestrator
-from news_collector.sitemap_cache import SitemapCache, SitemapRun, shared_cache
-from news_collector.storage.queue import URLQueue
-from news_collector.strategies.ddg import DDGStrategy
-from news_collector.strategies.sitemap import SitemapRSSStrategy
+from news_collector.models import DateRange
+from news_collector.sitemap_cache import SitemapCache, SitemapRun
 from news_collector.utils.url import is_valid_http_url, normalize_url
-
-DOMAIN = "example.test"
-ROOT = "https://example.test/sitemap.xml"
-INDEX_ROOT = "https://example.test/index.xml"
-CHILD_A = "https://example.test/a.xml"
-CHILD_B = "https://example.test/b.xml"
-NS = 'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
-START = date(2022, 1, 1)
-RANGE = DateRange(start=START, end=date(2026, 8, 10))
-T0 = datetime(2026, 10, 1, 12, 0, 0)
-DAYS_FRESH = 7
-DAYS_PURGE = 90
-THREE_CRAWLS = 3
-TWO = 2
-LOOP_TICKS = 3
-MANY_ROWS = 30_000
-FIVE = 5
-
-
-NEWS = 'xmlns:news="http://www.google.com/schemas/sitemap-news/0.9"'
-
-
-def leaf(*items: tuple[str, str | None] | tuple[str, str | None, str]) -> str:
-    """A urlset; an item with a third element carries a `news:title`."""
-    urls = ""
-    for item in items:
-        url, lastmod = item[0], item[1]
-        title = item[2] if len(item) > TWO else None
-        urls += f"<url><loc>{escape(url)}</loc>"
-        urls += f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
-        urls += f"<news:news><news:title>{escape(title)}</news:title></news:news>" if title else ""
-        urls += "</url>"
-    return f"<urlset {NS} {NEWS}>{urls}</urlset>"
-
-
-def index(*children: str) -> str:
-    return (
-        f"<sitemapindex {NS}>"
-        + "".join(f"<sitemap><loc>{c}</loc></sitemap>" for c in children)
-        + "</sitemapindex>"
-    )
-
-
-A1, A2, A3 = (f"https://example.test/a-{i}" for i in (1, 2, 3))
-OLD = "https://example.test/a-old"
-
-
-class Site:
-    """A fake sitemap: pages by URL, a count of fetches per URL, a URL that can start failing."""
-
-    def __init__(self, pages: dict[str, str]) -> None:
-        self.pages = pages
-        self.fetches: dict[str, int] = {}
-        self.down: set[str] = set()
-
-    async def fetch(self, url: str) -> str:
-        self.fetches[url] = self.fetches.get(url, 0) + 1
-        await asyncio.sleep(0)  # a real fetch yields: concurrent callers interleave here
-        if url in self.down or url not in self.pages:
-            raise httpx.HTTPStatusError("403", request=MagicMock(), response=MagicMock())
-        return self.pages[url]
-
-    def crawls(self) -> int:
-        return self.fetches.get(ROOT, 0)
-
-
-class Clock:
-    def __init__(self, now: datetime = T0) -> None:
-        self.now = now
-
-    def __call__(self) -> datetime:
-        self.now += timedelta(milliseconds=1)  # every call is a distinct instant
-        return self.now
-
-    def advance(self, **kw: float) -> None:
-        self.now += timedelta(**kw)
-
-
-@pytest.fixture
-def db(tmp_path: Path) -> Iterator[str]:
-    sc.reset_shared_caches()
-    queue = URLQueue(str(tmp_path / "cache.db"))
-    queue.initialize()
-    queue.close()
-    yield queue.db_path
-    sc.reset_shared_caches()
-
-
-def make(db: str, site: Site, clock: Clock, roots: list[str] | None = None) -> SitemapCache:
-    return SitemapCache(DOMAIN, roots or [ROOT], db, site.fetch, lambda _u: True, clock)
-
-
-def rows(db: str, sql: str, *params: object) -> list[tuple]:
-    conn = sqlite3.connect(db)
-    try:
-        return conn.execute(sql, params).fetchall()
-    finally:
-        conn.close()
-
-
-def urls_of(entries: list) -> list[str]:
-    return sorted(e.url for e in entries)
-
-
-def read(run: SitemapRun, date_range: DateRange = RANGE) -> tuple[list[str], list[str]]:
-    entries, failures = run.entries(date_range)
-    return urls_of(entries), failures
-
-
-def standard_site() -> Site:
-    return Site({ROOT: leaf((A1, "2024-05-01"), (A2, "2023-01-01"), (OLD, "2019-01-01"))})
-
 
 # --- the pinned filter (moved with the code from the T-068 script) ------------------------------
 
@@ -194,22 +108,6 @@ def test_the_signature_follows_the_roots_and_the_version(monkeypatch: pytest.Mon
     assert sc.signature([ROOT, INDEX_ROOT]) != base
 
 
-# --- one crawl per domain, in one process ---------------------------------------------------
-
-
-def strategy_for(run: SitemapRun | None, site: Site) -> SitemapRSSStrategy:
-    connector = MagicMock()
-    connector.config.sitemap_roots = [ROOT]
-    connector.config.rss_feeds = []
-    connector.config.wayback_fallback = False
-    connector.config.domain = DOMAIN
-    connector.is_article_url.return_value = True
-    connector.explain_match.return_value = Match("accept", "name")
-    strategy = SitemapRSSStrategy(connector, MagicMock(), run)
-    strategy._fetch = site.fetch  # type: ignore[method-assign]
-    return strategy
-
-
 async def test_two_concurrent_tickers_make_one_crawl(db: str) -> None:
     site = standard_site()
     cache = make(db, site, Clock())
@@ -221,87 +119,6 @@ async def test_two_concurrent_tickers_make_one_crawl(db: str) -> None:
     assert site.crawls() == 1
     assert sorted(u.url for u in one) == sorted(u.url for u in two) == sorted([A1, A2])
     assert cache.crawls == 1
-
-
-def fake_connector(client: object | None = None) -> MagicMock:
-    connector = MagicMock()
-    connector.config.sitemap_roots = [ROOT]
-    connector.config.rss_feeds = []
-    connector.config.wayback_fallback = False
-    connector.config.domain = DOMAIN
-    connector.is_article_url.return_value = True
-    connector.explain_match.return_value = Match("accept", "name")
-    connector._client = client if client is not None else MagicMock()
-    return connector
-
-
-@pytest.fixture
-def offline(monkeypatch: pytest.MonkeyPatch) -> Site:
-    """Every strategy of the test reads this site: the cache's fetch, and no DDG."""
-    site = standard_site()
-
-    async def fetch_text(_client: object, url: str) -> str:
-        return await site.fetch(url)
-
-    async def no_ddg(self: object, *_: object) -> list:
-        return []
-
-    monkeypatch.setattr(sc, "fetch_text", fetch_text)
-    monkeypatch.setattr(_common.DDGStrategy, "discover", no_ddg)
-    return site
-
-
-def request(db: str, *tickers: str, **kw: object) -> DiscoverRequest:
-    return DiscoverRequest(
-        tickers=list(tickers),
-        company_names=[f"{t} Inc." for t in tickers],
-        db_path=db,
-        start_date=START,
-        end_date=RANGE.end,
-        **kw,  # type: ignore[arg-type]
-    )
-
-
-async def test_two_api_requests_for_two_tickers_make_one_crawl(db: str, offline: Site) -> None:
-    connector, client = fake_connector(), MagicMock()
-    first, second = await asyncio.gather(
-        _common.run_domain_discovery(request(db, "AAA"), connector, client, DOMAIN),
-        _common.run_domain_discovery(request(db, "BBB"), connector, client, DOMAIN),
-    )
-    assert offline.crawls() == 1
-    assert [r.errors for r in first + second] == [[], []]
-    assert first[0].sitemap_count == second[0].sitemap_count == TWO  # both read the same rows
-
-
-async def test_the_orchestrator_and_an_api_route_share_the_cache_of_the_process(
-    db: str, offline: Site, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = MagicMock()
-    connector = fake_connector(client)
-    orchestrator = DiscoveryOrchestrator(
-        connectors={DOMAIN: connector}, queue=URLQueue(db), concurrency=1
-    )
-    monkeypatch.setattr(DDGStrategy, "discover", _common.DDGStrategy.discover)  # one patched class
-
-    async def no_api(*_: object) -> list:
-        return []
-
-    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
-    await orchestrator.run([Company(ticker="ACME", name="Acme")], date_range=RANGE)
-    assert offline.crawls() == 1
-    [route] = await _common.run_domain_discovery(request(db, "BBB"), connector, client, DOMAIN)
-    assert route.errors == []
-    assert offline.crawls() == 1  # the route found the orchestrator's crawl: fresh, covering
-    assert shared_cache(connector, client, db) is shared_cache(connector, client, db)
-
-
-async def test_no_cache_argument_keeps_the_live_fetch(db: str) -> None:
-    site = standard_site()
-    strategy = strategy_for(None, site)
-    await strategy.discover("Acme", "ACME", RANGE)
-    await strategy.discover("Beta", "BETA", RANGE)
-    assert site.crawls() == TWO  # once per ticker, as before
-    assert rows(db, "SELECT COUNT(*) FROM sitemap_crawls") == [(0,)]
 
 
 async def test_the_pair_gets_the_cached_entries_inside_the_range(db: str) -> None:
@@ -724,36 +541,6 @@ async def test_a_database_error_fails_the_pairs_and_does_not_raise(tmp_path: Pat
     assert "no such table: sitemap_crawls" in failures[0]
 
 
-async def test_a_cache_that_cannot_open_fails_its_domain_and_the_others_run(
-    db: str, offline: Site, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    sitemap_domain = fake_connector()
-    plain = fake_connector()
-    plain.config.sitemap_roots = []
-    plain.config.domain = "plain.test"
-    orchestrator = DiscoveryOrchestrator(
-        connectors={DOMAIN: sitemap_domain, "plain.test": plain}, queue=URLQueue(db), concurrency=1
-    )
-
-    def broken(_self: SitemapCache) -> None:
-        raise sqlite3.OperationalError("database is locked")
-
-    monkeypatch.setattr(SitemapCache, "_latest_complete", broken)
-
-    async def no_api(*_: object) -> list:
-        return []
-
-    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
-    stats = await orchestrator.run([Company(ticker="ACME", name="Acme")], date_range=RANGE)
-    assert any("database is locked" in e for e in stats.errors)  # the sitemap domain's pair
-    assert not any("plain.test" in e for e in stats.errors)  # the other domain ran
-    reader = URLQueue(db)
-    reader.initialize()
-    done = reader.completed_pairs(["plain.test", DOMAIN], RANGE.start, RANGE.end)
-    assert ("ACME", "plain.test") in done
-    assert ("ACME", DOMAIN) not in done
-
-
 async def test_a_run_that_cannot_use_the_cache_does_not_change_what_another_run_reads(
     db: str,
 ) -> None:
@@ -767,96 +554,6 @@ async def test_a_run_that_cannot_use_the_cache_does_not_change_what_another_run_
     assert bad.crawl is None
     assert read(good) == (sorted([A1, A2]), [])  # A is untouched by B
     assert read(bad, earlier)[1]  # and B reports its failure
-
-
-async def test_a_domain_whose_pairs_are_all_skipped_by_resume_is_not_crawled(
-    db: str, offline: Site
-) -> None:
-    connector = fake_connector()
-    queue = URLQueue(db)
-    queue.initialize()
-    queue.mark_pair_completed("ACME", DOMAIN, RANGE.start, RANGE.end)
-    orchestrator = DiscoveryOrchestrator(connectors={DOMAIN: connector}, queue=queue, concurrency=1)
-    await orchestrator.run([Company(ticker="ACME", name="Acme")], date_range=RANGE, resume=True)
-    assert offline.crawls() == 0
-    assert orchestrator._caches == {}
-
-
-async def test_a_domain_without_sitemap_roots_makes_no_cache(db: str, offline: Site) -> None:
-    connector = fake_connector()
-    connector.config.sitemap_roots = []
-    assert shared_cache(connector, MagicMock(), db) is None
-
-
-async def test_the_run_all_flag_reaches_the_cache(db: str, offline: Site) -> None:
-    connector = fake_connector()
-    orchestrator = DiscoveryOrchestrator(
-        connectors={DOMAIN: connector}, queue=URLQueue(db), concurrency=1
-    )
-
-    async def no_api(*_: object) -> list:
-        return []
-
-    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
-    ana = [Company(ticker="ACME", name="Acme")]
-    await orchestrator.run(ana, date_range=RANGE, resume=False)
-    await orchestrator.run(ana, date_range=RANGE, resume=False)  # fresh: no crawl
-    assert offline.crawls() == 1
-    await orchestrator.run(ana, date_range=RANGE, resume=False, refresh_sitemaps=True)
-    assert offline.crawls() == TWO
-
-
-async def test_the_per_domain_flag_forces_a_crawl_and_defaults_to_off(
-    db: str, offline: Site
-) -> None:
-    connector, client = fake_connector(), MagicMock()
-    assert request(db, "AAA").refresh_sitemaps is False
-    await _common.run_domain_discovery(request(db, "AAA"), connector, client, DOMAIN)
-    await _common.run_domain_discovery(request(db, "BBB"), connector, client, DOMAIN)
-    assert offline.crawls() == 1
-    await _common.run_domain_discovery(
-        request(db, "CCC", refresh_sitemaps=True), connector, client, DOMAIN
-    )
-    assert offline.crawls() == TWO
-
-
-def test_the_run_all_request_has_the_flag_off_by_default() -> None:
-    assert RunAllRequest().refresh_sitemaps is False
-    assert RunAllRequest(refresh_sitemaps=True).refresh_sitemaps is True
-
-
-def test_the_cli_flag_is_off_by_default_and_reaches_the_orchestrator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    seen: list[bool] = []
-
-    class Recording:
-        def __init__(self, **_: object) -> None:
-            pass
-
-        async def run(self, **kw: object) -> DiscoveryStats:
-            seen.append(cast(bool, kw["refresh_sitemaps"]))
-            return DiscoveryStats()
-
-    class FakeClient:
-        async def __aenter__(self) -> FakeClient:
-            return self
-
-        async def __aexit__(self, *_: object) -> None:
-            return None
-
-    async def lookup(tickers: list[str], client: object, start: object) -> list[Company]:
-        return [Company(ticker=t, name=f"{t} Inc.") for t in tickers]
-
-    monkeypatch.setattr(collector_main, "DiscoveryOrchestrator", Recording)
-    monkeypatch.setattr(collector_main, "build_client", FakeClient)
-    monkeypatch.setattr(collector_main, "build_connectors", lambda client: [])
-    monkeypatch.setattr(collector_main, "lookup_companies", lookup)
-    base = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "discover", "--tickers", "AAPL"]
-    for extra in ([], ["--refresh-sitemaps"]):
-        args = collector_main.build_parser().parse_args(base + extra)
-        asyncio.run(collector_main.cmd_discover(args))
-    assert seen == [False, True]
 
 
 async def test_the_rows_are_parsed_once_per_crawl_and_shared(db: str) -> None:
@@ -894,87 +591,6 @@ async def test_a_failed_refresh_of_a_fresh_cache_is_a_warning_of_the_run(db: str
     [warning] = run.warnings
     assert "sitemap refresh of example.test failed" in warning
     assert "0.0 days old" in warning
-
-
-async def test_the_warning_reaches_the_orchestrator_stats_and_the_api_response(
-    db: str, offline: Site
-) -> None:
-    connector, client = fake_connector(), MagicMock()
-    orchestrator = DiscoveryOrchestrator(
-        connectors={DOMAIN: connector}, queue=URLQueue(db), concurrency=1
-    )
-
-    async def no_api(*_: object) -> list:
-        return []
-
-    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
-    ana = [Company(ticker="ACME", name="Acme")]
-    clean = await orchestrator.run(ana, date_range=RANGE, resume=False)
-    assert clean.warnings == []
-    offline.down.add(ROOT)
-    warned = await orchestrator.run(ana, date_range=RANGE, resume=False, refresh_sitemaps=True)
-    assert len(warned.warnings) == 1
-    assert warned.errors == []  # not an error: the pair was checkpointed
-    [response] = await _common.run_domain_discovery(
-        request(db, "BBB", refresh_sitemaps=True), connector, client, DOMAIN
-    )
-    assert len(response.warnings) == 1
-    assert response.errors == []
-
-
-def test_the_cli_summary_prints_the_warnings(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    class Recording:
-        def __init__(self, **_: object) -> None:
-            pass
-
-        async def run(self, **_: object) -> DiscoveryStats:
-            return DiscoveryStats(warnings=["sitemap refresh of cnbc.com failed (x); old crawl"])
-
-    class FakeClient:
-        async def __aenter__(self) -> FakeClient:
-            return self
-
-        async def __aexit__(self, *_: object) -> None:
-            return None
-
-    async def lookup(tickers: list[str], client: object, start: object) -> list[Company]:
-        return [Company(ticker=t, name=f"{t} Inc.") for t in tickers]
-
-    monkeypatch.setattr(collector_main, "DiscoveryOrchestrator", Recording)
-    monkeypatch.setattr(collector_main, "build_client", FakeClient)
-    monkeypatch.setattr(collector_main, "build_connectors", lambda client: [])
-    monkeypatch.setattr(collector_main, "lookup_companies", lookup)
-    argv = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "discover", "--tickers", "AAPL"]
-    code = asyncio.run(collector_main.cmd_discover(collector_main.build_parser().parse_args(argv)))
-    out = capsys.readouterr().out
-    assert code == 0  # a warning is not a failure of the run
-    assert "Warnings         : 1" in out
-    assert "old crawl" in out
-
-
-# --- titles and undated entries through the cache ---------------------------------------------------
-
-CNBC_URL = "https://www.cnbc.com/2024/05/01/stock-picks-for-the-week.html"  # no company in the slug
-CNBC_PLAIN = "https://www.cnbc.com/2024/05/02/stock-picks-for-the-month.html"
-CNBC_UNDATED = "https://www.cnbc.com/2024/05/03/stock-picks-undated.html"
-TITLE = "Apple Inc. reports record earnings"
-ODD_TITLE = 'Café & Co\'s "Q4" <results> \u2014 \u6d4b\u8bd5'
-
-
-def cnbc_strategy(site: Site, cache: SitemapRun | None) -> SitemapRSSStrategy:
-    connector = CNBCConnector(MagicMock())
-    connector.config.sitemap_roots = [ROOT]
-    connector.config.rss_feeds = []
-    connector.config.wayback_fallback = False
-    strategy = SitemapRSSStrategy(connector, MagicMock(), cache)
-    strategy._fetch = site.fetch  # type: ignore[method-assign]
-    return strategy
-
-
-def seen(pairs: list) -> list[tuple]:
-    return sorted((p.url, p.match_class, p.match_reason, p.title, p.pub_date) for p in pairs)
 
 
 async def test_the_title_evidence_is_kept_through_the_cache(db: str) -> None:
@@ -1037,13 +653,13 @@ async def test_during_an_outage_runs_do_not_retry_the_crawl_until_the_back_off_e
     assert cache.crawls == 1  # one attempt, not five
     await cache.begin(RANGE, force=True)  # a forced call tries again
     assert cache.crawls == TWO
-    clock.advance(minutes=sc.RETRY_AFTER.total_seconds() / 60 + 1)
+    clock.advance(minutes=RETRY_MINUTES + 1)
     await cache.begin(RANGE)  # the back-off is over
     assert cache.crawls == THREE_CRAWLS
     site.pages[ROOT] = leaf((A1, "2024-05-01"))
     await cache.begin(RANGE)  # still backing off after the third failure
     assert cache.crawls == THREE_CRAWLS
-    clock.advance(minutes=sc.RETRY_AFTER.total_seconds() / 60 + 1)
+    clock.advance(minutes=RETRY_MINUTES + 1)
     run = await cache.begin(RANGE)  # the site is back: a crawl, and the back-off is cleared
     assert cache.crawls == THREE_CRAWLS + 1
     assert read(run)[0] == [A1]
@@ -1069,22 +685,38 @@ async def test_a_failed_refresh_purges_crawl_rows_older_than_90_days_but_not_the
     assert rows(db, "SELECT COUNT(*) FROM sitemap_entries") == [(TWO,)]  # its entries stay too
 
 
-async def test_an_unusable_domain_is_one_error_in_the_run_and_every_pair_is_not_checkpointed(
-    db: str, offline: Site
+# --- the back-off is a setting ---------------------------------------------------------------------
+
+
+def test_the_back_off_defaults_to_five_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SITEMAP_RETRY_MINUTES", raising=False)
+    assert sitemap_retry_after() == timedelta(minutes=RETRY_MINUTES)
+
+
+def test_the_back_off_follows_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SITEMAP_RETRY_MINUTES", "0.5")
+    assert sitemap_retry_after() == timedelta(seconds=30)
+    monkeypatch.setenv("SITEMAP_RETRY_MINUTES", "0")
+    assert sitemap_retry_after() == timedelta(0)
+
+
+@pytest.mark.parametrize("bad", ["soon", "-1", "nan", "inf", "-inf", "1e12", "5 min"])
+def test_a_bad_back_off_value_is_ignored_with_a_warning(
+    bad: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    offline.pages.clear()  # the sitemap is down
-    connector = fake_connector()
-    queue = URLQueue(db)
-    orchestrator = DiscoveryOrchestrator(connectors={DOMAIN: connector}, queue=queue, concurrency=1)
+    monkeypatch.setenv("SITEMAP_RETRY_MINUTES", bad)
+    with caplog.at_level(logging.WARNING):
+        got = sitemap_retry_after()
+    assert got == timedelta(minutes=RETRY_MINUTES)
+    assert "SITEMAP_RETRY_MINUTES" in caplog.text
 
-    async def no_api(*_: object) -> list:
-        return []
 
-    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
-    companies = [Company(ticker=t, name=f"{t} Inc.") for t in ("AAA", "BBB", "CCC")]
-    stats = await orchestrator.run(companies, date_range=RANGE, resume=False)
-    assert len(stats.errors) == 1  # one line for the domain, not three
-    assert stats.errors[0].startswith(f"{DOMAIN}: ")
-    reader = URLQueue(db)
-    reader.initialize()
-    assert reader.completed_pairs([DOMAIN], RANGE.start, RANGE.end) == set()  # none checkpointed
+async def test_the_cache_reads_the_setting_and_zero_turns_the_back_off_off(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SITEMAP_RETRY_MINUTES", "0")
+    site = Site({})
+    cache = make(db, site, Clock())
+    for _ in range(FIVE):
+        await cache.begin(RANGE)
+    assert cache.crawls == FIVE  # every run retries

@@ -34,6 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 import httpx
 
 from data_mining.db import connect
+from news_collector.config import sitemap_retry_after
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, SitemapEntry
 from news_collector.strategies.sitemap import crawl_sitemaps, summarize_failures
@@ -46,8 +47,6 @@ log = logging.getLogger(__name__)
 # the old rule. A test pins the result of both on a dozen URLs and fails on a change without a bump.
 CACHE_VERSION = 1
 FRESH_DAYS = 7
-# After a failed refresh the process does not try again for this long unless the call is forced.
-RETRY_AFTER = timedelta(minutes=5)
 PURGE_DAYS = 90
 SIGNATURE_LENGTH = 16
 # A crawl keeps every entry from its start on: the run's end is applied when the rows are read.
@@ -131,7 +130,7 @@ class SitemapCache:
         fetch: Callable[[str], Awaitable[str]],
         is_article_url: Callable[[str], bool],
         clock: Callable[[], datetime] = utc_now,
-        retry_after: timedelta = RETRY_AFTER,
+        retry_after: timedelta | None = None,
     ) -> None:
         self.domain = domain
         self._roots = list(roots)
@@ -139,7 +138,8 @@ class SitemapCache:
         self._fetch = fetch
         self._is_article_url = is_article_url
         self._clock = clock
-        self._retry_after = retry_after
+        # after a failed refresh the process does not crawl again for this long unless forced
+        self._retry_after = retry_after if retry_after is not None else sitemap_retry_after()
         self._failed_at: datetime | None = None  # the last failed refresh, for the back-off
         self._last_failures: list[str] = []
         self._signature = signature(roots)

@@ -178,11 +178,13 @@ T-071 is merged**.
   row is written. A domain whose child always fails (`ft`) is unsupported and must keep its `sitemap_roots` empty.
 - **A failed refresh:** a cache that covers the run and is at most 7 days old is used; an older one is used with a warning that carries its
   age; one that does not cover the run (or none) fails every pair of the domain with the reason, and the pairs are not checkpointed.
-- **An outage is tried once.** After a failed refresh a process does not crawl again for 5 minutes (`sitemap_cache.RETRY_AFTER`) unless the
-  call is forced; the runs of those minutes use the cache as in the failed-refresh cases above. The failed attempt is a `sitemap_crawls`
-  row with `complete = 0`; every refresh, complete or not, deletes crawl rows older than 90 days except the latest complete one.
-- **The run summary names an unusable domain once** (`cnbc.com: sitemap cache of ... does not cover ...`), not once per ticker; every
-  pair of the domain is still not checkpointed.
+- **An outage is tried once.** After a failed refresh a process does not crawl again for **5 minutes** (`SITEMAP_RETRY_MINUTES` in `.env`, a number
+  >= 0, `0` = retry on every run; a bad value is ignored with a warning) unless the call is forced; the runs of those minutes use the cache
+  as in the failed-refresh cases above. The failed attempt is a `sitemap_crawls` row with `complete = 0`; every refresh, complete or not,
+  deletes crawl rows older than 90 days except the latest complete one. A gateway whose source recovers inside the window keeps failing
+  that domain until the window ends or the call is forced; a separate CLI run is a new process and is not affected.
+- **The run summary names an unusable domain once**, with the number of pairs it left undone (`cnbc.com: sitemap cache of ... does not cover ...
+  (503 pairs not checkpointed)`), not once per ticker; every pair of the domain is still not checkpointed.
 - **Warnings:** when the refresh failed and the run went on with the cache (cases a and b), the run says so: `Warnings` in the CLI
   summary, `warnings` on `RunAllResponse` and on each `DiscoverResponse`, with the age of the crawl used. It is not an error: the pairs are
   checkpointed and the exit status is 0. A cache the run cannot use (case c) is an error, as above.
@@ -192,6 +194,15 @@ T-071 is merged**.
   domain (not checkpointed), and the other domains run.
 - **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The
   cost of the duplicate is 10 s and the same rows (an upsert).
+- **Usage:**
+  ```bash
+  # the cache is on by default for a domain with sitemap roots; a cache at most 7 days old is used
+  uv run python cli/news_collector_cli.py discover --tickers AAPL --domains cnbc.com
+  # crawl the sitemap now, whatever the age of the cache (10 s); the cache is never narrowed
+  uv run python cli/news_collector_cli.py discover --tickers AAPL --domains cnbc.com --refresh-sitemaps
+  # the same on the API: {"refresh_sitemaps": true} in the body of /discovery/run-all or /cnbc/
+  ```
+  A run that used an old cache because the refresh failed prints `Warnings` in its summary and returns `warnings` in the API response.
 - **Look at it** (read-only, from the repository root; `DB` as above):
   ```bash
   PYTHONPATH=src uv run python - <<'EOF'
