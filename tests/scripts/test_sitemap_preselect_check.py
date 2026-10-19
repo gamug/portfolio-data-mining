@@ -248,7 +248,7 @@ def test_the_cache_ddl_runs_and_its_queries_use_an_index() -> None:
         "'2022-01-01', 'sig', NULL, NULL)"
     )
     params = {
-        "latest complete crawl": ("cnbc.com",),
+        "latest complete crawl": ("cnbc.com",),  # `started_at` is what `last_seen` equals
         "crawl in progress": ("cnbc.com", "2026-10-18T00:00:00"),
         "current entries": ("cnbc.com", "2026-10-19T00:00:00"),
     }
@@ -267,3 +267,42 @@ def test_the_cache_ddl_runs_and_its_queries_use_an_index() -> None:
 def test_index_memory_reports_rows_and_index() -> None:
     rows = [(e.url, "2024-05-01", None) for e in _base()]
     assert "token index" in mod.index_memory(rows)
+
+
+# (URL, normalized or None when not a valid http URL, is it an article): pinned by CACHE_VERSION.
+PINNED = [
+    ("https://www.cnbc.com/2024/05/01/kla-corp-q4.html",
+     "https://www.cnbc.com/2024/05/01/kla-corp-q4.html", True),
+    ("https://WWW.CNBC.com/2024/05/01/kla-corp-q4.html/?utm_source=x",
+     "https://www.cnbc.com/2024/05/01/kla-corp-q4.html", True),
+    ("https://www.cnbc.com/2024/05/01/kla-corp-q4.html?&qsearchterm=kla",
+     "https://www.cnbc.com/2024/05/01/kla-corp-q4.html?qsearchterm=kla", False),
+    ("https://www.cnbc.com/markets/", "https://www.cnbc.com/markets", False),
+    ("https://www.cnbc.com/quotes/KLAC", "https://www.cnbc.com/quotes/KLAC", False),
+    ("https://www.cnbc.com/video/2024/05/01/some-clip.html",
+     "https://www.cnbc.com/video/2024/05/01/some-clip.html", False),
+    ("https://www.cnbc.com/id/100727362", "https://www.cnbc.com/id/100727362", False),
+    ("https://www.cnbc.com/2024/05/01/", "https://www.cnbc.com/2024/05/01", False),
+    ("https://www.cnbc.com/pro/2024/05/01/story.html",
+     "https://www.cnbc.com/pro/2024/05/01/story.html", False),
+    ("https://www.cnbc.com/2024/05/01/story.html#comments",
+     "https://www.cnbc.com/2024/05/01/story.html", True),
+    ("ftp://www.cnbc.com/2024/05/01/story.html", None, False),
+    ("https://www.cnbc.com/2024/05/01/story.html/",
+     "https://www.cnbc.com/2024/05/01/story.html", True),
+]  # fmt: skip
+PINNED_HASH = {
+    1: "df39ae1d4b8d8e20b841cfee9802d80ac63a385168351253a9684c585a618bed"
+}  # CACHE_VERSION -> sha256 of PINNED
+
+
+def test_a_filter_change_needs_a_new_cache_version() -> None:
+    connector = mod.CNBCConnector(None)  # type: ignore[arg-type]
+    for url, normalized, article in PINNED:
+        got = mod.normalize_url(url) if mod.is_valid_http_url(url) else None
+        assert got == normalized, url
+        assert (got is not None and connector.is_article_url(got)) is article, url
+    digest = hashlib.sha256(repr(PINNED).encode()).hexdigest()
+    # Changing a result means editing PINNED, which changes the digest: add the new digest
+    # under a bumped `mod.CACHE_VERSION` (and the cached rows are re-crawled on the signature).
+    assert PINNED_HASH[mod.CACHE_VERSION] == digest

@@ -97,12 +97,15 @@ CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finis
 CREATE INDEX ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at)
     WHERE finished_at IS NULL;
 """
+# Bumped when `is_article_url` or the normalization changes: the cached rows were filtered by the
+# old rule. The test of the pinned URLs fails when a result changes without a new version.
+CACHE_VERSION = 1
 # Rollback of the migration: the indexes go with their tables.
 CACHE_ROLLBACK = "DROP TABLE sitemap_crawls; DROP TABLE sitemap_entries;"
 # The three queries the design runs; the test shows each one uses an index.
 CACHE_QUERIES = {
     "latest complete crawl": (
-        "SELECT finished_at, range_start, signature FROM sitemap_crawls "
+        "SELECT started_at, finished_at, range_start, signature FROM sitemap_crawls "
         "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1"
     ),
     "crawl in progress": (
