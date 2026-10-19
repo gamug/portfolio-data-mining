@@ -572,6 +572,18 @@ def cmd_stored(args: argparse.Namespace) -> None:
             kinds["in range today"] += 1
         else:
             kinds[f"before {START} (lastmod in the crawl)"] += 1
+    year = "CAST(substr(d.url, instr(d.url, '.com/') + 5, 4) AS INT)"
+    for label, join in (
+        ("all", ""),
+        ("with an `ok` article", "JOIN articles a ON a.id = d.id AND a.fetch_status = 'ok'"),
+    ):
+        total, old = db.execute(
+            f"SELECT COUNT(*), SUM({year} < {START.year}) FROM discovered_urls d {join} "  # noqa: S608 - fixed fragments of this file, no input
+            "WHERE d.domain = 'cnbc.com' AND d.source = 'sitemap' AND d.match_class IN ('accept', 'review')"
+        ).fetchone()
+        print(
+            f"stored accept/review sitemap rows ({label}) with a URL year before {START.year}: {old} of {total} ({old / total:.1%})"
+        )
     print(f"stored accept/review cnbc sitemap rows: {len(rows)}")
     for kind, n in kinds.most_common():
         print(f"  {kind}: {n} ({n / len(rows):.1%})")
