@@ -678,7 +678,12 @@ def kind_of_stored(
 
 
 def cmd_stored(args: argparse.Namespace) -> None:
-    """Stored cnbc sitemap rows against today's crawl; read-only on the database."""
+    """Stored cnbc sitemap rows against today's crawl; read-only on the database.
+
+    Reads `discovered_urls` (`id`, `url`, `domain`, `source`, `discovered_at`, `match_class`,
+    `status`) and `articles` (`id`, `fetch_status`); a migration that renames one of them fails
+    `test_stored_is_read_only`, which builds a database with exactly these columns.
+    """
     raw = read_raw(args.entries)
     connector = CNBCConnector(None)  # type: ignore[arg-type]
     lastmod: dict[str, date | None] = {}
