@@ -59,3 +59,21 @@ def test_the_rehearsal_refuses_an_existing_copy_and_the_source_itself(tmp_path: 
     assert existing.read_bytes() == b"keep me"
     with pytest.raises(SystemExit):
         mod.copy_read_only(source, source)
+
+
+def test_the_rehearsal_fails_when_the_migration_misses_an_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, copy = tmp_path / "urls.db", tmp_path / "copy.db"
+    _version_3_file(source)
+
+    def crippled(db: Database) -> None:
+        apply_schema(db)
+        db.execute("DROP INDEX ix_sitemap_crawls_open")  # one object of five is missing
+
+    monkeypatch.setattr(mod, "apply_schema", crippled)
+    monkeypatch.setattr(mod, "run_migrations", lambda db: None)
+    lines: list[str] = []
+
+    assert mod.rehearse(source, copy, say=lines.append) is False
+    assert any(line.startswith("FAIL cache objects created") for line in lines), lines

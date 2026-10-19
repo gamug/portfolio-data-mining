@@ -35,6 +35,14 @@ from data_mining.schema import (
 
 PIPELINE = ("discovered_urls", "articles", "discovery_progress")
 CACHE_PREFIX = "sitemap_"
+# What the migration must create, by name: the two tables and their three indexes.
+EXPECTED_CACHE_OBJECTS = [
+    "ix_sitemap_crawls_latest",
+    "ix_sitemap_crawls_open",
+    "ix_sitemap_entries_lastmod",
+    "sitemap_crawls",
+    "sitemap_entries",
+]
 BACKUP_PAGES = 20000
 
 
@@ -59,7 +67,7 @@ def cache_objects(db: Database) -> list[str]:
     rows = db.execute(
         "SELECT name FROM sqlite_master WHERE name LIKE ? AND name NOT LIKE 'sqlite_autoindex%' "
         "ORDER BY name",
-        (f"{CACHE_PREFIX}%",),
+        (f"%{CACHE_PREFIX}%",),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -104,7 +112,10 @@ def rehearse(source: Path, copy: Path, say: Callable[[str], object] = print) -> 
         say(f"after:  {after}")
         check("pipeline tables unchanged", after[:2] == before[:2])
         check(f"version {before[2]} -> {SCHEMA_VERSION}", after[2] == SCHEMA_VERSION)
-        check("cache objects created", len(cache_objects(db)) == len(set(cache_objects(db))) > 0)
+        check(
+            "cache objects created: the two tables and three indexes",
+            cache_objects(db) == EXPECTED_CACHE_OBJECTS,
+        )
         run_migrations(db)
         apply_schema(db)
         check("second run changes nothing", fingerprint(db) == after)

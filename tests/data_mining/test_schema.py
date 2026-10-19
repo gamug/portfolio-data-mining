@@ -13,6 +13,8 @@ from portfolio_common.db import Database
 
 from data_mining.db import connect as connect_db
 from data_mining.schema import (
+    _ARTICLES_DDL,
+    _DISCOVERY_DDL,
     ARTICLE_COLUMNS,
     PREVIOUS_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -252,6 +254,7 @@ def test_fresh_schema_has_prev_fetch_status_outside_the_upsert_columns(db: Datab
 # The sitemap cache (Work item 15, T-069)
 # ---------------------------------------------------------------------------------------------
 
+MIN_WAIT = 0.2  # seconds the second connection must have waited
 PINNED_VERSION = 4  # the history is in schema.py
 CACHE_TABLES = {"sitemap_entries", "sitemap_crawls"}
 CACHE_INDEXES = {
@@ -280,7 +283,7 @@ def _seed_pipeline(db: Database) -> None:
     db.execute(
         "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at) "
         "VALUES ('https://www.cnbc.com/2024/05/01/a.html', 'cnbc.com', 'KLA', 'KLAC', "
-        "'sitemap', '2026-10-19T00:00:00')"
+        "'sitemap', '2026-10-19T00:00:00.000000')"
     )
     db.execute("INSERT INTO articles (id, ticker, fetch_status) VALUES (1, 'KLAC', 'ok')")
     db.commit()
@@ -328,7 +331,7 @@ def test_the_rollback_restores_the_previous_schema_and_can_be_redone(db: Databas
     before = _fingerprint(db)
     db.execute(
         "INSERT INTO sitemap_entries VALUES ('cnbc.com', 'https://x/2024/a.html', "
-        "'2024-05-01', NULL, '2026-10-19T00:00:00', '2026-10-19T00:00:00')"
+        "'2024-05-01', NULL, '2026-10-19T00:00:00.000000', '2026-10-19T00:00:00.000000')"
     )
     db.commit()
 
@@ -346,7 +349,7 @@ def test_the_design_queries_use_an_index_on_the_migrated_schema(db: Database) ->
     apply_schema(db)
     run_migrations(db)
     db.execute(
-        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', '2026-10-19T10:00:00', NULL, 0, "
+        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', '2026-10-19T10:00:00.000000', NULL, 0, "
         "'2022-01-01', 'sig', NULL, NULL)"
     )
     queries = {
@@ -358,11 +361,11 @@ def test_the_design_queries_use_an_index_on_the_migrated_schema(db: Database) ->
         "crawl in progress": (
             "SELECT 1 FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL "
             "AND started_at > ?",
-            (DOMAIN, "2026-10-19T09:30:00"),
+            (DOMAIN, "2026-10-19T09:30:00.000000"),
         ),
         "current entries": (
             "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ?",
-            (DOMAIN, "2026-10-19T10:00:00"),
+            (DOMAIN, "2026-10-19T10:00:00.000000"),
         ),
     }
     for name, (sql, params) in queries.items():
@@ -372,16 +375,17 @@ def test_the_design_queries_use_an_index_on_the_migrated_schema(db: Database) ->
     # the in-progress row is found inside the timeout and not after it
     sql, params = queries["crawl in progress"]
     assert db.execute(sql, params).fetchall() == [(1,)]
-    assert db.execute(sql, (DOMAIN, "2026-10-19T10:30:00")).fetchall() == []
+    assert db.execute(sql, (DOMAIN, "2026-10-19T10:30:00.000000")).fetchall() == []
 
 
 def test_the_cache_keys_refuse_a_duplicate(db: Database) -> None:
     apply_schema(db)
-    row = ("cnbc.com", "https://x/2024/a.html", None, None, "t", "t")
+    stamp = "2026-10-19T00:00:00.000000"
+    row = ("cnbc.com", "https://x/2024/a.html", None, None, stamp, stamp)
     db.execute("INSERT INTO sitemap_entries VALUES (?, ?, ?, ?, ?, ?)", row)
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO sitemap_entries VALUES (?, ?, ?, ?, ?, ?)", row)
-    crawl = ("cnbc.com", "2026-10-19T10:00:00", None, 0, "2022-01-01", "sig", None, None)
+    crawl = ("cnbc.com", "2026-10-19T10:00:00.000000", None, 0, "2022-01-01", "sig", None, None)
     db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", crawl)
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", crawl)
@@ -460,8 +464,9 @@ def test_timestamps_that_differ_by_microseconds_are_two_keys_in_time_order(db: D
     assert [r[0] for r in rows] == [first, second]
 
 
-def test_two_processes_starting_together_migrate_one_file_once(tmp_path: Path) -> None:
-    """The collector and the extractor start independently and both run the migration: the
+def test_two_connections_starting_together_migrate_one_file_once(tmp_path: Path) -> None:
+    """Two connections (threads of one process: the lock is the file's, so two processes behave
+    the same). The collector and the extractor start independently and both run the migration: the
     second waits for the first's write lock (busy_timeout) and finds nothing to do."""
     path = tmp_path / "urls.db"
     old = Database(sqlite3.connect(path))
@@ -500,7 +505,7 @@ def test_two_processes_starting_together_migrate_one_file_once(tmp_path: Path) -
     holder.join(5)
 
     assert errors == []
-    assert waited >= 0.2  # it really waited for the first
+    assert waited >= MIN_WAIT  # it really waited for the first
     check = sqlite3.connect(path)
     objects = [
         r[0]
@@ -512,3 +517,37 @@ def test_two_processes_starting_together_migrate_one_file_once(tmp_path: Path) -
     assert objects == sorted([*CACHE_TABLES, *CACHE_INDEXES])  # one copy of each
     first.close()
     second.close()
+
+
+def _apply_schema_as_version_3(db: Database) -> None:
+    """The previous `apply_schema`: the same two DDL scripts (unchanged in version 4) and the
+    version stamp 3, with no knowledge of the cache."""
+    db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
+    db.create_schema(_ARTICLES_DDL)
+    db.set_schema_version(PREVIOUS_SCHEMA_VERSION)
+
+
+def test_a_version_3_build_leaves_the_cache_and_the_next_start_restamps_4(db: Database) -> None:
+    """Going back to the old code needs no data step: it ignores the cache tables and stamps 3."""
+    apply_schema(db)
+    run_migrations(db)
+    stamp = "2026-10-19T00:00:00.000000"
+    db.execute(
+        "INSERT INTO sitemap_entries VALUES ('cnbc.com', 'https://x/2024/a.html', "
+        "'2024-05-01', NULL, ?, ?)",
+        (stamp, stamp),
+    )
+    _seed_pipeline(db)
+    db.commit()
+    before = _fingerprint(db)
+
+    _apply_schema_as_version_3(db)  # the old build starts on the version-4 file
+
+    assert db.schema_version == PREVIOUS_SCHEMA_VERSION
+    assert _table_names(db) >= CACHE_TABLES  # ignored, not dropped
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 1
+    assert _fingerprint(db) == before
+    apply_schema(db)  # the new build starts again
+    run_migrations(db)
+    assert db.schema_version == SCHEMA_VERSION
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 1

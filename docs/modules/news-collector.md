@@ -92,6 +92,20 @@ Expect the same row count before and after, every row `accept`, the index presen
 `user_version` is 4). The cache migration has its own rehearsal on a copy,
 `scripts/rehearse_sitemap_cache_migration.py` (`--source` is opened read-only, `--copy` must not exist).
 
+**After merging the schema-version-4 change (T-069), on the real file** (the two services create the cache
+tables when they start, in either order or together: the second waits for the first's write lock):
+
+1. Before restarting, take a backup that passes `PRAGMA quick_check` (the `reclass_rejects.py --backup`
+   procedure or `sqlite3 .backup`); note the row counts of `discovered_urls`, `articles` and
+   `discovery_progress` (on 2026-10-19: 1,059,452, 481,332 and 3,534; they will have grown).
+2. Restart the gateway and the crawler.
+3. Read-only check on the real file: `PRAGMA user_version` is 4; `SELECT name FROM sqlite_master WHERE name
+   LIKE '%sitemap_%' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name` returns `ix_sitemap_crawls_latest`,
+   `ix_sitemap_crawls_open`, `ix_sitemap_entries_lastmod`, `sitemap_crawls`, `sitemap_entries`; the three
+   row counts are what they were before the restart (the migration adds no row).
+4. If anything differs, stop both services and run the rollback of PR #90 (`rollback_sitemap_cache`, which
+   refuses a database that is not at version 4), then restart.
+
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
 
