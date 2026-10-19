@@ -71,7 +71,7 @@ the maintainer) and the guardrails are in `PLAN.md` Work item 15. **Gates (maint
 DDL, migration and rollback of `T-069` (constitution #10); **G3** the real-data step of `T-073`. Work on a **copy** of `urls.db` until G3.
 The criteria of each gate were decided 2026-10-18 (`PLAN.md` Work item 15). Order: `T-068` → G1 → `T-069` → G2 → `T-070` → `T-071` → `T-072` → `T-073` (G3) → `T-074`. Each task's PR states what was run on which copy.
 
-- [ ] **T-068** *(read-only measurement and design; ends at G1)* Measure, on a copy of the real database and a fresh crawl of the sitemaps (no
+- [ ] **T-068** *(read-only measurement and design; ends at G1; measured and designed 2026-10-19, the result is in `PLAN.md` Work item 15 "`T-068` result", waiting for the maintainer's G1; the script is `scripts/sitemap_preselect_check.py`)* Measure, on a copy of the real database and a fresh crawl of the sitemaps (no
       write to the real file): for `cnbc.com`, `ft.com` and `nasdaq.com` the number of entries, the share with a title and with a `lastmod`, the
       crawl time, and why `ft`/`nasdaq` store no sitemap rows today; the cost of matching one ticker against the whole cnbc sitemap, and the size
       of a cache row with its indexes. Then compare today's full scan with a **candidate preselection** (the design must name it, for example a token
