@@ -182,10 +182,10 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     db_path = tmp_path / "urls.db"
     db = sqlite3.connect(db_path)
     db.execute(
-        "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, domain TEXT, source TEXT, discovered_at TEXT, match_class TEXT)"
+        "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, domain TEXT, source TEXT, discovered_at TEXT, match_class TEXT, status TEXT)"
     )
     db.executemany(
-        "INSERT INTO discovered_urls (url, domain, source, discovered_at, match_class) VALUES (?, 'cnbc.com', 'sitemap', '2026-08-10T00:00:00', ?)",
+        "INSERT INTO discovered_urls (url, domain, source, discovered_at, match_class, status) VALUES (?, 'cnbc.com', 'sitemap', '2026-08-10T00:00:00', ?, 'skipped')",
         [
             ("https://www.cnbc.com/2024/05/01/kla-corporation-q4.html", "accept"),
             ("https://www.cnbc.com/2020/05/01/old-story.html", "review"),
@@ -205,6 +205,9 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "left the sitemap: 1" in out
     assert "crawl article urls not stored: 0" in out
     assert "an old article re-dated into the range): 0 of 1" in out
+    assert "the T-073 set (never-fetched sitemap rejects): 1 rows" in out
+    assert "before 2022-01-01 (lastmod in the crawl)" not in out.split("the T-073 set")[1]
+    assert "left the sitemap: 1 (100.0%)" in out.split("the T-073 set")[1]
     assert "(with an `ok` article) with a URL year before 2022: 0 of 1" in out
     assert "(all) with a URL year before 2022: 1 of 3" in out
     assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before

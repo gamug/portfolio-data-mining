@@ -735,7 +735,25 @@ def cmd_stored(args: argparse.Namespace) -> None:
         f"  in range today with a URL year before {START.year} (an old article re-dated "
         f"into the range): {redated_rows} of {kinds['in range today']}"
     )
+    print_deletable(db, lastmod)
     db.close()
+
+
+def print_deletable(db: sqlite3.Connection, lastmod: dict[str, date | None]) -> None:
+    """The set `T-073` would delete (never-fetched sitemap rejects) against today's crawl."""
+    urls = [
+        u
+        for (u,) in db.execute(
+            "SELECT url FROM discovered_urls d WHERE d.domain = 'cnbc.com' AND d.source = 'sitemap' "
+            "AND d.match_class = 'reject' AND d.status = 'skipped' "
+            "AND NOT EXISTS (SELECT 1 FROM articles a WHERE a.id = d.id)"
+        )
+    ]
+    kinds, _ = kind_of_stored(urls, lastmod)
+    print(f"the T-073 set (never-fetched sitemap rejects): {len(urls)} rows")
+    for kind, n in kinds.most_common():
+        label = {"in range today": "re-derivable (in today's crawl, in range)"}.get(kind, kind)
+        print(f"  {label}: {n} ({n / max(len(urls), 1):.1%})")
 
 
 def main() -> None:
