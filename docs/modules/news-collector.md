@@ -151,6 +151,9 @@ tables when they start, in either order or together (the second waits for the fi
    EOF
    ```
    Expect `user_version now: 3` and no `sitemap_*` name in the step 3 query.
+5. **Keep the backup until it is proven, then delete it.** `urls.pre-t069.db` is a plain file copy (about 2.5 GB); it is not a substitute for
+   the rollback of step 4. Delete it once a complete collector run and a complete extractor run have finished at version 4 and step 3 still
+   shows `user_version: 4` with the same objects, or after 14 days, whichever is later.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
