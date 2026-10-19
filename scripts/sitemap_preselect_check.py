@@ -186,9 +186,9 @@ def read_raw(path: str) -> list[SitemapEntry]:
     return out
 
 
-def in_range(raw: list[SitemapEntry], start: date) -> list[SitemapEntry]:
+def in_range(raw: list[SitemapEntry], start: date, end: date | None = None) -> list[SitemapEntry]:
     """The date filter of `_parse_sitemap_leaf`: an entry without a `lastmod` is kept."""
-    window = build_date_range(start, None)
+    window = build_date_range(start, end)
     return [e for e in raw if e.lastmod is None or window.contains(e.lastmod)]
 
 
@@ -221,6 +221,7 @@ def cache_rows(
 _RAW: list[SitemapEntry] = []
 _ROWS: list[Row] = []
 _INDEX: TokenIndex | None = None
+_END: str | None = None  # the run's end, applied when the candidates are read (the cache has none)
 _STRATEGY: SitemapRSSStrategy | None = None
 
 
@@ -242,6 +243,8 @@ def _preselected(company: str, ticker: str) -> tuple[int, dict[str, Pair]]:
     hits: dict[str, Pair] = {}
     for i in ids:
         url, lastmod, title = _ROWS[i]
+        if _END and lastmod and lastmod > _END:
+            continue
         match = M.classify(url, title or "", company, ticker)
         if match.cls != "reject":
             hits[url] = (match.cls, match.reason, lastmod)
@@ -261,17 +264,21 @@ def compare(
     companies: list[tuple[str, str]],
     *,
     start: date = START,
+    end: date | None = None,
     workers: int = 1,
     skip: frozenset[str] = frozenset(),
 ) -> dict[str, dict]:
     """Both paths for each `(ticker, name)`: per ticker the candidates, both sets, and the difference.
 
     ``raw`` is every entry of the crawl; the date filter is applied here, as the strategy does.
+    The cache holds the entries from ``start`` on (no end); ``end`` is applied on read.
     """
-    global _RAW, _ROWS, _INDEX, _STRATEGY  # noqa: PLW0603 - read by the forked workers
+    global _RAW, _ROWS, _INDEX, _STRATEGY, _END  # noqa: PLW0603 - read by the forked workers
     connector = CNBCConnector(None)  # type: ignore[arg-type]
-    _RAW = in_range(raw, start)
-    _ROWS = cache_rows(_RAW, connector)
+    _RAW = in_range(raw, start, end)  # the baseline: the run's own range, start and end
+    # the design's cache holds everything from `start` on, with no end: the end is a read filter
+    _ROWS = cache_rows(in_range(raw, start), connector)
+    _END = end.isoformat() if end else None
     _INDEX = TokenIndex(_ROWS, skip)
     _STRATEGY = SitemapRSSStrategy(connector, None)  # type: ignore[arg-type]
     jobs = [(t, n, mode) for t, n in companies for mode in ("full", "pre")]
@@ -423,7 +430,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     raw = read_raw(args.entries)
     companies, source = load_companies(args.tickers_file)
     t0 = time.time()
-    result = compare(raw, companies, start=args.start, workers=args.workers)
+    result = compare(raw, companies, start=args.start, end=args.end, workers=args.workers)
     print(f"tickers: {source}; {len(_RAW)} entries in range, {len(_ROWS)} cache rows")
     pairs = len(_ROWS) * len(companies)
     candidates = sum(r["candidates"] for r in result.values())
@@ -532,6 +539,44 @@ def cmd_duplicates(args: argparse.Namespace) -> None:
     )
 
 
+def time_matcher(
+    rows: list[Row],
+    companies: list[tuple[str, str]],
+    per_ticker: int,
+    tickers: int = 10,
+    seed: int = 1,
+) -> float:
+    """Microseconds a pair of `classify`: `tickers` random tickers, each over `per_ticker` entries.
+
+    A ticker's patterns are compiled on its first call and reused for the other entries, as in a
+    full scan, so one warm-up call per ticker is left out of the time (random pairs would time
+    the compile, not the match).
+    """
+    rng = random.Random(seed)  # noqa: S311 - a sample, not a secret
+    spent = 0.0
+    for ticker, name in rng.sample(companies, tickers):
+        M.classify(rows[0][0], "", name, ticker)
+        sample = rng.sample(rows, per_ticker)
+        began = time.perf_counter()
+        for url, _lastmod, title in sample:
+            M.classify(url, title or "", name, ticker)
+        spent += time.perf_counter() - began
+    return spent / (tickers * per_ticker) * 1e6
+
+
+def cmd_timing(args: argparse.Namespace) -> None:
+    raw = in_range(read_raw(args.entries), START)
+    rows = cache_rows(raw, CNBCConnector(None))  # type: ignore[arg-type]
+    companies, _source = load_companies(args.tickers_file)
+    per_pair = time_matcher(rows, companies, args.per_ticker)
+    print(
+        f"classify: {per_pair:.1f} us a pair (10 random tickers x {args.per_ticker} entries) "
+        f"({len(rows)} entries, {len(companies)} tickers); "
+        f"{len(rows) * per_pair / 1e6:.1f} s a ticker, "
+        f"{46341 * per_pair / 1e6:.1f} s for the 46,341 candidates of the preselection"
+    )
+
+
 def cmd_stored(args: argparse.Namespace) -> None:
     """Stored cnbc sitemap rows against today's crawl; read-only on the database."""
     raw = read_raw(args.entries)
@@ -598,17 +643,20 @@ def main() -> None:
     probe = sub.add_parser("probe", help="crawl one ft or nasdaq root (network only)")
     probe.add_argument("--domain", required=True, choices=["ft.com", "nasdaq.com"])
     probe.add_argument("--root", required=True)
-    for name in ("check", "synthetic", "cache-size", "duplicates", "stored"):
+    for name in ("check", "synthetic", "cache-size", "duplicates", "stored", "timing"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--entries", required=True)
-        if name in ("check", "synthetic"):
+        if name in ("check", "synthetic", "timing"):
             cmd.add_argument(
                 "--tickers-file", help="CSV with ticker,name; default: live Wikipedia list"
             )
             cmd.add_argument("--workers", type=int, default=14)
         if name == "check":
             cmd.add_argument("--start", type=date.fromisoformat, default=START)
+            cmd.add_argument("--end", type=date.fromisoformat, default=None)
             cmd.add_argument("--csv")
+        if name == "timing":
+            cmd.add_argument("--per-ticker", type=int, default=3000)
         if name == "synthetic":
             cmd.add_argument("--size", type=int, default=12000)
         if name == "stored":
@@ -621,7 +669,7 @@ def main() -> None:
         asyncio.run(cmd_probe(args))
         return
     commands = {"check": cmd_check, "synthetic": cmd_synthetic, "cache-size": cmd_cache_size,
-                "duplicates": cmd_duplicates, "stored": cmd_stored}  # fmt: skip
+                "duplicates": cmd_duplicates, "stored": cmd_stored, "timing": cmd_timing}  # fmt: skip
     sys.exit(commands[args.cmd](args) or 0)
 
 

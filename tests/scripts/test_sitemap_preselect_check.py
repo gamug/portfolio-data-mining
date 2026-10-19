@@ -137,6 +137,18 @@ def test_pub_date_is_the_cached_lastmod_and_the_first_duplicate_wins() -> None:
     assert mod.duplicate_lastmods(raw) == (1, 1, 0)
 
 
+def test_a_run_with_an_end_date_equals_the_full_scan_with_that_end() -> None:
+    raw = [
+        _entry("kla-corporation-q1", lastmod=date(2023, 3, 1)),
+        _entry("kla-corporation-q2", lastmod=date(2024, 3, 1)),  # after the end: not a pair
+        _entry("kla-corporation-q3", lastmod=None),  # no lastmod: kept, as today
+    ]
+    result = mod.compare(raw, [("KLAC", "KLA Corporation")], end=date(2023, 12, 31))["KLAC"]
+    assert sorted(u.rsplit("-", 1)[1] for u in result["full"]) == ["q1.html", "q3.html"]  # not q2
+    assert result["pre"] == result["full"]
+    assert mod.differing({"KLAC": result}) == []
+
+
 def test_the_cache_keeps_articles_only_and_normalizes() -> None:
     connector = mod.CNBCConnector(None)  # type: ignore[arg-type]
     raw = [
@@ -192,3 +204,8 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "(with an `ok` article) with a URL year before 2022: 0 of 1" in out
     assert "(all) with a URL year before 2022: 1 of 3" in out
     assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
+
+
+def test_timing_is_a_positive_number_of_microseconds() -> None:
+    rows = [(e.url, "2024-05-01", None) for e in _base()]
+    assert mod.time_matcher(rows, COMPANIES, per_ticker=20, tickers=3) > 0
