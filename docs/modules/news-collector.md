@@ -92,19 +92,65 @@ Expect the same row count before and after, every row `accept`, the index presen
 `user_version` is 4). The cache migration has its own rehearsal on a copy,
 `scripts/rehearse_sitemap_cache_migration.py` (`--source` is opened read-only, `--copy` must not exist).
 
-**After merging the schema-version-4 change (T-069), on the real file** (the two services create the cache
-tables when they start, in either order or together: the second waits for the first's write lock):
+**After merging the schema-version-4 change (T-069), on the real file.** Run every command from the repository root; `DB` is the
+file the gateway and the crawler open (`$DATABASE_URL`, else `data/urls.db`; the thesis machine uses `/workspaces/thesis/data/urls.db`).
+The `sqlite3` command-line tool is not installed there, so each step is a short Python command. The two services create the cache
+tables when they start, in either order or together (the second waits for the first's write lock).
 
-1. Before restarting, take a backup that passes `PRAGMA quick_check` (the `reclass_rejects.py --backup`
-   procedure or `sqlite3 .backup`); note the row counts of `discovered_urls`, `articles` and
-   `discovery_progress` (on 2026-10-19: 1,059,452, 481,332 and 3,534; they will have grown).
-2. Restart the gateway and the crawler.
-3. Read-only check on the real file: `PRAGMA user_version` is 4; `SELECT name FROM sqlite_master WHERE name
-   LIKE '%sitemap_%' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name` returns `ix_sitemap_crawls_latest`,
-   `ix_sitemap_crawls_open`, `ix_sitemap_entries_lastmod`, `sitemap_crawls`, `sitemap_entries`; the three
-   row counts are what they were before the restart (the migration adds no row).
-4. If anything differs, stop both services and run the rollback of PR #90 (`rollback_sitemap_cache`, which
-   refuses a database that is not at version 4), then restart.
+1. **Before restarting: a backup and the reference counts** (read-only on `DB`; needs free disk the size of the file, about 2.5 GB, and a
+   few minutes; it refuses to overwrite an existing backup):
+   ```bash
+   export DB=/workspaces/thesis/data/urls.db
+   PYTHONPATH=src uv run python - <<'EOF'
+   import os, sqlite3, sys
+   db_path = os.environ["DB"]
+   backup_path = db_path.removesuffix(".db") + ".pre-t069.db"
+   if os.path.exists(backup_path):
+       sys.exit(f"{backup_path} exists: not overwriting")
+   src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+   print("user_version:", src.execute("PRAGMA user_version").fetchone()[0])
+   for t in ("discovered_urls", "articles", "discovery_progress"):
+       print(f"{t}: {src.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]}")
+   dst = sqlite3.connect(backup_path)
+   src.backup(dst)
+   print("backup quick_check:", dst.execute("PRAGMA quick_check").fetchone()[0], "->", backup_path)
+   src.close(); dst.close()
+   EOF
+   ```
+   Expect `user_version: 3` and `backup quick_check: ok`. Write the three counts down (2026-10-19: 1,059,452, 481,332 and 3,534;
+   they will have grown).
+2. **Restart the gateway and the crawler** the way you normally do. Do not start a discovery or a crawl yet.
+3. **Check the real file, read-only, right after the restart:**
+   ```bash
+   PYTHONPATH=src uv run python - <<'EOF'
+   import os, sqlite3
+   db = sqlite3.connect(f"file:{os.environ['DB']}?mode=ro", uri=True)
+   print("user_version:", db.execute("PRAGMA user_version").fetchone()[0], "(expected 4)")
+   print("sitemap objects:", [r[0] for r in db.execute(
+       "SELECT name FROM sqlite_master WHERE name LIKE '%sitemap_%' "
+       "AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name")])
+   for t in ("discovered_urls", "articles", "discovery_progress"):
+       print(f"{t}: {db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]}")
+   EOF
+   ```
+   Expect `user_version: 4`; the five names `ix_sitemap_crawls_latest`, `ix_sitemap_crawls_open`, `ix_sitemap_entries_lastmod`,
+   `sitemap_crawls`, `sitemap_entries`; and **the three counts equal to step 1** (the migration adds no row; a count that is higher only
+   means a job wrote between the two steps).
+4. **If anything differs: stop both services**, then run the rollback (it refuses a file that is not at version 4) and restart on the
+   old code, or restore the backup of step 1:
+   ```bash
+   PYTHONPATH=src uv run python - <<'EOF'
+   import os, sqlite3
+   from portfolio_common.db import Database
+   from data_mining.schema import rollback_sitemap_cache
+   db = Database(sqlite3.connect(os.environ["DB"]))
+   rollback_sitemap_cache(db)
+   db.commit()
+   print("user_version now:", db.schema_version)
+   db.close()
+   EOF
+   ```
+   Expect `user_version now: 3` and no `sitemap_*` name in the step 3 query.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
