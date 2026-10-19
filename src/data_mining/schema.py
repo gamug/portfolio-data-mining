@@ -7,7 +7,8 @@ instead of a copy in each module's connection code, plus forward-only,
 idempotent migrations for databases created by an older version.
 
 Version history: 1 the original tables; 2 `discovered_urls.match_class`/`match_reason`/`query`
-(PLAN Work item 10, T-056b); 3 `articles.prev_fetch_status` (T-057).
+(PLAN Work item 10, T-056b); 3 `articles.prev_fetch_status` (T-057); 4 the sitemap cache tables
+`sitemap_entries` and `sitemap_crawls` (PLAN Work item 15, T-069; additive, nothing existing changes).
 
 Bump `SCHEMA_VERSION` in lockstep with any DDL change and add a matching
 step to `run_migrations()`.
@@ -19,7 +20,7 @@ Query functions (the only SQL text for this database's schema lives here):
 
 from portfolio_common.db import Database
 
-SCHEMA_VERSION = 3  # 2: discovered_urls match_class/match_reason/query (T-056b); 3: articles.prev_fetch_status (T-057)
+SCHEMA_VERSION = 4  # 2: discovered_urls match_class/match_reason/query (T-056b); 3: articles.prev_fetch_status (T-057); 4: sitemap cache (T-069)
 
 # `{autoincrement_pk}` is filled in from the engine's dialect by
 # `apply_schema` (str.replace); everything else is standard SQL.
@@ -84,6 +85,35 @@ CREATE TABLE IF NOT EXISTS articles (
 );
 """
 
+# The sitemap cache (Work item 15): the in-range entries of a domain's sitemap and one row per
+# crawl. Additive: no existing table or column changes, and no reader of `discovered_urls` or
+# `articles` is affected. `sitemap_crawls.signature` hashes the domain's `sitemap_roots` and a
+# cache version; a crawl in progress is a row with `finished_at IS NULL`. `WITHOUT ROWID` is
+# SQLite's (the engine is SQLite today, see `portfolio_common.db`). This text is the DDL that
+# `PLAN.md` Work item 15 shows for G2 and that `scripts/sitemap_preselect_check.py` measured.
+_SITEMAP_CACHE_DDL = """
+CREATE TABLE IF NOT EXISTS sitemap_entries (
+    domain TEXT NOT NULL, url TEXT NOT NULL, lastmod TEXT, title TEXT,
+    first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (domain, url)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS ix_sitemap_entries_lastmod ON sitemap_entries (domain, lastmod);
+CREATE TABLE IF NOT EXISTS sitemap_crawls (
+    domain TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    complete INTEGER NOT NULL, range_start TEXT NOT NULL, signature TEXT NOT NULL,
+    entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
+);
+CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
+CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at)
+    WHERE finished_at IS NULL;
+"""
+
+# Rollback of schema version 4: the indexes go with their tables, nothing else is touched.
+SITEMAP_CACHE_ROLLBACK = """
+DROP TABLE IF EXISTS sitemap_crawls;
+DROP TABLE IF EXISTS sitemap_entries;
+"""
+PREVIOUS_SCHEMA_VERSION = 3
+
 # Insert-order column list for `articles`, kept next to the DDL it mirrors
 # so the two can't drift.
 ARTICLE_COLUMNS = (
@@ -120,6 +150,7 @@ def apply_schema(db: Database) -> None:
     """
     db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
     db.create_schema(_ARTICLES_DDL)
+    db.create_schema(_SITEMAP_CACHE_DDL)
     db.set_schema_version(SCHEMA_VERSION)
 
 
@@ -131,6 +162,15 @@ def run_migrations(db: Database) -> None:
     _migrate_legacy_sector_column(db)
     _migrate_match_columns(db)
     _migrate_prev_fetch_status(db)
+    _migrate_sitemap_cache(db)
+
+
+def rollback_sitemap_cache(db: Database) -> None:
+    """Undo schema version 4: drop the two cache tables and stamp version 3. Not called by any
+    application path; it is the rollback the maintainer approves at G2, and a test runs it.
+    """
+    db.create_schema(SITEMAP_CACHE_ROLLBACK)
+    db.set_schema_version(PREVIOUS_SCHEMA_VERSION)
 
 
 # `discovered_urls.status` and `match_class` together: a matcher-rejected pair is
@@ -177,3 +217,9 @@ def _migrate_prev_fetch_status(db: Database) -> None:
     if not db.table_columns("articles"):
         return  # table doesn't exist yet -- nothing to migrate
     db.ensure_columns("articles", {"prev_fetch_status": "TEXT"})
+
+
+def _migrate_sitemap_cache(db: Database) -> None:
+    """A database of schema version < 4 has no sitemap cache. Create the two tables and their
+    indexes, empty. No-op on a current database (every statement is `IF NOT EXISTS`)."""
+    db.create_schema(_SITEMAP_CACHE_DDL)

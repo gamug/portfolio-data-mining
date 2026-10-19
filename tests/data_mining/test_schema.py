@@ -2,13 +2,25 @@
 idempotent application, and the forward-only migrations.
 """
 
+import importlib.util
 import sqlite3
+import sys
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from portfolio_common.db import Database
 
-from data_mining.schema import ARTICLE_COLUMNS, SCHEMA_VERSION, apply_schema, run_migrations
+from data_mining.schema import (
+    ARTICLE_COLUMNS,
+    PREVIOUS_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+    apply_schema,
+    rollback_sitemap_cache,
+    run_migrations,
+)
+from extractor.db import connect, ensure_articles_table
+from news_collector.storage.queue import URLQueue
 
 LEGACY_ARTICLES_SCHEMA = """
 CREATE TABLE articles (
@@ -139,8 +151,8 @@ def _index_names(db: Database) -> set[str]:
     }
 
 
-def test_schema_version_is_3() -> None:
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_4() -> None:
+    assert SCHEMA_VERSION == 4
 
 
 def test_fresh_schema_has_match_columns_and_index(db: Database) -> None:
@@ -232,3 +244,207 @@ def test_fresh_schema_has_prev_fetch_status_outside_the_upsert_columns(db: Datab
     apply_schema(db)
     assert "prev_fetch_status" in db.table_columns("articles")
     assert "prev_fetch_status" not in ARTICLE_COLUMNS  # a re-fetch must never reset it
+
+
+# ---------------------------------------------------------------------------------------------
+# The sitemap cache (Work item 15, T-069)
+# ---------------------------------------------------------------------------------------------
+
+CACHE_TABLES = {"sitemap_entries", "sitemap_crawls"}
+CACHE_INDEXES = {
+    "ix_sitemap_entries_lastmod",
+    "ix_sitemap_crawls_latest",
+    "ix_sitemap_crawls_open",
+}
+PIPELINE_TABLES = {"discovered_urls", "discovery_progress", "articles"}
+DOMAIN = "cnbc.com"
+
+
+def _fingerprint(db: Database) -> tuple[int, int, list[tuple]]:
+    """Rows of the tables the cache must not touch, and the definition of each."""
+    counts = [
+        db.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]  # noqa: S608 - fixed names
+        for t in ("discovered_urls", "articles")
+    ]
+    ddl = db.execute(
+        "SELECT name, sql FROM sqlite_master WHERE name IN "
+        "('discovered_urls', 'discovery_progress', 'articles') ORDER BY name"
+    ).fetchall()
+    return counts[0], counts[1], [tuple(r) for r in ddl]
+
+
+def _seed_pipeline(db: Database) -> None:
+    db.execute(
+        "INSERT INTO discovered_urls (url, domain, company, ticker, source, discovered_at) "
+        "VALUES ('https://www.cnbc.com/2024/05/01/a.html', 'cnbc.com', 'KLA', 'KLAC', "
+        "'sitemap', '2026-10-19T00:00:00')"
+    )
+    db.execute("INSERT INTO articles (id, ticker, fetch_status) VALUES (1, 'KLAC', 'ok')")
+    db.commit()
+
+
+def _norm(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+def test_apply_schema_creates_the_cache_tables_and_indexes(db: Database) -> None:
+    apply_schema(db)
+
+    assert _table_names(db) >= CACHE_TABLES
+    assert _index_names(db) >= CACHE_INDEXES
+
+
+def test_the_cache_ddl_is_the_one_the_script_measured(db: Database) -> None:
+    """`PLAN.md` shows the DDL the script measured; the migration must run exactly it."""
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    sys.path.insert(0, str(scripts))
+    spec = importlib.util.spec_from_file_location(
+        "sitemap_preselect_check", scripts / "sitemap_preselect_check.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    measured = Database(sqlite3.connect(":memory:"))
+    measured.create_schema(script.CACHE_DDL)
+    apply_schema(db)
+    names = ("sitemap_entries", "sitemap_crawls", *sorted(CACHE_INDEXES))
+
+    def definitions(database: Database) -> dict[str, str]:
+        marks = ", ".join("?" * len(names))
+        rows = database.execute(
+            f"SELECT name, sql FROM sqlite_master WHERE name IN ({marks})",  # noqa: S608 - marks only
+            names,
+        ).fetchall()
+        return {r[0]: _norm(r[1]) for r in rows}
+
+    assert definitions(db) == definitions(measured)
+    assert len(definitions(db)) == len(names)
+    measured.close()
+
+
+def test_the_migration_adds_the_cache_to_a_version_3_database_and_changes_nothing_else(
+    db: Database,
+) -> None:
+    apply_schema(db)
+    _seed_pipeline(db)
+    rollback_sitemap_cache(db)  # a database exactly as version 3 left it
+    assert not CACHE_TABLES & _table_names(db)
+    before = _fingerprint(db)
+
+    run_migrations(db)
+    run_migrations(db)  # idempotent
+
+    assert _table_names(db) >= CACHE_TABLES
+    assert _index_names(db) >= CACHE_INDEXES
+    assert _fingerprint(db) == before  # same rows, same definitions
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 0
+
+
+def test_the_migration_on_an_empty_database_creates_only_the_cache(db: Database) -> None:
+    run_migrations(db)
+    run_migrations(db)
+
+    assert _table_names(db) == CACHE_TABLES
+
+
+def test_the_rollback_restores_the_previous_schema_and_can_be_redone(db: Database) -> None:
+    apply_schema(db)
+    _seed_pipeline(db)
+    before = _fingerprint(db)
+    db.execute(
+        "INSERT INTO sitemap_entries VALUES ('cnbc.com', 'https://x/2024/a.html', "
+        "'2024-05-01', NULL, '2026-10-19T00:00:00', '2026-10-19T00:00:00')"
+    )
+    db.commit()
+
+    rollback_sitemap_cache(db)
+
+    assert _table_names(db) - {"sqlite_sequence"} == PIPELINE_TABLES  # the cache is gone
+    assert not CACHE_INDEXES & _index_names(db)
+    assert db.execute("PRAGMA user_version").fetchone()[0] == PREVIOUS_SCHEMA_VERSION
+    assert _fingerprint(db) == before
+    apply_schema(db)  # and the schema comes back
+    assert _table_names(db) >= CACHE_TABLES
+
+
+def test_the_design_queries_use_an_index_on_the_migrated_schema(db: Database) -> None:
+    apply_schema(db)
+    run_migrations(db)
+    db.execute(
+        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', '2026-10-19T10:00:00', NULL, 0, "
+        "'2022-01-01', 'sig', NULL, NULL)"
+    )
+    queries = {
+        "latest complete crawl": (
+            "SELECT started_at, finished_at, range_start, signature FROM sitemap_crawls "
+            "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1",
+            (DOMAIN,),
+        ),
+        "crawl in progress": (
+            "SELECT 1 FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL "
+            "AND started_at > ?",
+            (DOMAIN, "2026-10-19T09:30:00"),
+        ),
+        "current entries": (
+            "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ?",
+            (DOMAIN, "2026-10-19T10:00:00"),
+        ),
+    }
+    for name, (sql, params) in queries.items():
+        plan = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql, params))
+        assert "SEARCH" in plan, (name, plan)
+        assert "SCAN" not in plan, (name, plan)
+    # the in-progress row is found inside the timeout and not after it
+    sql, params = queries["crawl in progress"]
+    assert db.execute(sql, params).fetchall() == [(1,)]
+    assert db.execute(sql, (DOMAIN, "2026-10-19T10:30:00")).fetchall() == []
+
+
+def test_the_cache_keys_refuse_a_duplicate(db: Database) -> None:
+    apply_schema(db)
+    row = ("cnbc.com", "https://x/2024/a.html", None, None, "t", "t")
+    db.execute("INSERT INTO sitemap_entries VALUES (?, ?, ?, ?, ?, ?)", row)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO sitemap_entries VALUES (?, ?, ?, ?, ?, ?)", row)
+    crawl = ("cnbc.com", "2026-10-19T10:00:00", None, 0, "2022-01-01", "sig", None, None)
+    db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", crawl)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", crawl)
+
+
+def test_both_stages_and_a_read_only_reader_work_on_a_version_3_file(tmp_path: Path) -> None:
+    """The collector's queue and the extractor open the file as they do in production, and a
+    reader (portfolio-nlp) opens it read-only; the cache tables do not change what they see."""
+    path = tmp_path / "urls.db"
+    old = Database(sqlite3.connect(path))
+    apply_schema(old)
+    _seed_pipeline(old)
+    rollback_sitemap_cache(old)  # the file as the previous version left it
+    old.close()
+
+    def read(uri_path: Path) -> list[tuple]:
+        reader = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True)
+        try:
+            return reader.execute(
+                "SELECT d.url, d.ticker, a.fetch_status FROM discovered_urls d "
+                "JOIN articles a ON a.id = d.id ORDER BY d.id"
+            ).fetchall()
+        finally:
+            reader.close()
+
+    before = read(path)
+    assert before  # the reader's join is not vacuous
+
+    queue = URLQueue(path)
+    queue.initialize()  # the collector's writer path: apply_schema + run_migrations
+    queue.close()
+    stage = connect(str(path))
+    ensure_articles_table(stage)  # the extractor's path, foreign keys on
+    stage.close()
+
+    assert read(path) == before
+    check = sqlite3.connect(path)
+    assert {r[0] for r in check.execute("SELECT name FROM sqlite_master")} >= CACHE_TABLES
+    assert check.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    check.close()
