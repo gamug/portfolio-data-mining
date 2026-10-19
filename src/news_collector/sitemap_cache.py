@@ -84,11 +84,35 @@ class Crawl:
 
 
 @dataclass(frozen=True)
-class Outcome:
-    """What `begin` decided: the crawl the rows belong to, or why the pairs must fail."""
+class SitemapRun:
+    """What `begin` decided for one run: the entries to read, or why the pairs must fail.
 
+    It travels with the run (the orchestrator, one API request), not on the shared cache, so a
+    run that cannot use the cache never changes what another run reads. `rows` is parsed once
+    per crawl and shared by every run that reads that crawl; nobody mutates it.
+    """
+
+    domain: str
     crawl: Crawl | None
     failures: tuple[str, ...] = ()
+    rows: tuple[SitemapEntry, ...] = ()
+
+    def entries(self, date_range: DateRange) -> tuple[list[SitemapEntry], list[str]]:
+        """The current entries within the range and the failures the pair must report.
+
+        A range that starts before the crawl covers is a failure, never a narrower match
+        recorded as checked (case c).
+        """
+        if self.crawl is None:
+            return [], list(self.failures)
+        if date_range.start < self.crawl.range_start:
+            return [], [f"sitemap cache of {self.domain} starts at {self.crawl.range_start}"]
+        start, end = date_range.start, date_range.end
+        return [e for e in self.rows if e.lastmod is None or start <= e.lastmod <= end], []
+
+
+async def _no_client(_url: str) -> str:
+    raise RuntimeError("no HTTP client")
 
 
 class SitemapCache:
@@ -111,8 +135,7 @@ class SitemapCache:
         self._clock = clock
         self._signature = signature(roots)
         self._lock = asyncio.Lock()
-        self._outcome: Outcome | None = None
-        self._rows: list[Row] = []
+        self._rows: tuple[SitemapEntry, ...] = ()
         self._rows_of: str | None = None  # `started_at` of the crawl `_rows` was read from
         self.crawls = 0  # crawls started by this object (tests, the log)
 
@@ -120,38 +143,51 @@ class SitemapCache:
     def for_connector(
         cls, connector: BaseConnector, client: httpx.AsyncClient, db_path: str
     ) -> SitemapCache:
-        async def fetch(url: str) -> str:
-            return await fetch_text(client, url)
-
-        return cls(
+        cache = cls(
             connector.config.domain,
             connector.config.sitemap_roots,
             db_path,
-            fetch,
+            _no_client,
             connector.is_article_url,
         )
+        cache.use_client(client)
+        return cache
 
     # ------------------------------------------------------------------
     # A run
     # ------------------------------------------------------------------
 
-    async def begin(self, date_range: DateRange, *, force: bool = False) -> Outcome:
+    def use_client(self, client: httpx.AsyncClient) -> None:
+        """Fetch with this client from now on (the process's client may be replaced)."""
+
+        async def fetch(url: str) -> str:
+            return await fetch_text(client, url)
+
+        self._fetch = fetch
+
+    async def begin(self, date_range: DateRange, *, force: bool = False) -> SitemapRun:
         """Decide, once for a run, whether the cache is usable, refreshing it when it must be.
 
         Concurrent callers wait on the lock and find the crawl the first one made; a forced call
         is satisfied by any crawl that started after the call was made, so two forced requests
-        make one crawl.
+        make one crawl. It never raises: a database error is a failure every pair of the run
+        reports (and is not checkpointed), so one domain cannot stop the others.
         """
         requested = self._clock()
-        async with self._lock:
-            now = self._clock()
-            latest = await asyncio.to_thread(self._latest_complete)
-            refresh_failures: list[str] = []
-            if self._must_refresh(latest, date_range.start, force, requested, now):
-                refresh_failures = await self._refresh(date_range.start, latest)
+        try:
+            async with self._lock:
+                now = self._clock()
                 latest = await asyncio.to_thread(self._latest_complete)
-            self._outcome = await self._outcome_for(latest, date_range, refresh_failures, now)
-            return self._outcome
+                refresh_failures: list[str] = []
+                if self._must_refresh(latest, date_range.start, force, requested, now):
+                    refresh_failures = await self._refresh(date_range.start, latest)
+                    latest = await asyncio.to_thread(self._latest_complete)
+                return await self._run_for(latest, date_range, refresh_failures, now)
+        except Exception as exc:
+            log.warning("sitemap cache of %s unusable: %s", self.domain, exc)
+            return SitemapRun(
+                self.domain, None, (f"sitemap cache of {self.domain} unusable: {exc}",)
+            )
 
     def _must_refresh(
         self, latest: Crawl | None, start: date, force: bool, requested: datetime, now: datetime
@@ -162,13 +198,13 @@ class SitemapCache:
             return True
         return force and latest.started_at < stamp(requested)
 
-    async def _outcome_for(
+    async def _run_for(
         self,
         latest: Crawl | None,
         date_range: DateRange,
         refresh_failures: list[str],
         now: datetime,
-    ) -> Outcome:
+    ) -> SitemapRun:
         usable = (
             latest is not None
             and latest.signature == self._signature
@@ -176,7 +212,8 @@ class SitemapCache:
         )
         if not usable or latest is None:
             reason = summarize_failures(refresh_failures) if refresh_failures else "no refresh ran"
-            return Outcome(
+            return SitemapRun(
+                self.domain,
                 None,
                 (
                     f"sitemap cache of {self.domain} does not cover {date_range.start}: "
@@ -210,29 +247,7 @@ class SitemapCache:
                 len(self._rows),
                 latest.started_at,
             )
-        return Outcome(latest)
-
-    async def entries(self, date_range: DateRange) -> tuple[list[SitemapEntry], list[str]]:
-        """The current entries within the range and the failures the pair must report.
-
-        A run that did not call `begin` gets one. A range that starts before the crawl covers is
-        a failure, never a narrower match recorded as checked (case c).
-        """
-        outcome = self._outcome or await self.begin(date_range)
-        if outcome.crawl is None:
-            return [], list(outcome.failures)
-        if date_range.start < outcome.crawl.range_start:
-            return [], [f"sitemap cache of {self.domain} starts at {outcome.crawl.range_start}"]
-        start, end = date_range.start.isoformat(), date_range.end.isoformat()
-        return [
-            SitemapEntry(
-                url=url,
-                lastmod=date.fromisoformat(lastmod) if lastmod else None,
-                title=title,
-            )
-            for url, lastmod, title in self._rows
-            if lastmod is None or start <= lastmod <= end
-        ], []
+        return SitemapRun(self.domain, latest, (), self._rows)
 
     # ------------------------------------------------------------------
     # The crawl
@@ -295,7 +310,7 @@ class SitemapCache:
             return None
         return Crawl(row[0], date.fromisoformat(row[1]), row[2], row[3] or 0)
 
-    def _load(self, started_at: str) -> list[Row]:
+    def _load(self, started_at: str) -> tuple[SitemapEntry, ...]:
         db = connect(self._db_path)
         try:
             rows = db.execute(
@@ -305,7 +320,10 @@ class SitemapCache:
             ).fetchall()
         finally:
             db.close()
-        return [(r[0], r[1], r[2]) for r in rows]
+        return tuple(
+            SitemapEntry(url=r[0], lastmod=date.fromisoformat(r[1]) if r[1] else None, title=r[2])
+            for r in rows
+        )
 
     def _write(
         self, started_at: str, range_start: date, rows: dict[str, Row], seen: int, failures: int
@@ -355,10 +373,11 @@ class SitemapCache:
             db.close()
 
 
-# One cache per (database, domain, client) in the process, so the orchestrator and every API
-# request share one lock, one crawl and one set of rows. `begin` re-reads the table on each run,
-# so the long-lived gateway sees a refresh made by another process.
-_CACHES: dict[tuple[str, str, int], SitemapCache] = {}
+# One cache per (database, domain) in the process, so the orchestrator and every API request share
+# one lock, one crawl and one set of rows. `begin` re-reads the table on each run, so the
+# long-lived gateway sees a refresh made by another process. The client is the caller's: a
+# replaced client is used from the next call, and nothing is keyed by it.
+_CACHES: dict[tuple[str, str], SitemapCache] = {}
 
 
 def shared_cache(
@@ -367,9 +386,10 @@ def shared_cache(
     """The process's cache of the connector's domain, or None when it has no sitemap roots."""
     if not connector.config.sitemap_roots:
         return None
-    key = (db_path, connector.config.domain, id(client))
+    key = (db_path, connector.config.domain)
     if key not in _CACHES:
         _CACHES[key] = SitemapCache.for_connector(connector, client, db_path)
+    _CACHES[key].use_client(client)
     return _CACHES[key]
 
 

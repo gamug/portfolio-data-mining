@@ -178,6 +178,8 @@ T-071 is merged**.
   row is written. A domain whose child always fails (`ft`) is unsupported and must keep its `sitemap_roots` empty.
 - **A failed refresh:** a cache that covers the run and is at most 7 days old is used; an older one is used with a warning that carries its
   age; one that does not cover the run (or none) fails every pair of the domain with the reason, and the pairs are not checkpointed.
+- **Errors:** a database error while the cache is read or refreshed is not an exception of the run: it is a failure of every pair of that
+  domain (not checkpointed), and the other domains run.
 - **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The
   cost of the duplicate is 10 s and the same rows (an upsert).
 - **Look at it** (read-only, from the repository root; `DB` as above):

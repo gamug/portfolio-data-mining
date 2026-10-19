@@ -22,7 +22,7 @@ from news_collector.utils.http import fetch_text
 from news_collector.utils.url import is_valid_http_url, normalize_url
 
 if TYPE_CHECKING:
-    from news_collector.sitemap_cache import SitemapCache
+    from news_collector.sitemap_cache import SitemapRun
 
 log = logging.getLogger(__name__)
 
@@ -56,12 +56,12 @@ class SitemapRSSStrategy:
         self,
         connector: BaseConnector,
         client: httpx.AsyncClient,
-        cache: SitemapCache | None = None,
+        cache: SitemapRun | None = None,
     ) -> None:
         self._connector = connector
         self._client = client
-        # T-070a: with a cache the sitemap entries come from it (crawled once per domain, not once
-        # per ticker); `None` is today's live fetch.
+        # T-070a: the run's decision about the domain's cache (`SitemapRun`): the sitemap entries
+        # come from it (crawled once per domain, not once per ticker); `None` is today's live fetch.
         self._cache = cache
         # Sitemap roots and children that could not be fetched or parsed in the last
         # `discover` call (T-076). The orchestrator reads it: a pair with failures is
@@ -91,7 +91,7 @@ class SitemapRSSStrategy:
         # 1. Crawl sitemap trees
         if self._connector.config.sitemap_roots:
             if self._cache is not None:
-                cached, cache_failures = await self._cache.entries(date_range)
+                cached, cache_failures = self._cache.entries(date_range)
                 entries.extend(cached)
                 self.failures.extend(cache_failures)
             else:

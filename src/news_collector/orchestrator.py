@@ -20,7 +20,7 @@ from news_collector.connectors.seeking_alpha import SeekingAlphaConnector
 from news_collector.connectors.stocktwits import StockTwitsConnector
 from news_collector.connectors.yahoo_finance import YahooFinanceConnector
 from news_collector.models import Company, DateRange, DiscoveredURL, DiscoveryStats, PartialStats
-from news_collector.sitemap_cache import SitemapCache, shared_cache
+from news_collector.sitemap_cache import SitemapRun, shared_cache
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
@@ -80,7 +80,7 @@ class DiscoveryOrchestrator:
             domain: asyncio.Semaphore(1) for domain in connectors
         }
         # One sitemap cache per domain with sitemap roots, made by `run` (T-070a).
-        self._caches: dict[str, SitemapCache] = {}
+        self._caches: dict[str, SitemapRun] = {}
 
     async def run(
         self,
@@ -233,16 +233,15 @@ class DiscoveryOrchestrator:
     ) -> None:
         """The process's sitemap cache of each domain with roots, refreshed once before the pairs
         run, so the tickers read it instead of crawling (T-070a). A domain with no pending pair is not
-        crawled. A failed refresh is carried to each pair of the domain by the cache."""
+        crawled. A failed or unusable cache is carried to each pair of the domain by its `SitemapRun`."""
         self._caches = {}
         for domain in sorted(domains):
             connector = self._connectors[domain]
             if not connector.config.sitemap_roots:
                 continue
             cache = shared_cache(connector, connector._client, self._queue.db_path)
-            assert cache is not None
-            self._caches[domain] = cache
-            await cache.begin(date_range, force=force)
+            if cache is not None:
+                self._caches[domain] = await cache.begin(date_range, force=force)
 
     async def _run_one_with_sem(
         self,
