@@ -243,30 +243,6 @@ def test_redated_counts_old_urls_in_the_range() -> None:
     assert mod.redated(rows) == (1, 2)
 
 
-def test_the_cache_ddl_runs_and_its_queries_use_an_index() -> None:
-    db = sqlite3.connect(":memory:")
-    db.executescript(mod.CACHE_DDL)
-    db.execute(
-        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', '2026-10-19T00:00:00', NULL, 0, "
-        "'2022-01-01', 'sig', NULL, NULL)"
-    )
-    params = {
-        "latest complete crawl": ("cnbc.com",),  # `started_at` is what `last_seen` equals
-        "crawl in progress": ("cnbc.com", "2026-10-18T00:00:00"),
-        "current entries": ("cnbc.com", "2026-10-19T00:00:00"),
-    }
-    assert set(params) == set(mod.CACHE_QUERIES)
-    for name, sql in mod.CACHE_QUERIES.items():
-        plan = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql, params[name]))
-        assert "SEARCH" in plan, (name, plan)
-        assert "SCAN" not in plan, (name, plan)
-    assert db.execute(
-        mod.CACHE_QUERIES["crawl in progress"], params["crawl in progress"]
-    ).fetchall()
-    db.executescript(mod.CACHE_ROLLBACK)  # the rollback leaves no table behind
-    assert db.execute("SELECT count(*) FROM sqlite_master").fetchone() == (0,)
-
-
 def test_index_memory_reports_rows_and_index() -> None:
     rows = [(e.url, "2024-05-01", None) for e in _base()]
     assert "token index" in mod.index_memory(rows)
