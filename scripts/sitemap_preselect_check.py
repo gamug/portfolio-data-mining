@@ -60,6 +60,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import tracemalloc
 from collections import defaultdict
 from datetime import UTC, date, datetime
 from multiprocessing import Pool
@@ -87,7 +88,30 @@ CREATE TABLE sitemap_entries (
     first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, PRIMARY KEY (domain, url)
 ) WITHOUT ROWID;
 CREATE INDEX ix_sitemap_entries_lastmod ON sitemap_entries (domain, lastmod);
+CREATE TABLE sitemap_crawls (
+    domain TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
+    complete INTEGER NOT NULL, range_start TEXT NOT NULL, signature TEXT NOT NULL,
+    entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
+);
+CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
+CREATE INDEX ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at)
+    WHERE finished_at IS NULL;
 """
+# Rollback of the migration: the indexes go with their tables.
+CACHE_ROLLBACK = "DROP TABLE sitemap_crawls; DROP TABLE sitemap_entries;"
+# The three queries the design runs; the test shows each one uses an index.
+CACHE_QUERIES = {
+    "latest complete crawl": (
+        "SELECT finished_at, range_start, signature FROM sitemap_crawls "
+        "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1"
+    ),
+    "crawl in progress": (
+        "SELECT 1 FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL AND started_at > ?"
+    ),
+    "current entries": (
+        "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ?"
+    ),
+}
 # Cumulative shares of the synthetic URL variants, then the share of entries with a title and of
 # entries without a `lastmod`.
 P_TICKER_URL, P_NAME_S_URL, P_NAME_CORP_URL, P_TITLE, P_NO_LASTMOD = 0.25, 0.4, 0.5, 0.7, 0.03
@@ -199,6 +223,22 @@ def url_year(url: str) -> int | None:
     """The year in a cnbc URL path (`/2024/05/01/...`): the publication date, not the `lastmod`."""
     m = re.match(r"https?://[^/]+/(\d{4})/", url)
     return int(m.group(1)) if m else None
+
+
+def index_memory(rows: list[Row]) -> str:
+    """Resident size of what a process holds for a domain: the rows and the `TokenIndex`."""
+    tracemalloc.start()
+    held = list(rows)  # a copy of the list, the tuples are shared: count the rows apart
+    base = tracemalloc.get_traced_memory()[0]
+    index = TokenIndex(held)
+    built, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    row_bytes = sum(sys.getsizeof(r) + sum(sys.getsizeof(v) for v in r if v) for r in rows)
+    return (
+        f"memory: rows {row_bytes / 1e6:.1f} MB (as Python tuples), token index "
+        f"{(built - base) / 1e6:.1f} MB steady, {(peak - base) / 1e6:.1f} MB at its peak "
+        f"({len(index.text)} tokens)"
+    )
 
 
 def redated(rows: list[Row], start: date = START) -> tuple[int, int]:
@@ -522,6 +562,7 @@ def cmd_cache_size(args: argparse.Namespace) -> None:
     ):
         rows = cache_rows(entries, connector)
         if label == "in range":
+            print(index_memory(rows))
             old, dated = redated(rows)
             print(
                 f"in range, URL year before {START.year} (an old article re-dated into the range): "
