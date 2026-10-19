@@ -70,6 +70,7 @@ async def run_all(
         by_domain=stats.by_domain,
         by_company=stats.by_company,
         errors=stats.errors,
+        warnings=stats.warnings,
         elapsed_seconds=round(stats.elapsed_seconds, 3),
         start_date=date_range.start,
         end_date=date_range.end,

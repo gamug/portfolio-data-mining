@@ -136,6 +136,13 @@ class DiscoverResponse(BaseModel):
     inserted: int
     elapsed_seconds: float
     errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Not errors: the sitemap cache was used although its refresh failed (the age of the "
+            "crawl is in the text). The pair is checkpointed."
+        ),
+    )
     start_date: date = Field(description="Inclusive start of the range this run used.")
     end_date: date = Field(description="Inclusive end of the range this run used.")
 
@@ -152,6 +159,13 @@ class RunAllResponse(BaseModel):
     by_domain: dict[str, int]
     by_company: dict[str, int]
     errors: list[str]
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Not errors: the sitemap cache was used although its refresh failed (the age of the "
+            "crawl is in the text). The pair is checkpointed."
+        ),
+    )
     elapsed_seconds: float
     skipped_pairs: int = Field(
         default=0,

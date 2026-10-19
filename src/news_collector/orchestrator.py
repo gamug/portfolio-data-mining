@@ -162,6 +162,7 @@ class DiscoveryOrchestrator:
         await self._prepare_caches(
             {d for _, d in pending_pairs}, date_range, force=refresh_sitemaps
         )
+        stats.warnings.extend(w for run in self._caches.values() for w in run.warnings)
 
         # Progress is tracked here (not inside _run_one) because only run() knows
         # the total task count and elapsed-so-far needed to estimate an ETA.

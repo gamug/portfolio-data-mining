@@ -178,6 +178,11 @@ T-071 is merged**.
   row is written. A domain whose child always fails (`ft`) is unsupported and must keep its `sitemap_roots` empty.
 - **A failed refresh:** a cache that covers the run and is at most 7 days old is used; an older one is used with a warning that carries its
   age; one that does not cover the run (or none) fails every pair of the domain with the reason, and the pairs are not checkpointed.
+- **Warnings:** when the refresh failed and the run went on with the cache (cases a and b), the run says so: `Warnings` in the CLI
+  summary, `warnings` on `RunAllResponse` and on each `DiscoverResponse`, with the age of the crawl used. It is not an error: the pairs are
+  checkpointed and the exit status is 0. A cache the run cannot use (case c) is an error, as above.
+- **Memory:** a process holds the rows of the crawl it last read for as long as it lives: about 26.5 MB for the 109,493 `cnbc.com`
+  entries (`tracemalloc`), so the gateway's resident size grows by that much after its first discovery request and stays.
 - **Errors:** a database error while the cache is read or refreshed is not an exception of the run: it is a failure of every pair of that
   domain (not checkpointed), and the other domains run.
 - **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The

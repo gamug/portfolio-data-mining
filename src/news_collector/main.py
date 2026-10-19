@@ -86,6 +86,17 @@ async def _load_companies(
         sys.exit(1)
 
 
+_NOTES_SHOWN = 5
+
+
+def _print_notes(label: str, notes: list[str]) -> None:
+    """The count of errors or warnings of a run and the first few, in the summary."""
+    if notes:
+        print(f"{label:<17}: {len(notes)}")
+        for note in notes[:_NOTES_SHOWN]:
+            print(f"  - {note}")
+
+
 async def cmd_discover(args: argparse.Namespace) -> int:
     log_path = setup_logging(args.log_level, log_dir=args.log_dir, run_name="discover")
     if log_path:
@@ -135,10 +146,9 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     if args.resume:
         print(f"Skipped (resume) : {stats.skipped_pairs}")
     print(f"Elapsed          : {stats.elapsed_seconds:.1f}s")
-    if stats.errors:
-        print(f"Errors           : {len(stats.errors)}")
-        for e in stats.errors[:5]:
-            print(f"  - {e}")
+    _print_notes("Errors", stats.errors)
+
+    _print_notes("Warnings", stats.warnings)
 
     print("\nBy domain:")
     for domain, count in sorted(stats.by_domain.items(), key=lambda x: -x[1]):

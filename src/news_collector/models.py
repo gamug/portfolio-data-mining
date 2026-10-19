@@ -173,6 +173,8 @@ class DiscoveryStats:
     by_domain: dict[str, int] = field(default_factory=dict)
     by_company: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
+    # Not errors (the pairs are checkpointed): a sitemap cache used after a failed refresh (T-070a).
+    warnings: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     skipped_pairs: int = 0
 

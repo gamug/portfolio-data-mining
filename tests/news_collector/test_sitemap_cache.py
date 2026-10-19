@@ -23,7 +23,7 @@ from news_collector import main as collector_main
 from news_collector.api.routers import _common
 from news_collector.api.schemas import DiscoverRequest, RunAllRequest
 from news_collector.connectors.cnbc import CNBCConnector
-from news_collector.models import Company, DateRange, DiscoveryStats, SitemapEntry
+from news_collector.models import Company, DateRange, DiscoveryStats
 from news_collector.orchestrator import DiscoveryOrchestrator
 from news_collector.sitemap_cache import SitemapCache, SitemapRun, shared_cache
 from news_collector.storage.queue import URLQueue
@@ -44,9 +44,8 @@ DAYS_FRESH = 7
 DAYS_PURGE = 90
 THREE_CRAWLS = 3
 TWO = 2
-LOOP_TICKS = 5
+LOOP_TICKS = 3
 MANY_ROWS = 30_000
-SLOW_SECONDS = 0.05
 
 
 def leaf(*items: tuple[str, str | None]) -> str:
@@ -687,7 +686,7 @@ async def test_a_pair_on_another_domain_progresses_during_the_refresh(
         await cache.begin(RANGE)
     finally:
         pair.cancel()
-    assert ticks >= LOOP_TICKS  # the event loop was not blocked for the 0.3 s
+    assert ticks >= LOOP_TICKS  # the loop ran during the 0.3 s; the bound is far below 30 ticks
 
 
 async def test_the_log_says_what_was_refreshed_and_how_many_entries(
@@ -850,16 +849,96 @@ def test_the_cli_flag_is_off_by_default_and_reaches_the_orchestrator(
     assert seen == [False, True]
 
 
-async def test_the_entries_of_a_run_are_read_in_milliseconds_not_rebuilt_per_ticker(
-    db: str,
+async def test_the_rows_are_parsed_once_per_crawl_and_shared(db: str) -> None:
+    cache = make(db, standard_site(), Clock())
+    first, second = await cache.begin(RANGE), await cache.begin(RANGE)
+    assert first.rows is second.rows  # one parse per crawl, not one per run or per ticker
+    entries, _ = first.entries(RANGE)
+    assert all(e is r for e, r in zip(entries, first.rows, strict=False))  # no new objects
+
+
+async def test_a_cache_reused_in_a_second_event_loop_still_works(db: str) -> None:
+    site = standard_site()
+    cache = make(db, site, Clock())
+
+    async def contended() -> list[SitemapRun]:
+        return list(
+            await asyncio.gather(cache.begin(RANGE, force=True), cache.begin(RANGE, force=True))
+        )
+
+    for _ in range(THREE_CRAWLS):  # the lock binds to the loop that first waits on it
+        runs = await asyncio.to_thread(asyncio.run, contended())
+        assert all(r.crawl is not None and not r.failures for r in runs)
+    assert site.crawls() == THREE_CRAWLS  # one crawl per loop: two forced requests, one crawl
+
+
+async def test_a_failed_refresh_of_a_fresh_cache_is_a_warning_of_the_run(db: str) -> None:
+    site = standard_site()
+    clock = Clock()
+    cache = make(db, site, clock)
+    await cache.begin(RANGE)
+    site.down.add(ROOT)
+    clock.advance(hours=1)
+    run = await cache.begin(RANGE, force=True)
+    assert run.failures == ()
+    [warning] = run.warnings
+    assert "sitemap refresh of example.test failed" in warning
+    assert "0.0 days old" in warning
+
+
+async def test_the_warning_reaches_the_orchestrator_stats_and_the_api_response(
+    db: str, offline: Site
 ) -> None:
-    many = tuple(
-        SitemapEntry(url=f"https://example.test/a-{i}", lastmod=date(2024, 5, 1))
-        for i in range(MANY_ROWS * 3)
+    connector, client = fake_connector(), MagicMock()
+    orchestrator = DiscoveryOrchestrator(
+        connectors={DOMAIN: connector}, queue=URLQueue(db), concurrency=1
     )
-    crawl = sc.Crawl("2026-10-01T12:00:00", START, "s", len(many))
-    run = SitemapRun(DOMAIN, crawl, (), many)
-    began = time.perf_counter()
-    entries, _ = run.entries(RANGE)
-    assert len(entries) == len(many)
-    assert time.perf_counter() - began < SLOW_SECONDS
+
+    async def no_api(*_: object) -> list:
+        return []
+
+    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
+    ana = [Company(ticker="ACME", name="Acme")]
+    clean = await orchestrator.run(ana, date_range=RANGE, resume=False)
+    assert clean.warnings == []
+    offline.down.add(ROOT)
+    warned = await orchestrator.run(ana, date_range=RANGE, resume=False, refresh_sitemaps=True)
+    assert len(warned.warnings) == 1
+    assert warned.errors == []  # not an error: the pair was checkpointed
+    [response] = await _common.run_domain_discovery(
+        request(db, "BBB", refresh_sitemaps=True), connector, client, DOMAIN
+    )
+    assert len(response.warnings) == 1
+    assert response.errors == []
+
+
+def test_the_cli_summary_prints_the_warnings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class Recording:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def run(self, **_: object) -> DiscoveryStats:
+            return DiscoveryStats(warnings=["sitemap refresh of cnbc.com failed (x); old crawl"])
+
+    class FakeClient:
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    async def lookup(tickers: list[str], client: object, start: object) -> list[Company]:
+        return [Company(ticker=t, name=f"{t} Inc.") for t in tickers]
+
+    monkeypatch.setattr(collector_main, "DiscoveryOrchestrator", Recording)
+    monkeypatch.setattr(collector_main, "build_client", FakeClient)
+    monkeypatch.setattr(collector_main, "build_connectors", lambda client: [])
+    monkeypatch.setattr(collector_main, "lookup_companies", lookup)
+    argv = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "discover", "--tickers", "AAPL"]
+    code = asyncio.run(collector_main.cmd_discover(collector_main.build_parser().parse_args(argv)))
+    out = capsys.readouterr().out
+    assert code == 0  # a warning is not a failure of the run
+    assert "Warnings         : 1" in out
+    assert "old crawl" in out

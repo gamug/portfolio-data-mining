@@ -96,6 +96,9 @@ class SitemapRun:
     crawl: Crawl | None
     failures: tuple[str, ...] = ()
     rows: tuple[SitemapEntry, ...] = ()
+    # The run went on with an older cache because the refresh failed (cases a and b): not an error,
+    # the pairs are checkpointed, but whoever runs the discovery is told (T-070a).
+    warnings: tuple[str, ...] = ()
 
     def entries(self, date_range: DateRange) -> tuple[list[SitemapEntry], list[str]]:
         """The current entries within the range and the failures the pair must report.
@@ -134,7 +137,10 @@ class SitemapCache:
         self._is_article_url = is_article_url
         self._clock = clock
         self._signature = signature(roots)
+        # an asyncio.Lock binds to the loop that first waits on it, and the cache lives as long as
+        # the process: it gets a new lock when the running loop is another one
         self._lock = asyncio.Lock()
+        self._lock_loop: asyncio.AbstractEventLoop | None = None
         self._rows: tuple[SitemapEntry, ...] = ()
         self._rows_of: str | None = None  # `started_at` of the crawl `_rows` was read from
         self.crawls = 0  # crawls started by this object (tests, the log)
@@ -174,6 +180,9 @@ class SitemapCache:
         reports (and is not checkpointed), so one domain cannot stop the others.
         """
         requested = self._clock()
+        loop = asyncio.get_running_loop()
+        if self._lock_loop is not loop:
+            self._lock, self._lock_loop = asyncio.Lock(), loop
         try:
             async with self._lock:
                 now = self._clock()
@@ -220,23 +229,15 @@ class SitemapCache:
                     f"the refresh failed ({reason}) and no complete crawl matches",
                 ),
             )
+        warnings: tuple[str, ...] = ()
         if refresh_failures:
             age = latest.age(now)
-            if age > timedelta(days=FRESH_DAYS):
-                log.warning(
-                    "sitemap refresh of %s failed (%s); using the crawl of %s, %.1f days old",
-                    self.domain,
-                    summarize_failures(refresh_failures),
-                    latest.started_at,
-                    age.total_seconds() / 86400,
-                )
-            else:
-                log.warning(
-                    "sitemap refresh of %s failed (%s); using the crawl of %s",
-                    self.domain,
-                    summarize_failures(refresh_failures),
-                    latest.started_at,
-                )
+            warning = (
+                f"sitemap refresh of {self.domain} failed ({summarize_failures(refresh_failures)}); "
+                f"using the crawl of {latest.started_at}, {age.total_seconds() / 86400:.1f} days old"
+            )
+            log.warning(warning)
+            warnings = (warning,)
         if self._rows_of != latest.started_at:
             # the other process refreshed (or the first run): rebuild from the table
             self._rows = await asyncio.to_thread(self._load, latest.started_at)
@@ -247,7 +248,7 @@ class SitemapCache:
                 len(self._rows),
                 latest.started_at,
             )
-        return SitemapRun(self.domain, latest, (), self._rows)
+        return SitemapRun(self.domain, latest, (), self._rows, warnings)
 
     # ------------------------------------------------------------------
     # The crawl

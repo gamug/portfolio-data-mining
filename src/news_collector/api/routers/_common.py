@@ -198,6 +198,7 @@ async def run_domain_discovery(
                 inserted=inserted,
                 elapsed_seconds=round(time.monotonic() - t0, 3),
                 errors=errors,
+                warnings=list(cache.warnings) if cache else [],
                 start_date=date_range.start,
                 end_date=date_range.end,
             )
