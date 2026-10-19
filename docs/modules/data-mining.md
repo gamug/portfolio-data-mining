@@ -135,6 +135,16 @@ different, any `thesis/data` backup, and the scratch folder) is recorded in
 the manifest's `deletion_step` — every path rooted (absolute or a
 placeholder-rooted absolute), never a relative `rm -rf`.
 
+## The schema version, for the programs that read `urls.db`
+
+`PRAGMA user_version` is stamped by `apply_schema()` (`SCHEMA_VERSION`, 4 since T-069). Every change so far is additive and
+forward-only (a column or a table is added; nothing is renamed or removed), and a change to `discovered_urls` or `articles` is a
+shared-schema change that needs the maintainer's approval (constitution rule 10). A reader should therefore **require a minimum
+and accept anything higher** (an exact match would break on a rollback), check the version at every open, and check the columns it
+selects. The version is **not monotonic**: `rollback_sitemap_cache()` sets 4 back to 3, and an older build started on a version-4 file
+re-stamps 3. The contract is `discovered_urls` and `articles`; `discovery_progress`, `sitemap_entries` and `sitemap_crawls` are
+private to this repository.
+
 ## Engine-agnostic since `portfolio-common` v1.2.1
 
 As of `docs/portfolio-common-v1.2-engine-agnostic.md` (PR #26), no file in

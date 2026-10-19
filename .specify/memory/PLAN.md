@@ -1270,7 +1270,7 @@ environment stays above `.env`, and then, in the `T-066b` design session the sam
 
 ## Work item 15 — Collector: stop the sitemap from multiplying the database by the number of tickers (code + schema + data, `T-068`–`T-074`)
 
-**Status: open (added 2026-10-18; the maintainer chose option B that day and schedules the work); `T-068` measured and designed 2026-10-19; **G1 decided by the maintainer 2026-10-19 (freshness 7 days for every run); `T-068` is closed (PR #88 merged 2026-10-19); `T-069` is written (PR #90, `SCHEMA_VERSION` 4) and waits for G2; nothing is merged or run on the real file before it.** Every gate below (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.**
+**Status: open (added 2026-10-18; the maintainer chose option B that day and schedules the work); `T-068` measured and designed 2026-10-19; **G1 decided by the maintainer 2026-10-19 (freshness 7 days for every run); `T-068` is closed (PR #88 merged 2026-10-19); `T-069` is written (PR #90, `SCHEMA_VERSION` 4) and **G2 is approved (2026-10-19)**; it is merged by the maintainer and the real file moves to version 4 when the services restart.** Every gate below (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.**
 
 **Problem (measured 2026-10-18 on the real database).** The `KLAC` `cnbc.com` discovery of `T-064` step 5 added 578,117 `reject`/`skipped` rows
 (+243 MB, about 420 bytes a row with five indexes; `discovered_urls` 481,334 → 1,059,452 rows, the file 2.27 → 2.51 GB). The cause is the
