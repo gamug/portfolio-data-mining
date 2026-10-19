@@ -6,6 +6,7 @@ import importlib
 import json
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -19,6 +20,10 @@ from news_collector.api.routers import _common, discovery
 from news_collector.api.schemas import DiscoverRequest
 from news_collector.models import DiscoveredURL, DiscoveryStats
 from news_collector.storage.queue import URLQueue
+
+_NO_ROOTS = SimpleNamespace(
+    config=SimpleNamespace(sitemap_roots=[])
+)  # a connector with no sitemap (T-070a: no cache)
 
 
 @pytest.fixture
@@ -146,7 +151,7 @@ async def test_run_domain_discovery_without_db_path_opens_database_url(
 
     monkeypatch.setattr(_common, "_discover_one_ticker", nothing)
     req = DiscoverRequest(tickers=["AAPL"], company_names=["Apple Inc."])
-    await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+    await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
     assert opened == [str(real_db)]
     assert list(Path.cwd().iterdir()) == []
 

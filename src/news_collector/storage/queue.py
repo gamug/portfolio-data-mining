@@ -94,6 +94,10 @@ class URLQueue:
         # Newly inserted matcher-rejected rows of the last `enqueue_batch` call.
         self.last_inserted_rejected = 0
 
+    @property
+    def db_path(self) -> str:
+        return self._db_path
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------

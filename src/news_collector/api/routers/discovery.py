@@ -56,6 +56,7 @@ async def run_all(
         domains=req.domains,
         date_range=date_range,
         resume=req.resume,
+        refresh_sitemaps=req.refresh_sitemaps,
     )
 
     return RunAllResponse(

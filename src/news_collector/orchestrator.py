@@ -20,6 +20,7 @@ from news_collector.connectors.seeking_alpha import SeekingAlphaConnector
 from news_collector.connectors.stocktwits import StockTwitsConnector
 from news_collector.connectors.yahoo_finance import YahooFinanceConnector
 from news_collector.models import Company, DateRange, DiscoveredURL, DiscoveryStats, PartialStats
+from news_collector.sitemap_cache import SitemapCache, shared_cache
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
@@ -78,6 +79,8 @@ class DiscoveryOrchestrator:
         self._domain_sems: dict[str, asyncio.Semaphore] = {
             domain: asyncio.Semaphore(1) for domain in connectors
         }
+        # One sitemap cache per domain with sitemap roots, made by `run` (T-070a).
+        self._caches: dict[str, SitemapCache] = {}
 
     async def run(
         self,
@@ -85,6 +88,7 @@ class DiscoveryOrchestrator:
         domains: Sequence[str] | None = None,
         date_range: DateRange | None = None,
         resume: bool = True,
+        refresh_sitemaps: bool = False,
     ) -> DiscoveryStats:
         """
         Run discovery for all (company, domain) combinations.
@@ -98,6 +102,8 @@ class DiscoveryOrchestrator:
                 discovery_progress checkpoint. Completion is always recorded regardless
                 of this flag — resume only controls whether that record is consulted to
                 skip work. Pass False to force a full redo of every pair.
+            refresh_sitemaps: Crawl the sitemap of every domain that has one even when its
+                cache is fresh (T-070a). Without it a cache at most 7 days old is used.
 
         Returns:
             Aggregated DiscoveryStats.
@@ -151,6 +157,10 @@ class DiscoveryOrchestrator:
             len(all_pairs),
             already_done_pct,
             "" if resume else " (--no-resume passed - redoing everything, not skipped)",
+        )
+
+        await self._prepare_caches(
+            {d for _, d in pending_pairs}, date_range, force=refresh_sitemaps
         )
 
         # Progress is tracked here (not inside _run_one) because only run() knows
@@ -218,6 +228,22 @@ class DiscoveryOrchestrator:
         )
         return stats
 
+    async def _prepare_caches(
+        self, domains: set[str], date_range: DateRange, *, force: bool
+    ) -> None:
+        """The process's sitemap cache of each domain with roots, refreshed once before the pairs
+        run, so the tickers read it instead of crawling (T-070a). A domain with no pending pair is not
+        crawled. A failed refresh is carried to each pair of the domain by the cache."""
+        self._caches = {}
+        for domain in sorted(domains):
+            connector = self._connectors[domain]
+            if not connector.config.sitemap_roots:
+                continue
+            cache = shared_cache(connector, connector._client, self._queue.db_path)
+            assert cache is not None
+            self._caches[domain] = cache
+            await cache.begin(date_range, force=force)
+
     async def _run_one_with_sem(
         self,
         global_sem: asyncio.Semaphore,
@@ -250,7 +276,7 @@ class DiscoveryOrchestrator:
         client = connector._client
 
         ddg_strategy = DDGStrategy(connector, domain_sem)
-        sitemap_strategy = SitemapRSSStrategy(connector, client)
+        sitemap_strategy = SitemapRSSStrategy(connector, client, self._caches.get(domain))
 
         # Run both strategies concurrently
         try:

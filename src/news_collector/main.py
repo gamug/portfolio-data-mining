@@ -119,6 +119,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
             domains=args.domains or None,
             date_range=date_range,
             resume=args.resume,
+            refresh_sitemaps=args.refresh_sitemaps,
         )
 
     # Print summary
@@ -246,6 +247,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="resume",
         action="store_false",
         help="Force a full redo of every (ticker, domain) pair, ignoring the checkpoint.",
+    )
+    disc.add_argument(
+        "--refresh-sitemaps",
+        action="store_true",
+        help=(
+            "Crawl each domain's sitemap even when its cache is at most 7 days old "
+            "(the cache is never narrowed)."
+        ),
     )
     disc.add_argument("--export", help="Export pending URLs to CSV after discovery")
 

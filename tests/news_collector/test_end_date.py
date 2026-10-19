@@ -9,6 +9,7 @@ import logging
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import dotenv
@@ -29,6 +30,11 @@ from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy
 
 FROZEN = date(2026, 10, 18)
+
+
+_NO_ROOTS = SimpleNamespace(
+    config=SimpleNamespace(sitemap_roots=[])
+)  # a connector with no sitemap (T-070a: no cache)
 
 
 class _Now:
@@ -176,7 +182,7 @@ async def test_a_domain_run_echoes_the_range_it_used(
         start_date=date(2026, 1, 1),
         db_path=str(tmp_path / "q.db"),
     )
-    [out] = await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+    [out] = await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
     assert (out.start_date, out.end_date) == (date(2026, 1, 1), FROZEN)
 
 
@@ -193,7 +199,7 @@ async def test_a_failed_ticker_still_echoes_the_range(
         start_date=date(2026, 1, 1),
         db_path=str(tmp_path / "q.db"),
     )
-    [out] = await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+    [out] = await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
     assert out.errors == ["boom"]
     assert (out.start_date, out.end_date) == (date(2026, 1, 1), FROZEN)
 
@@ -206,7 +212,7 @@ async def test_a_domain_run_with_start_after_end_is_a_422() -> None:
         end_date=date(2026, 3, 31),
     )
     with pytest.raises(HTTPException) as exc:
-        await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+        await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
     assert exc.value.status_code == 422
     assert "2026-05-01" in exc.value.detail
 
@@ -364,7 +370,7 @@ async def test_only_a_future_start_date_is_a_422_on_a_domain_run(today: date) ->
         tickers=["AAPL"], company_names=["Apple Inc."], start_date=date(2099, 1, 1)
     )
     with pytest.raises(HTTPException) as exc:
-        await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+        await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
     assert exc.value.status_code == 422
     assert "2099-01-01" in exc.value.detail
 
@@ -404,7 +410,7 @@ async def test_a_bad_start_date_in_the_environment_is_not_a_422_on_a_domain_run(
     monkeypatch.setenv("DISCOVERY_START_DATE", "garbage")
     req = _common.DiscoverRequest(tickers=["AAPL"], company_names=["Apple Inc."])
     with pytest.raises(ValueError, match="garbage"):
-        await _common.run_domain_discovery(req, object(), object(), "cnbc.com")  # type: ignore[arg-type]
+        await _common.run_domain_discovery(req, _NO_ROOTS, object(), "cnbc.com")  # type: ignore[arg-type]
 
 
 # --- resume and duplicates (decision 2) -------------------------------------------------
@@ -436,6 +442,7 @@ def one_url_orchestrator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Dis
 
     class _Conn:
         _client = None
+        config = _NO_ROOTS.config
 
     queue = URLQueue(tmp_path / "resume.db")
     return DiscoveryOrchestrator(connectors={"cnbc.com": _Conn()}, queue=queue, concurrency=1)  # type: ignore[arg-type]

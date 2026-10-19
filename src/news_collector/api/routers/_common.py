@@ -26,6 +26,7 @@ from news_collector.companies import (
 from news_collector.config import InvalidRangeError, build_date_range, default_start_date
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange, DiscoveredURL
+from news_collector.sitemap_cache import SitemapCache, shared_cache
 from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 from news_collector.strategies.sitemap import SitemapRSSStrategy, summarize_failures
@@ -88,6 +89,7 @@ async def _discover_one_ticker(
     client: httpx.AsyncClient,
     date_range: DateRange,
     extra_fetch: Callable | None = None,
+    cache: SitemapCache | None = None,
 ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
     """
     Run DDG + Sitemap for one ticker on a single connector.
@@ -97,7 +99,7 @@ async def _discover_one_ticker(
     """
     domain_sem = asyncio.Semaphore(1)
     ddg_strategy = DDGStrategy(connector, domain_sem)
-    sitemap_strategy = SitemapRSSStrategy(connector, client)
+    sitemap_strategy = SitemapRSSStrategy(connector, client, cache)
     errors: list[str] = []
 
     ddg_task = ddg_strategy.discover(company.name, company.ticker, date_range)
@@ -163,6 +165,9 @@ async def run_domain_discovery(
     companies = await resolve_companies(req, client)
     queue = URLQueue(resolve_db_path(req.db_path))
     queue.initialize()
+    cache = shared_cache(connector, client, queue.db_path)
+    if cache is not None:
+        await cache.begin(date_range, force=req.refresh_sitemaps)
 
     # Bounds how many tickers are discovered in parallel for this single domain —
     # without it, a large tickers[] fans out unbounded (every ticker at once).
@@ -172,7 +177,7 @@ async def run_domain_discovery(
         async with concurrency_sem:
             t0 = time.monotonic()
             ddg_urls, sitemap_urls, api_urls, errors = await _discover_one_ticker(
-                company, connector, client, date_range, extra_fetch
+                company, connector, client, date_range, extra_fetch, cache
             )
 
             all_urls = ddg_urls + sitemap_urls + api_urls

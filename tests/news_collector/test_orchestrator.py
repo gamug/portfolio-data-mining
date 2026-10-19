@@ -5,12 +5,17 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from news_collector.models import Company, DateRange, PartialStats
 from news_collector.orchestrator import DiscoveryOrchestrator
 from news_collector.storage.queue import URLQueue
+
+_NO_ROOTS = SimpleNamespace(
+    config=SimpleNamespace(sitemap_roots=[])
+)  # a connector with no sitemap (T-070a: no cache)
 
 
 @pytest.fixture
@@ -27,7 +32,7 @@ def _orchestrator(queue: URLQueue) -> DiscoveryOrchestrator:
     # _run_one is monkeypatched in each test below, so the connector dict only
     # needs to supply the domain keys the orchestrator iterates over — no real
     # connector instance or network access is required.
-    connectors = {"cnbc.com": object(), "nasdaq.com": object()}
+    connectors = {"cnbc.com": _NO_ROOTS, "nasdaq.com": _NO_ROOTS}
     return DiscoveryOrchestrator(connectors=connectors, queue=queue, concurrency=5)  # type: ignore[arg-type]
 
 
@@ -135,6 +140,7 @@ async def test_run_one_counts_rejected_rows_and_dedupe_keeps_the_higher_class(
 
     class _Conn:
         _client = None
+        config = _NO_ROOTS.config
 
     orch = DiscoveryOrchestrator(connectors={"cnbc.com": _Conn()}, queue=queue, concurrency=1)  # type: ignore[arg-type]
     partial = await orch._run_one(
