@@ -168,10 +168,10 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     db_path = tmp_path / "urls.db"
     db = sqlite3.connect(db_path)
     db.execute(
-        "CREATE TABLE discovered_urls (url TEXT, domain TEXT, source TEXT, discovered_at TEXT, match_class TEXT)"
+        "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, domain TEXT, source TEXT, discovered_at TEXT, match_class TEXT)"
     )
     db.executemany(
-        "INSERT INTO discovered_urls VALUES (?, 'cnbc.com', 'sitemap', '2026-08-10T00:00:00', ?)",
+        "INSERT INTO discovered_urls (url, domain, source, discovered_at, match_class) VALUES (?, 'cnbc.com', 'sitemap', '2026-08-10T00:00:00', ?)",
         [
             ("https://www.cnbc.com/2024/05/01/kla-corporation-q4.html", "accept"),
             ("https://www.cnbc.com/2020/05/01/old-story.html", "review"),
@@ -179,6 +179,8 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
             ("https://www.cnbc.com/2023/01/01/left-the-sitemap-2.html", "reject"),
         ],
     )
+    db.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, fetch_status TEXT)")
+    db.execute("INSERT INTO articles VALUES (1, 'ok')")  # the 2024 row has an `ok` article
     db.commit()
     db.close()
     before = hashlib.sha256(db_path.read_bytes()).hexdigest()
@@ -187,4 +189,6 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "stored and gone 2" in out
     assert "in range today: 1" in out
     assert "left the sitemap: 1" in out
+    assert "(with an `ok` article) with a URL year before 2022: 0 of 1" in out
+    assert "(all) with a URL year before 2022: 1 of 3" in out
     assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
