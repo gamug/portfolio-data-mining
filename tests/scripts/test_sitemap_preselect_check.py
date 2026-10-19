@@ -201,6 +201,7 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     assert "stored and gone 2" in out
     assert "in range today: 1" in out
     assert "left the sitemap: 1" in out
+    assert "crawl article urls not stored: 0" in out
     assert "(with an `ok` article) with a URL year before 2022: 0 of 1" in out
     assert "(all) with a URL year before 2022: 1 of 3" in out
     assert hashlib.sha256(db_path.read_bytes()).hexdigest() == before
@@ -209,3 +210,18 @@ def test_stored_is_read_only(tmp_path: Path, capsys: pytest.CaptureFixture[str])
 def test_timing_is_a_positive_number_of_microseconds() -> None:
     rows = [(e.url, "2024-05-01", None) for e in _base()]
     assert mod.time_matcher(rows, COMPANIES, per_ticker=20, tickers=3) > 0
+
+
+def test_check_takes_an_end_date_and_refuses_a_malformed_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[argparse.Namespace] = []
+    monkeypatch.setattr(mod, "cmd_check", seen.append)
+    monkeypatch.setattr(sys, "argv", ["x", "check", "--entries", "e", "--end", "2025-06-30"])
+    with pytest.raises(SystemExit):  # `main` exits with the command's status
+        mod.main()
+    assert seen[0].end == date(2025, 6, 30)
+    monkeypatch.setattr(sys, "argv", ["x", "check", "--entries", "e", "--end", "30/06/2025"])
+    with pytest.raises(SystemExit) as bad:
+        mod.main()
+    assert bad.value.code == 2  # argparse: invalid date

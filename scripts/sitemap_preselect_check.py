@@ -100,6 +100,9 @@ def entry_text(url: str, title: str | None) -> str:
     return f"{parts.path} {parts.query} {title or ''}"
 
 
+LAST_STORED = date(2026, 8, 13)  # the last day of the stored KLAC run, for `stored`
+
+
 class TokenIndex:
     """`flat()` tokens of the entry text -> row ids; a second index for the title alone.
 
@@ -190,6 +193,13 @@ def in_range(raw: list[SitemapEntry], start: date, end: date | None = None) -> l
     """The date filter of `_parse_sitemap_leaf`: an entry without a `lastmod` is kept."""
     window = build_date_range(start, end)
     return [e for e in raw if e.lastmod is None or window.contains(e.lastmod)]
+
+
+UPSERT = (
+    "INSERT INTO sitemap_entries VALUES ('cnbc.com', ?, ?, ?, '2026-10-19T00:00:00', '2026-10-26T00:00:00') "
+    "ON CONFLICT (domain, url) DO UPDATE SET lastmod = excluded.lastmod, "
+    "title = excluded.title, last_seen = excluded.last_seen"
+)
 
 
 def cache_rows(
@@ -509,12 +519,19 @@ def cmd_cache_size(args: argparse.Namespace) -> None:
                 rows,
             )
             db.commit()
+            began = time.perf_counter()
+            db.executemany(UPSERT, rows)  # the refresh: every entry again, one transaction
+            db.commit()
+            upsert = time.perf_counter() - began
             db.execute("VACUUM")
             db.close()
             size = os.path.getsize(path)
         finally:
             os.remove(path)
-        print(f"{label}: {len(rows)} rows, {size} bytes, {size / len(rows):.0f} bytes a row")
+        print(
+            f"{label}: {len(rows)} rows, {size} bytes, {size / len(rows):.0f} bytes a row; "
+            f"a refresh upserts them all in {upsert:.2f} s"
+        )
 
 
 def duplicate_lastmods(raw: list[SitemapEntry]) -> tuple[int, int, int]:
@@ -596,6 +613,12 @@ def cmd_stored(args: argparse.Namespace) -> None:
         )
     }
     gone = [u for u in stored if u not in lastmod]
+    fresh = [u for u in lastmod if u not in stored]
+    since = [u for u, d in lastmod.items() if d and d > LAST_STORED]
+    print(
+        f"crawl article urls not stored: {len(fresh)}; with a lastmod after {LAST_STORED}: "
+        f"{len(since)} ({len(set(since) - set(fresh))} of them already stored, i.e. re-dated)"
+    )
     print(f"stored distinct urls {len(stored)}, crawl article urls {len(lastmod)}, stored and gone {len(gone)} "
           f"({len(gone) / len(stored):.1%}); stored on {sorted({stored[u][:10] for u in gone})[:4]}")  # fmt: skip
     by_total = collections.Counter(u.split("/")[3] for u in stored)
