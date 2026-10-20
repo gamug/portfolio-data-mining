@@ -466,13 +466,14 @@ def test_compact_with_nothing_committed_leaves_the_file_as_it_was_on_failure(
         raise sqlite3.OperationalError("disk is full")
 
     monkeypatch.setattr(rs, "_write_compact", broken)
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(rs.ReclaimError, match=r"the file is as it was \(disk is full\)"):
         rs.compact(Path(filled), check_processes=False)
     assert not Path(filled + ".compact").exists()
     assert ids_left(filled) == list(range(1, LAST + 1))
     assert hashlib.sha256(Path(filled).read_bytes()).hexdigest() == before
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="no owner on Windows")
 def test_the_swap_keeps_the_mode_bits_and_reports_the_owner(filled: str, tmp_path: Path) -> None:
     os.chmod(filled, 0o640)
     done = rs.reclaim(
@@ -487,6 +488,7 @@ def test_the_swap_keeps_the_mode_bits_and_reports_the_owner(filled: str, tmp_pat
     assert done.owner_kept is True
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid"), reason="no owner on Windows")
 def test_the_owner_that_cannot_be_kept_is_reported(
     filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -642,3 +644,108 @@ async def test_fill_cache_reports_an_incomplete_crawl(
     )
     assert report.complete is False
     assert report.pipeline_unchanged is True
+
+
+# --- the review of PR #95, round 2 --------------------------------------------------------------
+
+
+def test_a_write_between_the_backup_check_and_the_lock_refuses(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup = backup_of(filled, tmp_path)
+    real = rs._open_exclusive
+
+    def writer_first(db_path: Path) -> sqlite3.Connection:
+        other = sqlite3.connect(db_path)  # a program the checks did not see
+        put(other, 11, cls="accept", status="ok")
+        other.commit()
+        other.close()
+        return real(db_path)
+
+    monkeypatch.setattr(rs, "_open_exclusive", writer_first)
+    with pytest.raises(rs.ReclaimError, match="changed after the backup was checked"):
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+    assert ids_left(filled) == [*range(1, LAST + 1), 11]  # nothing deleted
+
+
+def test_an_sqlite_error_before_the_commit_is_a_refusal_that_says_it_rolled_back(
+    filled: str, tmp_path: Path
+) -> None:
+    conn = sqlite3.connect(filled)
+    conn.execute(
+        "CREATE TRIGGER nope BEFORE DELETE ON discovered_urls BEGIN "
+        "SELECT RAISE(ABORT, 'no deletes allowed'); END"
+    )
+    conn.commit()
+    conn.close()
+    backup = backup_of(filled, tmp_path)  # the backup has the trigger too
+
+    with pytest.raises(rs.ReclaimError, match=r"rolled back \(no deletes allowed\)") as err:
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+
+    assert not isinstance(err.value, rs.ReclaimIncomplete)
+    assert ids_left(filled) == list(range(1, LAST + 1))
+
+
+def test_an_unreadable_backup_is_a_refusal_not_a_traceback(filled: str, tmp_path: Path) -> None:
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"this is not a database" * 100)
+    with pytest.raises(rs.ReclaimError, match="cannot be read"):
+        rs.reclaim(Path(filled), junk, data_dir(tmp_path), expect=2, check_processes=False)
+
+
+def _crawl(conn: sqlite3.Connection, domain: str, started: str, entries: int | None) -> None:
+    conn.execute(
+        "INSERT INTO sitemap_crawls (domain, started_at, finished_at, range_start, signature, "
+        "complete, entries, failures) VALUES (?,?,?,'2022-01-01','x',1,?,0)",
+        (domain, started, started, entries),
+    )
+
+
+def test_a_complete_crawl_with_no_entries_is_not_a_filled_cache(db: str) -> None:
+    conn = sqlite3.connect(db)
+    _crawl(conn, "empty.test", "2026-10-20T10:00:00", 0)  # an empty urlset, HTTP 200
+    _crawl(conn, "full.test", "2026-10-20T10:00:00", 5)
+    _crawl(conn, "turned-empty.test", "2026-10-01T10:00:00", 5)
+    _crawl(conn, "turned-empty.test", "2026-10-20T10:00:00", 0)  # the latest one decides
+    conn.commit()
+    assert rs.cache_domains(conn) == ["full.test"]
+    conn.close()
+
+
+def test_an_empty_cache_deletes_nothing(db: str, tmp_path: Path) -> None:
+    conn = sqlite3.connect(db)
+    put(conn, 1)
+    _crawl(conn, DOMAIN, "2026-10-20T10:00:00", 0)
+    conn.commit()
+    conn.close()
+    with pytest.raises(rs.ReclaimError, match="names 1 rows, 0 qualify"):
+        rs.reclaim(
+            Path(db), backup_of(db, tmp_path), data_dir(tmp_path), expect=1, check_processes=False
+        )
+    assert ids_left(db) == [1]
+
+
+def test_compact_wants_a_backup_that_exists_and_passes_quick_check(
+    filled: str, tmp_path: Path
+) -> None:
+    with pytest.raises(rs.ReclaimError, match="no backup at"):
+        rs.compact(Path(filled), backup=tmp_path / "none.db", check_processes=False)
+    with pytest.raises(rs.ReclaimError, match="itself"):
+        rs.compact(Path(filled), backup=Path(filled), check_processes=False)
+    junk = tmp_path / "junk.db"
+    junk.write_bytes(b"x" * 5000)
+    with pytest.raises(rs.ReclaimError, match=r"cannot be read|fails quick_check"):
+        rs.compact(Path(filled), backup=junk, check_processes=False)
+    done = rs.compact(Path(filled), backup=backup_of(filled, tmp_path), check_processes=False)
+    assert done.after.discovered == LAST  # nothing deleted; the backup need not match
+
+
+def test_a_sample_file_without_an_id_column_or_with_a_bad_id_is_refused(tmp_path: Path) -> None:
+    folder = data_dir(tmp_path, 3)
+    (folder / "ticker_z_sample.csv").write_text("ID,url\n5,u\n")  # the wrong header
+    with pytest.raises(rs.ReclaimError, match=r"ticker_z_sample.csv has no id column"):
+        rs.kept_ids(folder)
+    (folder / "ticker_z_sample.csv").write_text("id,url\n5.0,u\n")
+    with pytest.raises(rs.ReclaimError, match="not a number"):
+        rs.kept_ids(folder)

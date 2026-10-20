@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -125,3 +125,49 @@ async def test_fill_needs_a_backup_and_the_flag_on_the_real_file(
     ns.db = str(tmp_path / "urls.db")
     assert await fill_cli.run(ns) == 1  # a file called urls.db is not a rehearsal copy
     assert "looks like the real database" in capsys.readouterr().out
+
+
+def evidence_args(accepted: int | None) -> argparse.Namespace:
+    return argparse.Namespace(
+        db="x.db", tickers=["A"], sample=0, seed=0, start_date=None, end_date=None,
+        expect_now_rejected=accepted if accepted is not None else 0,
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("found", "accepted", "code"), [(0, 0, 0), (17, 17, 0), (18, 17, 1), (17, 0, 1)]
+)
+async def test_evidence_exits_0_only_for_the_accepted_number_of_now_rejected_pairs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    found: int,
+    accepted: int,
+    code: int,
+) -> None:
+    pairs = [("ON", f"https://x/{i}", "reject") for i in range(found)]
+    fake = SimpleNamespace(proof=SimpleNamespace(rejected_now=pairs))
+
+    async def gather(*_a: object, **_k: object) -> SimpleNamespace:
+        return fake
+
+    monkeypatch.setattr(reclaim_cli, "gather_evidence", gather)
+    monkeypatch.setattr(reclaim_cli, "format_evidence", lambda *_a: "")
+    monkeypatch.setattr(reclaim_cli, "build_date_range", lambda *_a: None)
+
+    assert await reclaim_cli.cmd_evidence(evidence_args(accepted)) == code
+    assert (
+        f"Now-rejected pairs: {found} (the maintainer accepted {accepted})"
+        in capsys.readouterr().out
+    )
+
+
+def test_compact_on_the_real_file_needs_a_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def must_not_run(*_a: object, **_k: object) -> None:
+        raise AssertionError("compact ran")
+
+    monkeypatch.setattr(reclaim_cli, "compact", must_not_run)
+    ns = argparse.Namespace(db=str(tmp_path / "x.db"), g3=True, rehearsal=False, backup=None)
+    assert reclaim_cli.cmd_compact(ns) == 1
+    assert "needs --backup" in capsys.readouterr().out
