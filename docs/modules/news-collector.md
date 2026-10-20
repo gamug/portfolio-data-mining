@@ -719,14 +719,14 @@ so it stays at schema version 4 until a service starts on the merged code (the v
    EOF
    ```
 3. **Fill the cache** (writes only `sitemap_entries` and `sitemap_crawls`; the backup is verified against the file first):
-   `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Expect
+   `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Takes about 15 minutes on the thesis disk (the backup is verified first: two `quick_check` passes, then the crawl and the fingerprints; 19:02 to about 19:17 UTC on 2026-10-20). Expect
    `Crawl: made now` (about 14 requests to cnbc.com: the `sitemapAll.xml` index and its 13 children on 2026-10-20), about 109,000 entries, `Pipeline tables: unchanged`, exit 0. An INCOMPLETE crawl exits 1 and leaves the cache empty (the same
    command may be run again; a complete, fresh crawl is reused).
 4. **Evidence on the real file** (read-only): `... reclaim_sitemap_rejects.py evidence --db $DB --expect-now-rejected 17`. G3 judges **these** numbers, not the
    rehearsal's: qualifying rows (`N`), the split, the proof, the protected ids. The 17 stored pairs the matcher now rejects are the ones the maintainer accepted
    (2026-10-20): `--expect-now-rejected 17` makes the exit status 0 for exactly 17 and 1 for any other count, so a different set is never read as the accepted one.
 5. **Reclaim**, only with the maintainer's approval of `N`: `... reclaim_sitemap_rejects.py reclaim --db $DB --backup $BK --expect N --expect-kept 593
-   --i-have-the-g3-approval`. About a minute plus the compaction.
+   --i-have-the-g3-approval`. **About 25 minutes on the thesis disk** (five `quick_check` passes; 1,497 s on 2026-10-20; about a minute on a copy in `/tmp`).
 6. **Check by hand**, read-only: `discovered_urls` is the old count minus `N`, `articles` unchanged, `PRAGMA quick_check` ok, `user_version` still 4, the
    file's header bytes 18-19 are `02 02` (WAL). On the thesis machine `urls.db` is owned by `root` (mode 0777, in a folder everyone can write) and the tool runs as
    `vscode`, so `reclaim` prints the owner WARNING even on success: that is expected there and needs no fix, the services run as `vscode`. Then **restart** the
@@ -764,9 +764,10 @@ file size plus 512 MiB (`WAL_HEADROOM`). The ordinary copy of the 2.5 GB file to
 | `fill_sitemap_cache.py` on the real file | 109,550 entries (complete, 0 failures, range from 2022-01-01); the pipeline tables unchanged |
 | `evidence` on the real file | qualifying **578,113** (`cnbc.com`), 593 protected ids remove 0, in the cache 109,452, before the range 468,661, left the sitemap 0; the proof gave the same 5,254 / 14,595 / 17 as the rehearsals (`--expect-now-rejected 17`: exit 0) |
 | `reclaim --expect 578113 --expect-kept 593 --i-have-the-g3-approval` | deleted 578,113; `discovered_urls` 1,059,452 → **481,339**; `articles` 481,332 unchanged, 0 orphans; `accept` 104,614 and `review` 51,746 unchanged; rejects 903,092 → 324,979; file 2,570,055,680 → **2,289,635,328** bytes (280 MB); WAL peak 299,037,872 bytes; `Final check` ok; exit 0 |
+| the `--revert` list of the `T-062` run | `data/retag/reclass_promoted.csv`, 448 ids: all 448 rows are still present as `review` after the reclaim (and were in the backup): a `--revert` still finds every row it needs (checked 2026-10-20) |
 | after | `quick_check` ok on the file in place (238 s); WAL mode; the backup untouched; the cache (109,550 entries) intact; the owner is now `vscode` (it was `root`, mode 0777 kept): the expected WARNING |
 
-It took **25 minutes (1,497 s)** on the thesis disk, against 38 s on the copies in `/tmp`: `reclaim` makes five `quick_check` passes (the live file, the backup, the file under the lock, after the delete, the compacted file) and each one reads 2.5 GB at the speed of that disk. The lock is held through all of it, nothing is written before the delete, and the first sign of progress is the `-wal` growing to about 299 MB (the delete) and then `urls.db.compact` appearing. Plan for half an hour.
+The space freed, 280 MB, is above the 243 MB the task expected (the growth of the `KLAC` run, 2.27 → 2.51 GB, which is what the rows cost when they were added); the 37 MB difference was not measured, and compaction also releasing free pages is the likely cause. It took **25 minutes (1,497 s)** on the thesis disk, against 38 s on the copies in `/tmp`: `reclaim` makes five `quick_check` passes (the live file, the backup, the file under the lock, after the delete, the compacted file) and each one reads 2.5 GB at the speed of that disk. The lock is held through all of it, nothing is written before the delete, and the first sign of progress is the `-wal` growing to about 299 MB (the delete) and then `urls.db.compact` appearing. Plan for half an hour.
 
 **The proof that the cache re-derives the stored `accept`/`review` pairs** (20 tickers: `KLAC AAPL ON A IT ARE TTD MSFT NVDA CRM` and 10 seeded at
 random): 19,866 stored `sitemap` `accept`/`review` pairs; **5,254 are in the cache and re-derived**; 14,595 are not in the cache (13,686 before the range,
