@@ -183,6 +183,8 @@ T-071 is merged**.
   as in the failed-refresh cases above. The failed attempt is a `sitemap_crawls` row with `complete = 0`; every refresh, complete or not,
   deletes crawl rows older than 90 days except the latest complete one. A gateway whose source recovers inside the window keeps failing
   that domain until the window ends or the call is forced; a separate CLI run is a new process and is not affected.
+  The setting is read once, when the process makes the domain's cache, so **a running gateway needs a restart to see a new
+  `SITEMAP_RETRY_MINUTES`**; each CLI run reads it afresh.
 - **The run summary names an unusable domain once**, with the number of pairs it left undone (`cnbc.com: sitemap cache of ... does not cover ...
   (503 pairs not checkpointed)`), not once per ticker; every pair of the domain is still not checkpointed.
 - **Warnings:** when the refresh failed and the run went on with the cache (cases a and b), the run says so: `Warnings` in the CLI
