@@ -645,4 +645,4 @@ random): 19,866 stored `sitemap` `accept`/`review` pairs; **5,254 are in the cac
 current matcher** (`ON`, `A`, `GL`, `ALL`: market-wrap slugs such as `stocks-making-the-biggest-moves-midday-…-on-…`, where the ticker is an English word;
 stored `accept`/`review` on 2026-08-10 to 12 by the matcher of that day). The plan's pass condition says "0 in-range pairs missing". Read literally it is **not
 met by 17 pairs**; it is a change of the matcher, not a loss of the cache (the URL is in the cache and `reclass-sitemap` sees it), and `reclaim` never
-touches an `accept`/`review` row. Whether that satisfies G3 is the maintainer's call.
+touches an `accept`/`review` row. **Decided by the maintainer 2026-10-20: the 17 pairs count as passing the proof** (a matcher change, not a cache loss); the 17 rows stay stored as they are.
