@@ -166,6 +166,7 @@ class ReclassTickerOut(BaseModel):
     would_promote: int = 0
     inserted: int = 0
     promoted: int = 0
+    lifted: int = Field(default=0, description="Promoted rows that went from skipped to pending.")
 
 
 class ReclassResponse(BaseModel):
@@ -180,6 +181,7 @@ class ReclassResponse(BaseModel):
     would_promote: int
     inserted: int
     promoted: int
+    lifted: int
     errors: list[str]
     elapsed_seconds: float
     start_date: date = Field(description="Inclusive start of the range this run used.")

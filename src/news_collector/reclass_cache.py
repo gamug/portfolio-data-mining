@@ -134,6 +134,9 @@ async def reclass_from_cache(
     """
     began = time.monotonic()
     report = ReclassReport(applied=apply)
+    if not Path(db_path).is_file():  # a connection would create an empty file at a mistyped path
+        report.errors.append(f"{db_path}: no such database (nothing was created)")
+        return report
     wanted = (
         list(domains) if domains else [d for d, c in connectors.items() if c.config.sitemap_roots]
     )
@@ -164,7 +167,22 @@ async def reclass_from_cache(
                 len(run.rows),
             )
             for company in companies:
-                result = await _one(queue, connector, run, company, date_range, apply)
+                try:
+                    result = await _one(queue, connector, run, company, date_range, apply)
+                except sqlite3.Error as exc:  # a file without the queue tables, or a lock
+                    report.errors.append(f"{domain} {company.ticker}: database error: {exc}")
+                    continue
+                log.info(
+                    "re-class %s %s: %d entries, %s, new %d, promotable %d, inserted %d, promoted %d",
+                    domain,
+                    company.ticker,
+                    result.entries,
+                    dict(result.classes),
+                    result.new,
+                    result.promotable,
+                    result.inserted,
+                    result.promoted,
+                )
                 report.results.append(result)
                 if progress is not None:
                     progress(result)

@@ -219,9 +219,10 @@ class SitemapCache:
         Concurrent callers wait on the lock and find the crawl the first one made; a forced call
         is satisfied by any crawl that started after the call was made, so two forced requests
         make one crawl. With `allow_crawl=False` it only reads: the latest complete crawl is used
-        if it covers the range and matches the roots, whatever its age, and nothing is fetched (the
-        re-class from the cache, T-072). It never raises: a database error is a failure every pair of the run
-        reports (and is not checkpointed), so one domain cannot stop the others.
+        if it covers the range and matches the roots, whatever its age, and nothing is fetched
+        (the re-class from the cache, T-072). It never raises: a database error is a failure
+        every pair of the run reports (and is not checkpointed), so one domain cannot stop the
+        others.
         """
         requested = self._clock()
         loop = asyncio.get_running_loop()

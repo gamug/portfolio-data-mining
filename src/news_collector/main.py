@@ -196,6 +196,7 @@ async def cmd_reclass_sitemap(args: argparse.Namespace) -> int:
                 progress=lambda _result: bar.update(1),
             )
         finally:
+            bar.total = bar.n  # a domain without a cache skips its pairs: the bar ends where it got
             bar.close()
     classes = report.classes()
     print("\n=== Re-class of the sitemap cache ===")

@@ -28,6 +28,9 @@ from news_collector.storage.queue import URLQueue
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
 
+# About 4 minutes of classification for `cnbc.com` at 4.6 s a ticker.
+MAX_RECLASS_TICKERS = 50
+
 
 @router.post("/run-all", response_model=RunAllResponse)
 async def run_all(
@@ -97,6 +100,7 @@ def _reclass_response(report: ReclassReport, date_range) -> ReclassResponse:  # 
                 would_promote=r.promotable,
                 inserted=r.inserted,
                 promoted=r.promoted,
+                lifted=r.lifted,
             )
             for r in report.results
         ],
@@ -107,6 +111,7 @@ def _reclass_response(report: ReclassReport, date_range) -> ReclassResponse:  # 
         would_promote=report.total("promotable"),
         inserted=report.total("inserted"),
         promoted=report.total("promoted"),
+        lifted=report.total("lifted"),
         errors=report.errors,
         elapsed_seconds=round(report.elapsed_seconds, 3),
         start_date=date_range.start,
@@ -123,11 +128,21 @@ async def reclass_sitemap(
     Class the sitemap cache again with the current matcher, with no network (T-072).
 
     Reads the current entries of each domain's cache (the latest complete crawl), classes them
-    for the requested tickers (all of the S&P 500 when `tickers` is omitted) and, with
-    `apply=true`, enqueues the pairs that are now accept/review, promote-only. The default is a
-    dry run that writes nothing. A domain with no complete crawl that covers the range is an
-    error line: this route never crawls (use a discovery with `refresh_sitemaps` for that).
+    for the requested tickers and, with `apply=true`, enqueues the pairs that are now
+    accept/review, promote-only. The default is a dry run that writes nothing. A domain with no
+    complete crawl that covers the range is an error line: this route never crawls (use a
+    discovery with `refresh_sitemaps` for that).
+
+    `tickers` is required and at most `MAX_RECLASS_TICKERS`: the classification takes about
+    4.6 s a ticker for `cnbc.com` and this request has no progress and cannot be stopped, and an
+    `apply` writes from the gateway process while collectors may be writing. The whole S&P 500 is
+    the CLI's job (`reclass-sitemap`, with a progress bar).
     """
+    if not req.tickers or len(req.tickers) > MAX_RECLASS_TICKERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"tickers is required, at most {MAX_RECLASS_TICKERS} (the CLI re-classes more)",
+        )
     try:
         date_range = build_date_range(req.start_date, req.end_date)
     except InvalidRangeError as exc:

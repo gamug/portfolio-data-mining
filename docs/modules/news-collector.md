@@ -515,6 +515,11 @@ still holds (with its label) and replaces only the others, which a person then l
 
 ## Re-class from the sitemap cache (T-072)
 
+A path that is not an existing file is an error line and nothing is created, in a dry run and with `--apply`. `--apply`
+opens the queue like a collector does, so on a file below schema version 4 it runs the migration: on the real
+`urls.db` that is behind the gate and backup rules of `T-073`, and a collector or the gateway may be writing at the
+same time (the writes are batches of 5,000 pairs, promote-only).
+
 `T-071` stops storing the sitemap pairs the matcher rejects, so a later matcher change cannot promote what was never
 stored. `reclass-sitemap` is the way back: it classes the cached entries again with the current matcher, **with no network
 and no crawl**, and enqueues the pairs that are now `accept`/`review` through the same promote-only `enqueue_batch`.
@@ -526,6 +531,8 @@ uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv       
 # write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
 uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 # the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
+#   the route needs `tickers` (at most 50: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
+#   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
 ```
 
 - **Current entries only.** It reads the entries the latest complete crawl saw: an entry that left the sitemap (expired) is not

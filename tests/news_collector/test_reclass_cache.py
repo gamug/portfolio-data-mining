@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sitemap_helpers import RANGE, ROOT, START, Clock, Site, leaf
+from sitemap_helpers import RANGE, ROOT, START, Clock, Site, cnbc_strategy, leaf, seen
 
 from data_mining.matching import Match
 from news_collector import main as collector_main
@@ -217,6 +217,44 @@ async def test_a_domain_with_no_complete_crawl_is_an_error_and_nothing_is_writte
     assert stored(db) == []
 
 
+async def test_a_dry_run_on_a_missing_path_creates_nothing(tmp_path: Path) -> None:
+    missing = tmp_path / "typo.db"
+    for apply in (False, True):
+        report = await run(str(missing), connector(), apply=apply)
+        assert report.results == []
+        assert "no such database" in report.errors[0]
+        assert not missing.exists()
+
+
+async def test_a_file_without_the_queue_tables_is_an_error_line_not_a_crash(
+    db: str, site: Site
+) -> None:
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    raw = sqlite3.connect(db)
+    raw.execute("DROP TABLE discovered_urls")
+    raw.commit()
+    raw.close()
+    report = await run(db, conn, apply=False)
+    assert report.results == []
+    assert "database error" in report.errors[0]
+    assert "AAPL" in report.errors[0]
+
+
+async def test_classify_entries_gives_the_pairs_discover_builds_from_the_cache(
+    db: str, site: Site
+) -> None:
+    conn = connector()
+    cache = SitemapCache(DOMAIN, [ROOT], db, site.fetch, conn.is_article_url, Clock())
+    sitemap_run = await cache.begin(RANGE, force=True)
+    strategy = cnbc_strategy(site, sitemap_run)
+    entries, _ = sitemap_run.entries(RANGE)
+    discovered = await strategy.discover(APPLE.name, APPLE.ticker, RANGE)
+    classified = strategy.classify_entries(entries, APPLE.name, APPLE.ticker)
+    assert seen(discovered) == seen(classified)  # every class, `reject` included (until T-071)
+    assert {p.match_class for p in classified} == {"accept", "reject"}
+
+
 async def test_a_range_wider_than_the_cache_is_an_error(db: str, site: Site) -> None:
     conn = connector()
     cache = SitemapCache(DOMAIN, [ROOT], db, site.fetch, conn.is_article_url, Clock())
@@ -353,6 +391,7 @@ async def test_the_route_is_a_dry_run_by_default_and_apply_writes(
     done = http.post("/discovery/reclass-sitemap", json={**body, "apply": True}).json()
     assert (done["applied"], done["inserted"], done["would_insert"]) == (True, TWO, 0)
     assert done["tickers"][0]["ticker"] == "AAPL"
+    assert done["lifted"] == 0 == done["tickers"][0]["lifted"]
     assert len(stored(db)) == TWO
     again = http.post("/discovery/reclass-sitemap", json={**body, "apply": True}).json()
     assert (again["inserted"], again["promoted"]) == (0, 0)
@@ -381,3 +420,15 @@ def test_the_route_reports_a_domain_without_a_cache_as_an_error(
     assert res.status_code == 200
     assert "does not cover" in res.json()["errors"][0]
     assert cast(list, res.json()["tickers"]) == []
+
+
+def test_the_route_needs_tickers_and_caps_them(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    app = FastAPI()
+    app.include_router(discovery.router)
+    app.dependency_overrides[get_client] = object
+    http = TestClient(app)
+    none = http.post("/discovery/reclass-sitemap", json={"db_path": db})
+    assert none.status_code == 422
+    many = [f"T{i}" for i in range(discovery.MAX_RECLASS_TICKERS + 1)]
+    over = http.post("/discovery/reclass-sitemap", json={"tickers": many, "db_path": db})
+    assert over.status_code == 422
