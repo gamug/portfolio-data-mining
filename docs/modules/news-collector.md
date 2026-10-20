@@ -719,7 +719,7 @@ so it stays at schema version 4 until a service starts on the merged code (the v
    EOF
    ```
 3. **Fill the cache** (writes only `sitemap_entries` and `sitemap_crawls`; the backup is verified against the file first):
-   `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Takes about 15 minutes on the thesis disk (the backup is verified first: two `quick_check` passes, then the crawl and the fingerprints; 19:02 to about 19:17 UTC on 2026-10-20). Expect
+   `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Takes about 18 minutes on the thesis disk (the backup is verified first: two `quick_check` passes, then the crawl and the fingerprints; 19:02 to about 19:20 UTC on 2026-10-20, and `urls.db` is first written about 14 minutes in, so no change in the file does not mean it is stuck). Expect
    `Crawl: made now` (about 14 requests to cnbc.com: the `sitemapAll.xml` index and its 13 children on 2026-10-20), about 109,000 entries, `Pipeline tables: unchanged`, exit 0. An INCOMPLETE crawl exits 1 and leaves the cache empty (the same
    command may be run again; a complete, fresh crawl is reused).
 4. **Evidence on the real file** (read-only): `... reclaim_sitemap_rejects.py evidence --db $DB --expect-now-rejected 17`. G3 judges **these** numbers, not the
