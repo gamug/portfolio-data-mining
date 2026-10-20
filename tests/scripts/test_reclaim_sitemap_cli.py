@@ -44,8 +44,7 @@ def args(
 def real_is_elsewhere(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """`DATABASE_URL` names a file in the temp dir, as on the maintainer's machine it names the real one."""
     real = tmp_path / "somewhere" / "the-real.db"
-    for mod in (reclaim_cli, fill_cli):
-        monkeypatch.setattr(mod, "resolve_db_path", lambda _x, real=real: str(real))
+    monkeypatch.setattr(rs, "resolve_db_path", lambda _x: str(real))
     return real
 
 
@@ -63,9 +62,9 @@ def test_the_real_file_is_never_a_rehearsal_copy(tmp_path: Path, real_is_elsewhe
         str(real_is_elsewhere),
     ):  # called urls.db, or the one DATABASE_URL names
         path = tmp_path / name if name == "urls.db" else Path(name)
-        assert reclaim_cli.looks_real(path) is True
+        assert rs.looks_real(path) is True
         assert reclaim_cli.gate(args(str(path), rehearsal=True)) is None
-        assert fill_cli.looks_real(path) is True
+        assert rs.looks_real(path) is True
     # the real file given by its path, as the maintainer types it, runs every guard
     assert reclaim_cli.gate(args("/workspaces/thesis/data/urls.db", g3=True)) is True
 
@@ -124,16 +123,16 @@ async def test_fill_needs_a_backup_and_the_flag_on_the_real_file(
         force=False, start_date=None, end_date=None,
     )  # fmt: skip
     assert await fill_cli.run(ns) == 1  # --i-have-the-g3-approval without --backup
-    assert "needs --backup and --i-have-the-g3-approval" in capsys.readouterr().out
+    assert "needs --backup" in capsys.readouterr().out
     ns.g3, ns.rehearsal_copy = False, True
     ns.db = str(tmp_path / "urls.db")
     assert await fill_cli.run(ns) == 1  # a file called urls.db is not a rehearsal copy
     assert "looks like the real database" in capsys.readouterr().out
 
 
-def evidence_args(accepted: int | None) -> argparse.Namespace:
+def evidence_args(accepted: int | None, db: str = "x.db") -> argparse.Namespace:
     return argparse.Namespace(
-        db="x.db", tickers=["A"], sample=0, seed=0, start_date=None, end_date=None,
+        db=db, tickers=["A"], sample=0, seed=0, start_date=None, end_date=None,
         expect_now_rejected=accepted if accepted is not None else 0,
     )  # fmt: skip
 
@@ -142,6 +141,7 @@ def evidence_args(accepted: int | None) -> argparse.Namespace:
     ("found", "accepted", "code"), [(0, 0, 0), (17, 17, 0), (18, 17, 1), (17, 0, 1)]
 )
 async def test_evidence_exits_0_only_for_the_accepted_number_of_now_rejected_pairs(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     found: int,
@@ -158,7 +158,9 @@ async def test_evidence_exits_0_only_for_the_accepted_number_of_now_rejected_pai
     monkeypatch.setattr(reclaim_cli, "format_evidence", lambda *_a: "")
     monkeypatch.setattr(reclaim_cli, "build_date_range", lambda *_a: None)
 
-    assert await reclaim_cli.cmd_evidence(evidence_args(accepted)) == code
+    db = tmp_path / "e.db"
+    db.write_bytes(b"")  # the file must exist: a missing one is refused before anything runs
+    assert await reclaim_cli.cmd_evidence(evidence_args(accepted, str(db))) == code
     assert (
         f"Now-rejected pairs: {found} (the maintainer accepted {accepted})"
         in capsys.readouterr().out
@@ -230,7 +232,9 @@ def test_a_successful_compact_prints_and_exits_0_and_a_refused_one_says_the_file
 
     monkeypatch.setattr(reclaim_cli, "compact", refused)
     assert reclaim_cli.cmd_compact(ns) == 1
-    assert "REFUSED, the file is as it was" in capsys.readouterr().out
+    assert (
+        "REFUSED, nothing changed: the file is as it was (disk is full)" in capsys.readouterr().out
+    )
 
 
 def fill_args(tmp_path: Path) -> argparse.Namespace:
@@ -278,3 +282,52 @@ async def test_an_incomplete_fill_exits_1_and_a_changed_pipeline_is_said(
     assert "child 3 failed" in out
     assert "Pipeline tables  : CHANGED" in out
     assert "INCOMPLETE: the cache is not usable" in out
+
+
+# --- review round 5: one gate for the three commands, a mistyped --db is a refusal ----------------
+
+
+@pytest.mark.parametrize(("g3", "rehearsal"), [(True, True), (False, False)])
+async def test_fill_reads_the_two_flags_like_reclaim_and_compact(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], g3: bool, rehearsal: bool
+) -> None:
+    ns = fill_args(tmp_path)
+    ns.g3, ns.rehearsal_copy, ns.backup = g3, rehearsal, "b.db"
+    assert await fill_cli.run(ns) == 1
+    assert "REFUSED, nothing changed: give exactly one of" in capsys.readouterr().out
+    other = args(str(tmp_path / "x.db"), g3=g3, rehearsal=rehearsal)  # the same pair, reclaim
+    assert reclaim_cli.gate(other) is None
+    assert "give exactly one of" in capsys.readouterr().out
+
+
+def test_the_three_commands_refuse_a_database_that_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nope.db"
+    here = tmp_path  # a directory is not a database either
+    for target in (missing, here):
+        with pytest.raises(rs.ReclaimError, match="no database at"):
+            rs.reclaim(target, Path("b.db"), tmp_path, expect=1, check_processes=False)
+        with pytest.raises(rs.ReclaimError, match="no database at"):
+            rs.compact(target, check_processes=False)
+        assert reclaim_cli.cmd_reclaim(args(str(target), rehearsal=True)) == 1
+        assert "REFUSED, nothing changed: no database at" in capsys.readouterr().out
+        assert reclaim_cli.cmd_compact(args(str(target), rehearsal=True)) == 1
+        assert "REFUSED, nothing changed: no database at" in capsys.readouterr().out
+    assert not missing.exists()  # nothing was created
+
+
+async def test_evidence_on_a_missing_database_is_a_refusal_before_anything_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def must_not_run(*_a: object, **_k: object) -> None:
+        raise AssertionError("evidence ran")
+
+    monkeypatch.setattr(reclaim_cli, "gather_evidence", must_not_run)
+    ns = evidence_args(0)
+    ns.db = str(tmp_path / "nope.db")
+    assert await reclaim_cli.cmd_evidence(ns) == 1
+    assert "REFUSED, nothing changed: no database at" in capsys.readouterr().out
+    assert not (tmp_path / "nope.db").exists()
+    with pytest.raises(rs.ReclaimError, match="no database at"):
+        await rs.gather_evidence(str(tmp_path / "nope.db"), {}, tmp_path, None, [])  # type: ignore[arg-type]

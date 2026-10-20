@@ -20,6 +20,7 @@ from news_collector.models import DateRange
 from news_collector.reclaim_sitemap import (
     Fingerprint,
     ReclaimError,
+    check_database,
     fingerprint,
     verify_backup,
 )
@@ -84,8 +85,7 @@ async def fill_cache(
     Raises `ReclaimError` before any write when the file, the backup or the connector is unusable.
     """
     db_path = Path(db_path)
-    if not db_path.is_file():
-        raise ReclaimError(f"no database at {db_path}")
+    check_database(db_path)
     if not connector.config.sitemap_roots:
         raise ReclaimError(f"{connector.config.domain} has no sitemap roots")
     _require_cache_tables(db_path)
