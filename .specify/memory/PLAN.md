@@ -1354,14 +1354,14 @@ so a full run of the 503 tickers would have added about 503 × 578,000 ≈ 290 m
       signature TEXT NOT NULL,
       entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
   );
-  CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
   -- the latest-complete-crawl lookup orders by started_at (T-070b) and is served by the primary key
-  -- (domain, started_at): this index is no longer used by the code; dropping it is a schema change (G2), not made
+  -- (domain, started_at). Version 4 also created ix_sitemap_crawls_latest (domain, complete, finished_at), which no
+  -- query uses: dropped in schema version 5 (T-073, decided by the maintainer 2026-10-20), `DROP INDEX IF EXISTS` in run_migrations()
   CREATE INDEX ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at) WHERE finished_at IS NULL;
   -- rollback (the indexes go with their tables):
   DROP TABLE sitemap_crawls; DROP TABLE sitemap_entries;
   ```
-  **Formats** (compared as strings by the design; written in the DDL's comment too): `lastmod` is an ISO date `YYYY-MM-DD` (NULL when the sitemap has none); `started_at`, `finished_at`, `first_seen`, `last_seen` are UTC ISO-8601 with microseconds and no offset (`2026-10-19T10:00:00.000000`), `range_start` a date; `last_seen` equals the `started_at` of the crawl that saw the entry (not enforced by the schema); `complete` is 0 or 1 (a `CHECK`). `rollback_sitemap_cache` refuses a database that is not at schema version 4.
+  **Formats** (compared as strings by the design; written in the DDL's comment too): `lastmod` is an ISO date `YYYY-MM-DD` (NULL when the sitemap has none); `started_at`, `finished_at`, `first_seen`, `last_seen` are UTC ISO-8601 with microseconds and no offset (`2026-10-19T10:00:00.000000`), `range_start` a date; `last_seen` equals the `started_at` of the crawl that saw the entry (not enforced by the schema); `complete` is 0 or 1 (a `CHECK`). `rollback_sitemap_cache` refuses a database that is not at the current schema version (5 since T-073).
   **Retention of `sitemap_crawls`:** the refresh deletes the rows older than 90 days except the latest complete one of each domain, in the same purge as the entries; `sitemap_entries` is purged by `last_seen` older than 90 days.
 - **Size, measured on a built database** (`cache-size`, with the index, after `VACUUM`): **in range only, 109,493 rows, 32.7 MB (299 bytes a row)**; all dates, 578,156 rows, 165.6 MB (286 bytes a row). `cnbc` has no titles, so those rows carry a `NULL` title; **with a 70-character title each, the in-range rows are 374 bytes, 41.0 MB**, which is what a domain with `news:title` costs. **Proposal: store the in-range entries only** (`lastmod >= range_start` or no `lastmod`; the cache has no end column: **the run's end is applied when the candidates are read** (`lastmod <= end`, an entry without a `lastmod` kept), exactly as `_parse_sitemap_leaf` filters with `date_range.contains` today; the script proves it with `check --end` and a test). A crawl is 10 s, so extending the start date re-crawls.
 - The token index is not stored (a rebuild is 1.6 s). **Memory** (`cache-size`, in range, no titles): the rows as Python tuples about 28 MB and the token index about 21 MB (33,843 tokens), so **about 49 MB a domain a process**, in the gateway as well; a domain with titles adds about 70 bytes of text a row plus its title tokens, so tens of MB, not hundreds; the all-dates cache would be about five times that, one more reason for in-range only.

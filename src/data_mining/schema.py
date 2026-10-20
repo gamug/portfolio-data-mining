@@ -20,7 +20,7 @@ Query functions (the only SQL text for this database's schema lives here):
 
 from portfolio_common.db import Database
 
-SCHEMA_VERSION = 4  # 2: discovered_urls match_class/match_reason/query (T-056b); 3: articles.prev_fetch_status (T-057); 4: sitemap cache (T-069)
+SCHEMA_VERSION = 5  # 2: discovered_urls match_class/match_reason/query (T-056b); 3: articles.prev_fetch_status (T-057); 4: sitemap cache (T-069); 5: unused cache index dropped (T-073)
 
 # `{autoincrement_pk}` is filled in from the engine's dialect by
 # `apply_schema` (str.replace); everything else is standard SQL.
@@ -101,8 +101,9 @@ CREATE TABLE IF NOT EXISTS articles (
 #
 # Queries (their SQL is in `news_collector.sitemap_cache`, and a test runs it on this schema): the
 # latest complete crawl is found by the primary key `(domain, started_at)`, already in the order the
-# lookup wants; `ix_sitemap_crawls_latest` is not used by it (T-070b ordered by `started_at`, not by
-# `finished_at`); `ix_sitemap_crawls_open` serves the crawl in progress.
+# lookup wants (T-070b ordered by `started_at`, not by `finished_at`, so the version-4 index
+# `ix_sitemap_crawls_latest (domain, complete, finished_at)` was unused and is dropped in version 5,
+# T-073); `ix_sitemap_crawls_open` serves the crawl in progress.
 SITEMAP_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS sitemap_entries (
     domain TEXT NOT NULL, url TEXT NOT NULL, lastmod TEXT, title TEXT,
@@ -115,17 +116,19 @@ CREATE TABLE IF NOT EXISTS sitemap_crawls (
     signature TEXT NOT NULL,
     entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
 );
-CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
 CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at)
     WHERE finished_at IS NULL;
 """
 
-# Rollback of schema version 4: the indexes go with their tables, nothing else is touched.
+# Rollback of the cache (versions 4 and 5): the indexes go with their tables, nothing else is touched.
 SITEMAP_CACHE_ROLLBACK = """
 DROP TABLE IF EXISTS sitemap_crawls;
 DROP TABLE IF EXISTS sitemap_entries;
 """
 PREVIOUS_SCHEMA_VERSION = 3
+
+# Version 5: the index version 4 created and no query uses; a no-op once it is gone.
+DROP_UNUSED_CRAWLS_INDEX = "DROP INDEX IF EXISTS ix_sitemap_crawls_latest;"
 
 # Insert-order column list for `articles`, kept next to the DDL it mirrors
 # so the two can't drift.
@@ -179,10 +182,10 @@ def run_migrations(db: Database) -> None:
 
 
 def rollback_sitemap_cache(db: Database) -> None:
-    """Undo schema version 4: drop the two cache tables and stamp version 3. Not called by any
+    """Undo the cache: drop the two cache tables and stamp version 3. Not called by any
     application path; it is the rollback the maintainer approves at G2, and a test runs it.
 
-    Refuses a database that is not at version 4, so an operator cannot lower a later version or
+    Refuses a database that is not at the current version (5), so an operator cannot lower a later version or
     run it twice by mistake.
     """
     if db.schema_version != SCHEMA_VERSION:
@@ -242,8 +245,11 @@ def _migrate_prev_fetch_status(db: Database) -> None:
 
 def _migrate_sitemap_cache(db: Database) -> None:
     """A database of schema version < 4 has no sitemap cache. Create the two tables and their
-    indexes, empty. No-op on a current database (every statement is `IF NOT EXISTS`) and on an
-    empty one, like the other steps (`apply_schema` creates the whole schema there)."""
+    indexes, empty. A version-4 database also has `ix_sitemap_crawls_latest`, which version 5
+    drops (it holds no data of its own, the tables are untouched). No-op on a current database
+    (every statement is `IF NOT EXISTS` / `IF EXISTS`) and on an empty one, like the other steps
+    (`apply_schema` creates the whole schema there)."""
     if not db.table_columns("discovered_urls"):
         return  # table doesn't exist yet -- nothing to migrate
     db.create_schema(SITEMAP_CACHE_DDL)
+    db.create_schema(DROP_UNUSED_CRAWLS_INDEX)

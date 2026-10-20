@@ -136,7 +136,7 @@ tables when they start, in either order or together (the second waits for the fi
    Expect `user_version: 4`; the five names `ix_sitemap_crawls_latest`, `ix_sitemap_crawls_open`, `ix_sitemap_entries_lastmod`,
    `sitemap_crawls`, `sitemap_entries`; and **the three counts equal to step 1** (the migration adds no row; a count that is higher only
    means a job wrote between the two steps).
-4. **If anything differs: stop both services**, then run the rollback (it refuses a file that is not at version 4) and restart on the
+4. **If anything differs: stop both services**, then run the rollback (it refuses a file that is not at the current schema version, 5 since T-073) and restart on the
    old code, or restore the backup of step 1:
    ```bash
    PYTHONPATH=src uv run python - <<'EOF'
@@ -156,6 +156,17 @@ tables when they start, in either order or together (the second waits for the fi
    version 4 and step 3 still shows `user_version: 4` with the same objects, or 14 days after the migration was applied (for
    `urls.pre-t069.db`: 2026-10-19, so 2026-11-02 at the earliest), whichever is later. The maintainer deletes backups; nobody else does.
    The older `urls.pre-retag.db`, `urls.pre-t064.db`, `urls.pre-wi14-labels.db`, `url_cat_backup.db` and `urls_.db` follow the same rule.
+
+**After merging the schema-version-5 change (T-073), on the real file.** Version 5 only drops `ix_sitemap_crawls_latest`, the
+index version 4 created and no query has used since T-070b (the latest complete crawl is found by the primary key
+`(domain, started_at)`). It holds no data: the cache tables, the pipeline tables and every row stay as they are, and a
+version-4 build that starts on a version-5 file re-creates the index and stamps 4. The first service that starts on the new code
+runs the `DROP INDEX IF EXISTS`; it is a schema change on the real file (constitution #10), so make a backup first, the same way
+as step 1 above but with the file name you choose (`T-073` used `urls_t_073.db`, next to `urls.db`; it refuses to overwrite).
+After the restart, step 3 above applies with two changes: expect `user_version: 5` and **four** names (`ix_sitemap_crawls_open`,
+`ix_sitemap_entries_lastmod`, `sitemap_crawls`, `sitemap_entries`), and the three counts equal to the backup's. Rehearsed on a copy
+of the real file (2026-10-20, `scripts/rehearse_sitemap_cache_migration.py`): 0.005 s, pipeline fingerprint identical, version 4 → 5,
+the index gone, a second run changes nothing, the rollback restores version 3 with no cache object, `quick_check` ok.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.

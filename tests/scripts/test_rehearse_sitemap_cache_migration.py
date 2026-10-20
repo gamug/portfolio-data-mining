@@ -69,11 +69,30 @@ def test_the_rehearsal_fails_when_the_migration_misses_an_index(
 
     def crippled(db: Database) -> None:
         apply_schema(db)
-        db.execute("DROP INDEX ix_sitemap_crawls_open")  # one object of five is missing
+        db.execute("DROP INDEX ix_sitemap_crawls_open")  # one object of four is missing
 
     monkeypatch.setattr(mod, "apply_schema", crippled)
     monkeypatch.setattr(mod, "run_migrations", lambda db: None)
     lines: list[str] = []
 
     assert mod.rehearse(source, copy, say=lines.append) is False
-    assert any(line.startswith("FAIL cache objects created") for line in lines), lines
+    assert any(line.startswith("FAIL cache objects after") for line in lines), lines
+
+
+def test_the_rehearsal_of_a_version_4_file_drops_the_unused_index(tmp_path: Path) -> None:
+    source, copy = tmp_path / "urls.db", tmp_path / "copy.db"
+    _version_3_file(source)
+    db = Database(sqlite3.connect(source))
+    apply_schema(db)  # the cache is back, as version 4 left it: with the index version 5 drops
+    db.execute(
+        "CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at)"
+    )
+    db.set_schema_version(4)
+    db.commit()
+    db.close()
+    lines: list[str] = []
+
+    assert mod.rehearse(source, copy, say=lines.append) is True
+
+    assert any(line.startswith("ok   version 4 -> 5") for line in lines), lines
+    assert not any(line.startswith("FAIL") for line in lines)

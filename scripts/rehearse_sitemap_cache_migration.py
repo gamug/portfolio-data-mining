@@ -1,4 +1,4 @@
-"""Rehearse the sitemap cache migration (T-069, schema version 4) on a COPY of `urls.db`.
+"""Rehearse the sitemap cache migration (T-069, schema version 4; T-073, version 5) on a COPY of `urls.db`.
 
 The source is opened read-only (`mode=ro`) and copied with SQLite's backup API to a path that must
 not exist and must not be the source; everything else runs on the copy. On the copy it checks, and
@@ -35,9 +35,9 @@ from data_mining.schema import (
 
 PIPELINE = ("discovered_urls", "articles", "discovery_progress")
 CACHE_PREFIX = "sitemap_"
-# What the migration must create, by name: the two tables and their three indexes.
+# What the migration must leave, by name: the two tables and their two indexes (version 5 dropped
+# `ix_sitemap_crawls_latest`, which a version-4 file still has).
 EXPECTED_CACHE_OBJECTS = [
-    "ix_sitemap_crawls_latest",
     "ix_sitemap_crawls_open",
     "ix_sitemap_entries_lastmod",
     "sitemap_crawls",
@@ -113,7 +113,7 @@ def rehearse(source: Path, copy: Path, say: Callable[[str], object] = print) -> 
         check("pipeline tables unchanged", after[:2] == before[:2])
         check(f"version {before[2]} -> {SCHEMA_VERSION}", after[2] == SCHEMA_VERSION)
         check(
-            "cache objects created: the two tables and three indexes",
+            "cache objects after: the two tables and two indexes, the unused index gone",
             cache_objects(db) == EXPECTED_CACHE_OBJECTS,
         )
         run_migrations(db)
