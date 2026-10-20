@@ -25,6 +25,16 @@ first (`--backup`), as for `--apply`; the list is the way back once the collecto
 If the process dies after the promotions are committed but before the quarantine sync, run `--apply`
 again without `--backup`: with nothing left to promote it needs no backup and only runs the sync.
 
+What it covers now (T-072, Work item 15). It re-classes **stored rows** only, and is not retired. After
+`T-071` stops storing the sitemap rejects and `T-073` deletes the never-fetched ones it covers: the stored
+`ddg` rejects (1,115), the sitemap rejects that keep a quarantined article (323,864, kept because
+`articles.id` is `discovered_urls.id`), the rows of domains with no sitemap cache, the hand-labeled sample
+rows `T-073` keeps, and the rows stored before `T-071`. A sitemap pair that was never stored, or was
+deleted, is not here: it is re-classed from the sitemap cache by `news_collector reclass-sitemap` (the
+`cli/news_collector_cli.py reclass-sitemap` command and `POST /discovery/reclass-sitemap`), which reads the
+current entries of the cache with no network and enqueues the pairs that are now accept/review through the
+same promote-only `enqueue_batch`. The two together cover every reject population.
+
 Usage:
     PYTHONPATH=src uv run python scripts/reclass_rejects.py --db COPY.db
     PYTHONPATH=src uv run python scripts/reclass_rejects.py --db urls.db --apply --backup urls.pre-reclass.db

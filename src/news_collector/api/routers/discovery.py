@@ -15,11 +15,15 @@ from news_collector.api.schemas import (
     DiscoveredURLOut,
     QueryResponse,
     QueueStatsResponse,
+    ReclassRequest,
+    ReclassResponse,
+    ReclassTickerOut,
     RunAllRequest,
     RunAllResponse,
 )
 from news_collector.config import InvalidRangeError, build_date_range
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
+from news_collector.reclass_cache import ReclassReport, reclass_from_cache
 from news_collector.storage.queue import URLQueue
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
@@ -75,6 +79,69 @@ async def run_all(
         start_date=date_range.start,
         end_date=date_range.end,
     )
+
+
+def _reclass_response(report: ReclassReport, date_range) -> ReclassResponse:  # type: ignore[no-untyped-def]
+    classes = report.classes()
+    return ReclassResponse(
+        applied=report.applied,
+        tickers=[
+            ReclassTickerOut(
+                ticker=r.ticker,
+                domain=r.domain,
+                entries=r.entries,
+                accept=r.classes["accept"],
+                review=r.classes["review"],
+                reject=r.classes["reject"],
+                would_insert=r.new,
+                would_promote=r.promotable,
+                inserted=r.inserted,
+                promoted=r.promoted,
+            )
+            for r in report.results
+        ],
+        accept=classes["accept"],
+        review=classes["review"],
+        reject=classes["reject"],
+        would_insert=report.total("new"),
+        would_promote=report.total("promotable"),
+        inserted=report.total("inserted"),
+        promoted=report.total("promoted"),
+        errors=report.errors,
+        elapsed_seconds=round(report.elapsed_seconds, 3),
+        start_date=date_range.start,
+        end_date=date_range.end,
+    )
+
+
+@router.post("/reclass-sitemap", response_model=ReclassResponse)
+async def reclass_sitemap(
+    req: ReclassRequest,
+    client: Annotated[httpx.AsyncClient, Depends(get_client)],
+) -> ReclassResponse:
+    """
+    Class the sitemap cache again with the current matcher, with no network (T-072).
+
+    Reads the current entries of each domain's cache (the latest complete crawl), classes them
+    for the requested tickers (all of the S&P 500 when `tickers` is omitted) and, with
+    `apply=true`, enqueues the pairs that are now accept/review, promote-only. The default is a
+    dry run that writes nothing. A domain with no complete crawl that covers the range is an
+    error line: this route never crawls (use a discovery with `refresh_sitemaps` for that).
+    """
+    try:
+        date_range = build_date_range(req.start_date, req.end_date)
+    except InvalidRangeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    companies = await resolve_companies(req, client)
+    report = await reclass_from_cache(
+        resolve_db_path(req.db_path),
+        build_connectors(client),
+        companies,
+        date_range,
+        domains=req.domains,
+        apply=req.apply,
+    )
+    return _reclass_response(report, date_range)
 
 
 @router.get("/stats", response_model=QueueStatsResponse)

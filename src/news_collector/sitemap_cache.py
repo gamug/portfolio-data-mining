@@ -211,12 +211,16 @@ class SitemapCache:
 
         self._fetch = fetch
 
-    async def begin(self, date_range: DateRange, *, force: bool = False) -> SitemapRun:
+    async def begin(
+        self, date_range: DateRange, *, force: bool = False, allow_crawl: bool = True
+    ) -> SitemapRun:
         """Decide, once for a run, whether the cache is usable, refreshing it when it must be.
 
         Concurrent callers wait on the lock and find the crawl the first one made; a forced call
         is satisfied by any crawl that started after the call was made, so two forced requests
-        make one crawl. It never raises: a database error is a failure every pair of the run
+        make one crawl. With `allow_crawl=False` it only reads: the latest complete crawl is used
+        if it covers the range and matches the roots, whatever its age, and nothing is fetched (the
+        re-class from the cache, T-072). It never raises: a database error is a failure every pair of the run
         reports (and is not checkpointed), so one domain cannot stop the others.
         """
         requested = self._clock()
@@ -228,7 +232,9 @@ class SitemapCache:
                 now = self._clock()
                 latest = await asyncio.to_thread(self._latest_complete)
                 refresh_failures: list[str] = []
-                while self._must_refresh(latest, date_range.start, force, requested, now):
+                while allow_crawl and self._must_refresh(
+                    latest, date_range.start, force, requested, now
+                ):
                     if self._backing_off(force, now):
                         refresh_failures = list(self._last_failures)  # the outage is still on
                         break
@@ -284,14 +290,16 @@ class SitemapCache:
             and latest.range_start <= date_range.start
         )
         if not usable or latest is None:
-            reason = summarize_failures(refresh_failures) if refresh_failures else "no refresh ran"
+            why = (
+                f"the refresh failed ({summarize_failures(refresh_failures)}) and no complete "
+                "crawl matches"
+                if refresh_failures
+                else "no complete crawl of the current sitemap roots and cache version covers it"
+            )
             return SitemapRun(
                 self.domain,
                 None,
-                (
-                    f"sitemap cache of {self.domain} does not cover {date_range.start}: "
-                    f"the refresh failed ({reason}) and no complete crawl matches",
-                ),
+                (f"sitemap cache of {self.domain} does not cover {date_range.start}: {why}",),
             )
         warnings: tuple[str, ...] = ()
         if refresh_failures:

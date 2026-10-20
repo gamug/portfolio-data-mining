@@ -125,6 +125,67 @@ class DiscoveredURLOut(BaseModel):
     match_reason: str | None = None
 
 
+class ReclassRequest(BaseModel):
+    """Request body for the re-class of the sitemap cache (T-072). No network, no crawl."""
+
+    tickers: list[str] | None = Field(default=None, description=_TICKERS_NOTE)
+    company_names: list[str] | None = Field(
+        default=None,
+        description="Optional company names, positional (one per ticker), as in the discovery requests.",
+    )
+    start_date: date | None = Field(
+        default=None, description="Inclusive start date." + _DATE_DEFAULT_NOTE
+    )
+    end_date: date | None = Field(
+        default=None, description="Inclusive end date." + _DATE_DEFAULT_NOTE
+    )
+    domains: list[str] | None = Field(
+        default=None,
+        description="Domains with a sitemap cache. None means every one that has roots.",
+    )
+    db_path: str | None = Field(
+        default=None, description="SQLite queue path (default: $DATABASE_URL)"
+    )
+    apply: bool = Field(
+        default=False,
+        description=(
+            "False (the default) is a dry run: nothing is written, the response says what would be "
+            "inserted and promoted. True enqueues the pairs that are now accept/review (promote-only)."
+        ),
+    )
+
+
+class ReclassTickerOut(BaseModel):
+    ticker: str
+    domain: str
+    entries: int
+    accept: int
+    review: int
+    reject: int = Field(description="Classed reject from the cache: counted, never stored.")
+    would_insert: int = 0
+    would_promote: int = 0
+    inserted: int = 0
+    promoted: int = 0
+
+
+class ReclassResponse(BaseModel):
+    """What the re-class of the sitemap cache found (and wrote, when `apply` was true)."""
+
+    applied: bool
+    tickers: list[ReclassTickerOut]
+    accept: int
+    review: int
+    reject: int
+    would_insert: int
+    would_promote: int
+    inserted: int
+    promoted: int
+    errors: list[str]
+    elapsed_seconds: float
+    start_date: date = Field(description="Inclusive start of the range this run used.")
+    end_date: date = Field(description="Inclusive end of the range this run used.")
+
+
 class DiscoverResponse(BaseModel):
     """Response for a single (domain, ticker) discovery run."""
 

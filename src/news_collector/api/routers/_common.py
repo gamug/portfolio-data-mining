@@ -15,6 +15,7 @@ from news_collector.api.schemas import (
     DiscoveredURLOut,
     DiscoverRequest,
     DiscoverResponse,
+    ReclassRequest,
     RunAllRequest,
 )
 from news_collector.companies import (
@@ -35,7 +36,7 @@ log = logging.getLogger(__name__)
 
 
 async def resolve_companies(
-    req: DiscoverRequest | RunAllRequest, client: httpx.AsyncClient
+    req: DiscoverRequest | RunAllRequest | ReclassRequest, client: httpx.AsyncClient
 ) -> list[Company]:
     """
     Build the Company list for a request.

@@ -20,6 +20,7 @@ from datetime import date
 from pathlib import Path
 
 import httpx
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 # `python -m news_collector.main ...` skips the `cli/news_collector_cli.py` wrapper, so this
 # module loads `.env` itself, before the imports below read the environment.
@@ -32,6 +33,7 @@ from news_collector.companies import CompanyLookupError, lookup_companies
 from news_collector.config import InvalidRangeError, build_date_range, default_start_date
 from news_collector.models import Company
 from news_collector.orchestrator import DiscoveryOrchestrator, build_connectors
+from news_collector.reclass_cache import reclass_from_cache
 from news_collector.sp500 import fetch_sp500_companies
 from news_collector.storage.queue import URLQueue
 from news_collector.utils.http import build_client
@@ -164,6 +166,57 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     return 1 if stats.errors else 0
 
 
+async def cmd_reclass_sitemap(args: argparse.Namespace) -> int:
+    """Class the sitemap cache again with the current matcher: no crawl, dry run unless --apply."""
+
+    setup_logging(args.log_level, log_dir=args.log_dir, run_name="reclass-sitemap")
+    try:
+        date_range = build_date_range(args.start_date, args.end_date)
+    except InvalidRangeError as exc:
+        log.error("%s", exc)  # noqa: TRY400 - the message is the whole story, no stack
+        return 1
+    db_path = str(resolve_db_path(args.db))
+    async with build_client() as client:
+        try:
+            companies = await _load_companies(args, client, date_range.start)
+        except CompanyLookupError as exc:
+            log.error("%s", exc)  # noqa: TRY400 - the message is the whole story, no stack
+            return 1
+        connectors = build_connectors(client)
+        domains = args.domains or [d for d, c in connectors.items() if c.config.sitemap_roots]
+        bar = tqdm(total=len(companies) * len(domains), unit="pair", desc="re-class")
+        try:
+            report = await reclass_from_cache(
+                db_path,
+                connectors,
+                companies,
+                date_range,
+                domains=args.domains or None,
+                apply=args.apply,
+                progress=lambda _result: bar.update(1),
+            )
+        finally:
+            bar.close()
+    classes = report.classes()
+    print("\n=== Re-class of the sitemap cache ===")
+    print(
+        f"Mode             : {'APPLIED' if report.applied else 'dry run (nothing written; --apply writes)'}"
+    )
+    print(f"Date range       : {date_range.start} to {date_range.end}")
+    print(
+        f"Pairs read       : {sum(classes.values())} (accept {classes['accept']}, review {classes['review']}, reject {classes['reject']}: never stored)"
+    )
+    if report.applied:
+        print(
+            f"Inserted / promoted: {report.total('inserted')} / {report.total('promoted')} (lifted from skipped: {report.total('lifted')})"
+        )
+    else:
+        print(f"Would insert / promote: {report.total('new')} / {report.total('promotable')}")
+    print(f"Elapsed          : {report.elapsed_seconds:.1f}s")
+    _print_notes("Errors", report.errors)
+    return 1 if report.errors else 0
+
+
 def cmd_stats(args: argparse.Namespace) -> None:
     setup_logging(args.log_level)
     queue = URLQueue(resolve_db_path(args.db))
@@ -268,6 +321,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     disc.add_argument("--export", help="Export pending URLs to CSV after discovery")
 
+    # reclass-sitemap (T-072)
+    rec = sub.add_parser(
+        "reclass-sitemap",
+        help="Class the sitemap cache again with the current matcher (no crawl; dry run by default)",
+    )
+    rec.add_argument("--sp500", help="Path to S&P 500 CSV (ticker, name, sector), as for discover")
+    rec.add_argument(
+        "--tickers", nargs="+", help="Tickers to re-class (default: the whole S&P 500)"
+    )
+    rec.add_argument(
+        "--domains", nargs="+", default=None, help="Domains with a sitemap cache (default: all)"
+    )
+    rec.add_argument("--start-date", type=_parse_date, default=default_start_date())
+    rec.add_argument("--end-date", type=_parse_date, default=None)
+    rec.add_argument(
+        "--apply",
+        action="store_true",
+        help="Enqueue the pairs that are now accept/review (promote-only); without it nothing is written",
+    )
+
     # stats
     sub.add_parser("stats", help="Show queue statistics")
 
@@ -284,6 +357,8 @@ def main() -> None:
 
     if args.command == "discover":
         sys.exit(asyncio.run(cmd_discover(args)))
+    elif args.command == "reclass-sitemap":
+        sys.exit(asyncio.run(cmd_reclass_sitemap(args)))
     elif args.command == "stats":
         cmd_stats(args)
     elif args.command == "export":
