@@ -17,15 +17,17 @@ no `articles` row, source `sitemap`/`rss`, a domain whose cache is filled, and a
 committed hand-labeled sample names. Nothing else is ever deleted.
 """
 
-# ruff: noqa: S608 - every SQL string is built from fixed text and runs of "?" marks; values are bound
+# ruff: noqa: S608, TRY301 - every SQL string is built from fixed text and runs of "?" marks; values are bound
 from __future__ import annotations
 
 import csv
 import hashlib
 import logging
+import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 import time
 from collections import Counter
@@ -39,28 +41,48 @@ from data_mining.matching import CLASS_RANK
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange
 from news_collector.reclass_cache import _classify
-from news_collector.sitemap_cache import SitemapCache
+from news_collector.sitemap_cache import SitemapCache, SitemapRun
 
 log = logging.getLogger(__name__)
 
 SAMPLE_GLOBS = ("ticker_*_sample.csv", "ticker_*_manual.csv")
-SOURCES = ("sitemap", "rss")
+# Only `sitemap`: the proof re-derives stored pairs from the sitemap cache, which no `rss` pair can
+# be. 0 `rss` rows qualified on the rehearsal copy; add `rss` back only with a proof that covers it.
+SOURCES = ("sitemap",)
+WAL_HEADROOM = (
+    0  # bytes of free disk required beyond the file size (set from the measured WAL peak)
+)
+LOCK_WAIT = 10  # seconds `reclaim` waits for the exclusive lock before it says the file is in use
 _YEAR_IN_URL = re.compile(r"/((?:19|20)\d\d)/\d\d/\d\d/")
 # The tickers the proof always includes: the ordinary-word and one-letter ones are on purpose.
 PROOF_TICKERS = ("KLAC", "AAPL", "ON", "A", "IT", "ARE", "TTD", "MSFT", "NVDA", "CRM")
 
 
 class ReclaimError(Exception):
-    """A check failed: nothing was deleted, or the file is as it was before the step."""
+    """A check failed before anything was committed: the file is as it was."""
+
+
+class ReclaimIncomplete(ReclaimError):
+    """The delete is COMMITTED in the file but the step after it failed: the file has lost the
+    rows and is not compacted (the backup is intact). `compact` finishes it."""
 
 
 def kept_ids(data_dir: Path) -> set[int]:
-    """The ids named by the committed hand-labeled samples (`data/ticker_*_sample|manual.csv`)."""
+    """The ids named by the committed hand-labeled samples (`data/ticker_*_sample|manual.csv`).
+
+    Refuses when a kind of sample file is missing or names no id: with a wrong `data_dir` the
+    delete would run with nothing protected, and say nothing.
+    """
     ids: set[int] = set()
     for pattern in SAMPLE_GLOBS:
-        for path in sorted(data_dir.glob(pattern)):
+        paths = sorted(data_dir.glob(pattern))
+        if not paths:
+            raise ReclaimError(f"no {pattern} in {data_dir}: the labeled ids are not protected")
+        for path in paths:
             with path.open(newline="", encoding="utf-8") as fh:
                 ids.update(int(r["id"]) for r in csv.DictReader(fh) if r.get("id"))
+    if not ids:
+        raise ReclaimError(f"the sample files in {data_dir} name no id")
     return ids
 
 
@@ -107,6 +129,8 @@ class Fingerprint:
     quick_check: str
     user_version: int = 0
     schema_hash: str = ""  # of every table and index definition: the compacted file keeps it
+    id_sum: int = 0  # of `discovered_urls.id`: a backup of other rows with the same counts differs
+    max_id: int = 0
 
     def kept_rows(self) -> dict[str, int]:
         return {k: v for k, v in self.by_class.items() if k != "reject"}
@@ -127,6 +151,8 @@ def fingerprint(conn: sqlite3.Connection) -> Fingerprint:
         user_version=one("PRAGMA user_version"),
         schema_hash=hashlib.sha256(schema.encode()).hexdigest(),
         discovered=one("SELECT COUNT(*) FROM discovered_urls"),
+        id_sum=one("SELECT COALESCE(SUM(id), 0) FROM discovered_urls"),
+        max_id=one("SELECT COALESCE(MAX(id), 0) FROM discovered_urls"),
         articles=one("SELECT COUNT(*) FROM articles"),
         orphans=one(
             "SELECT COUNT(*) FROM articles a "
@@ -232,7 +258,12 @@ async def gather_evidence(
         for domain in domains:
             connector = connectors[domain]
             cache = SitemapCache(
-                domain, connector.config.sitemap_roots, db_path, _never, connector.is_article_url
+                domain,
+                connector.config.sitemap_roots,
+                db_path,
+                _never,
+                connector.is_article_url,
+                read_only=True,
             )
             runs[domain] = await cache.begin(date_range, allow_crawl=False)
         split = Split()
@@ -270,7 +301,7 @@ async def _never(_url: str) -> str:
 async def _prove(
     conn: sqlite3.Connection,
     connectors: dict[str, BaseConnector],
-    runs: dict,
+    runs: dict[str, SitemapRun],
     date_range: DateRange,
     tickers: Sequence[str],
 ) -> Proof:
@@ -302,7 +333,7 @@ async def _prove(
                 proof.stored += 1
                 if url in in_cache:
                     cls = classes.get(url, "reject")
-                    if CLASS_RANK[cls] >= CLASS_RANK["review"]:  # type: ignore[index]
+                    if CLASS_RANK.get(cls, 0) >= CLASS_RANK["review"]:
                         proof.found += 1
                     else:
                         proof.rejected_now.append((ticker, url, cls))
@@ -354,16 +385,29 @@ class Reclaimed:
     bytes_after: int
     backup: Path
     seconds: float
+    kept: int = 0  # protected sample ids
+    owner_kept: bool = True  # False: the new file's owner is not the original's
 
 
 def _same_content(a: Fingerprint, b: Fingerprint) -> bool:
-    return (a.discovered, a.articles, a.orphans, a.by_class, a.user_version, a.schema_hash) == (
+    return (
+        a.discovered,
+        a.articles,
+        a.orphans,
+        a.by_class,
+        a.user_version,
+        a.schema_hash,
+        a.id_sum,
+        a.max_id,
+    ) == (
         b.discovered,
         b.articles,
         b.orphans,
         b.by_class,
         b.user_version,
         b.schema_hash,
+        b.id_sum,
+        b.max_id,
     )
 
 
@@ -388,14 +432,117 @@ def verify_backup(db_path: Path, backup: Path) -> Fingerprint:
 
 
 def running_collectors() -> list[str]:
-    """Processes of the gateway or the crawler (they must be stopped before the swap)."""
-    out = subprocess.run(
-        ["pgrep", "-af", r"apps/gateway\.py|news_collector|crawler_cli|apps/crawler"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout.splitlines()
+    """Processes of the gateway or the crawler by command line (they must be stopped first).
+
+    A missing `pgrep` is not an error here: `open_handles` and the exclusive lock of `reclaim`
+    do not need it.
+    """
+    try:
+        out = subprocess.run(
+            ["pgrep", "-af", r"apps/gateway\.py|news_collector|crawler_cli|apps/crawler"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.splitlines()
+    except OSError:
+        return []
     return [line for line in out if "pgrep" not in line and "reclaim" not in line]
+
+
+def open_handles(db_path: Path) -> list[str]:
+    """Processes on this host (this one excluded) that hold the database, its `-wal` or `-shm` open.
+
+    Reads `/proc/*/fd`, so it sees any command line. A process of another user may not be
+    readable: the exclusive lock of `reclaim` is the check that does not depend on who it is.
+    """
+    base = str(Path(db_path).resolve())
+    targets = {base, base + "-wal", base + "-shm"}
+    me = str(os.getpid())
+    found: list[str] = []
+    try:
+        links = list(Path("/proc").glob("[0-9]*/fd/*"))
+    except OSError:
+        return found
+    for link in links:
+        pid = link.parts[2]
+        if pid == me:
+            continue
+        try:
+            target = os.readlink(link)
+        except OSError:
+            continue
+        if target in targets:
+            found.append(f"pid {pid} has {target} open")
+    return found
+
+
+def _open_exclusive(db_path: Path) -> sqlite3.Connection:
+    """A connection that holds the file exclusively until it closes, or a `ReclaimError`.
+
+    In WAL mode the exclusive lock cannot be taken while any other connection has the file open,
+    even an idle one, on this host, whoever owns it. While it is held no other process can read or
+    write the file, so nothing starts on it between the delete and the swap.
+    """
+    conn = sqlite3.connect(db_path, timeout=LOCK_WAIT, isolation_level=None)
+    try:
+        conn.execute("PRAGMA locking_mode=EXCLUSIVE")
+        conn.execute("PRAGMA journal_mode").fetchone()  # the first read of the file takes the lock
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        raise ReclaimError(
+            f"another connection has {db_path} open ({exc}): stop the gateway, the crawler and "
+            "every other program that opens it"
+        ) from exc
+    return conn
+
+
+def _check_start(db_path: Path, check_processes: bool) -> None:
+    if check_processes and (procs := running_collectors() + open_handles(db_path)):
+        raise ReclaimError(f"stop the gateway and the crawler first: {procs}")
+    size = db_path.stat().st_size
+    free = shutil.disk_usage(db_path.parent).free
+    need = size + WAL_HEADROOM
+    if free < need:
+        raise ReclaimError(
+            f"not enough disk for the delete and VACUUM INTO: {free} free, {need} needed"
+        )
+    compact = db_path.with_name(db_path.name + ".compact")
+    if compact.exists():
+        raise ReclaimError(f"{compact} exists: remove it first")
+
+
+def _plan(
+    conn: sqlite3.Connection, domains: Sequence[str] | None, expect: int
+) -> tuple[str, list[str], Fingerprint, str]:
+    """The WHERE clause, the fingerprint and the journal mode, after the checks that need the file."""
+    filled = cache_domains(conn)
+    if domains is not None and (missing := [d for d in domains if d not in filled]):
+        raise ReclaimError(f"no complete cache crawl for {missing}: nothing deleted")
+    where, params = candidate_where(list(domains) if domains is not None else filled)
+    before = fingerprint(conn)
+    mode = conn.execute("PRAGMA journal_mode").fetchone()[0]  # VACUUM INTO writes "delete"
+    if before.quick_check != "ok":
+        raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
+    will = conn.execute(f"SELECT COUNT(*) FROM discovered_urls WHERE {where}", params).fetchone()[0]
+    if will != expect:
+        raise ReclaimError(f"the approval names {expect} rows, {will} qualify: nothing deleted")
+    return where, params, before, mode
+
+
+def _delete(
+    conn: sqlite3.Connection, where: str, params: list[str], before: Fingerprint, expect: int
+) -> tuple[int, Fingerprint]:
+    """One transaction: delete, check the fingerprint (a failure rolls back), commit."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        deleted = conn.execute(f"DELETE FROM discovered_urls WHERE {where}", params).rowcount
+        after = fingerprint(conn)
+        _check_after(before, after, deleted, expect)
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+    return deleted, after
 
 
 def reclaim(
@@ -403,78 +550,155 @@ def reclaim(
     backup: Path,
     data_dir: Path,
     *,
+    expect: int,
+    expect_kept: int | None = None,
     domains: Sequence[str] | None = None,
-    expect: int | None = None,
     check_processes: bool = True,
 ) -> Reclaimed:
     """Delete the qualifying rows, compact with `VACUUM INTO`, swap, keep the old file as `backup`.
 
-    `backup` must exist, pass `quick_check` and match the file before anything is written (it is
-    the file the maintainer keeps). `expect` is the count the approval named: a different count
-    deletes nothing. Raises `ReclaimError` before the transaction on any failed precondition and
-    rolls the transaction back when a fingerprint check fails after the delete.
+    `backup` must exist, pass `quick_check` and match the file (counts, classes, ids, schema)
+    before anything is written; it is the file the maintainer keeps. `expect` is the count the
+    approval named: a different count deletes nothing; `expect_kept` does the same for the number
+    of protected sample ids. The file is held exclusively from the first read to the swap.
+
+    Two kinds of failure. `ReclaimError`: nothing was committed, the file is as it was (a failed
+    fingerprint check after the delete rolls it back). `ReclaimIncomplete`: the delete is
+    committed but the compaction or the swap failed, so the file has lost the rows and is not
+    compacted; the backup is intact and `compact` finishes the job.
     """
     began = time.monotonic()
     db_path = Path(db_path)
-    if check_processes and (procs := running_collectors()):
-        raise ReclaimError(f"stop the gateway and the crawler first: {procs}")
+    kept = kept_ids(data_dir)
+    if expect_kept is not None and len(kept) != expect_kept:
+        raise ReclaimError(f"the approval names {expect_kept} protected ids, {len(kept)} found")
+    _check_start(db_path, check_processes)
     verify_backup(db_path, backup)
     size = db_path.stat().st_size
-    free = shutil.disk_usage(db_path.parent).free
-    if free < size:
-        raise ReclaimError(f"not enough disk for VACUUM INTO: {free} free, {size} needed")
     compact = db_path.with_name(db_path.name + ".compact")
-    if compact.exists():
-        raise ReclaimError(f"{compact} exists: remove it first")
 
-    conn = sqlite3.connect(db_path, timeout=60, isolation_level=None)
+    conn = _open_exclusive(db_path)
+    deleted = 0
+    committed = False
     try:
-        _load_kept(conn, kept_ids(data_dir))
-        targets = list(domains) if domains is not None else cache_domains(conn)
-        where, params = candidate_where(targets)
-        before = fingerprint(conn)
-        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]  # VACUUM INTO writes "delete"
-        if before.quick_check != "ok":
-            raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
-        will = conn.execute(
-            f"SELECT COUNT(*) FROM discovered_urls WHERE {where}", params
-        ).fetchone()[0]
-        if expect is not None and will != expect:
-            raise ReclaimError(f"the approval names {expect} rows, {will} qualify: nothing deleted")
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            deleted = conn.execute(f"DELETE FROM discovered_urls WHERE {where}", params).rowcount
-            after = fingerprint(conn)
-            _check_after(before, after, deleted, will)
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        conn.execute("COMMIT")
-        conn.execute(f"VACUUM INTO '{compact}'")
+        _load_kept(conn, kept)
+        where, params, before, mode = _plan(conn, domains, expect)
+        deleted, after = _delete(conn, where, params, before, expect)
+        committed = True
+        _write_compact(conn, compact)
+    except ReclaimError:
+        raise
+    except BaseException as exc:
+        if committed:
+            compact.unlink(missing_ok=True)
+            raise _incomplete(deleted, db_path, backup, exc) from exc
+        raise
     finally:
         conn.close()
-    _swap_in(db_path, compact, mode, after)
+    try:
+        owner_kept = _swap_in(db_path, compact, mode, after)
+    except Exception as exc:
+        compact.unlink(missing_ok=True)
+        raise _incomplete(deleted, db_path, backup, exc) from exc
     return Reclaimed(
-        deleted, before, after, size, db_path.stat().st_size, backup, time.monotonic() - began
+        deleted,
+        before,
+        after,
+        size,
+        db_path.stat().st_size,
+        backup,
+        time.monotonic() - began,
+        kept=len(kept),
+        owner_kept=owner_kept,
     )
 
 
-def _swap_in(db_path: Path, compact: Path, mode: str, after: Fingerprint) -> None:
-    """Check the compacted file against the database, give it back its journal mode and swap it in."""
+def _incomplete(deleted: int, db_path: Path, backup: Path, why: BaseException) -> ReclaimIncomplete:
+    return ReclaimIncomplete(
+        f"INCOMPLETE: the delete of {deleted} rows is COMMITTED in {db_path}, but the file is not "
+        f"compacted ({why}). The backup {backup} is intact. Finish with the `compact` command, or "
+        "restore the backup."
+    )
+
+
+def _write_compact(conn: sqlite3.Connection, compact: Path) -> None:
+    conn.execute("VACUUM INTO ?", (str(compact),))
+
+
+def compact(db_path: Path, *, check_processes: bool = True) -> Reclaimed:
+    """Compact and swap, with no delete: the step that finishes a `ReclaimIncomplete`.
+
+    The file keeps every row it has now; the compacted file is checked against it and swapped in.
+    Nothing is committed, so any failure leaves the file as it was.
+    """
+    began = time.monotonic()
+    db_path = Path(db_path)
+    _check_start(db_path, check_processes)
+    size = db_path.stat().st_size
+    packed = db_path.with_name(db_path.name + ".compact")
+    conn = _open_exclusive(db_path)
+    try:
+        before = fingerprint(conn)
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        if before.quick_check != "ok":
+            raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
+        _write_compact(conn, packed)
+    except BaseException:
+        packed.unlink(missing_ok=True)
+        raise
+    finally:
+        conn.close()
+    try:
+        owner_kept = _swap_in(db_path, packed, mode, before)
+    except Exception:
+        packed.unlink(missing_ok=True)
+        raise
+    return Reclaimed(
+        0,
+        before,
+        before,
+        size,
+        db_path.stat().st_size,
+        db_path,
+        time.monotonic() - began,
+        kept=0,
+        owner_kept=owner_kept,
+    )
+
+
+def _swap_in(db_path: Path, compact: Path, mode: str, after: Fingerprint) -> bool:
+    """Check the compacted file against the database, give it back its journal mode, mode bits
+    and owner, and swap it in. Returns whether the owner is the original's. Any failure leaves
+    `db_path` as it is (the caller removes the compacted file)."""
     packed = sqlite3.connect(compact)
     try:
         if packed.execute(f"PRAGMA journal_mode={mode}").fetchone()[0] != mode:
-            compact.unlink()
             raise ReclaimError(f"the compacted file could not be put in {mode} mode")
         packed_fp = fingerprint(packed)
     finally:
         packed.close()
     if packed_fp.quick_check != "ok" or not _same_content(after, packed_fp):
-        compact.unlink()
-        raise ReclaimError("the compacted file differs from the database: kept as it was")
+        raise ReclaimError("the compacted file differs from the database: not swapped in")
+    owner_kept = _copy_permissions(db_path, compact)
     for suffix in ("-wal", "-shm"):
         Path(str(db_path) + suffix).unlink(missing_ok=True)
     compact.replace(db_path)
+    return owner_kept
+
+
+def _copy_permissions(original: Path, new: Path) -> bool:
+    """The compacted file is made by this user with the default umask: give it the original's mode
+    and, when permitted, owner. False when the owner could not be kept (the CLI warns)."""
+    info = original.stat()
+    new.chmod(stat.S_IMODE(info.st_mode))
+    if (info.st_uid, info.st_gid) == (os.getuid(), os.getgid()):
+        return True
+    try:
+        os.chown(new, info.st_uid, info.st_gid)
+    except PermissionError:
+        log.warning("the compacted file is owned by uid %s, not %s", os.getuid(), info.st_uid)
+        return False
+    return True
 
 
 def _check_after(before: Fingerprint, after: Fingerprint, deleted: int, expected: int) -> None:

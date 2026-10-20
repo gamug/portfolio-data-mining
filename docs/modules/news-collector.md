@@ -597,26 +597,83 @@ connection — `PermissionError: file in use`, not a logic bug in this codebase)
 
 ## Reclaim the never-fetched sitemap rejects (T-073, gate G3)
 
-`scripts/reclaim_sitemap_rejects.py` (`news_collector/reclaim_sitemap.py`) has two commands. **`evidence`** is read-only on any file and prints what
-G3 judges; **`reclaim`** deletes, compacts and swaps, and on the real `urls.db` runs **only at G3**.
+Three scripts: `scripts/fill_sitemap_cache.py` fills the cache of one domain with no discovery; `scripts/reclaim_sitemap_rejects.py`
+(`news_collector/reclaim_sitemap.py`) has **`evidence`** (read-only on any file; prints what G3 judges), **`reclaim`** (deletes, compacts
+and swaps) and **`compact`** (finishes a `reclaim` that printed INCOMPLETE). On the real `urls.db` the writes run **only at G3**.
 
-**What qualifies** (one WHERE clause, `candidate_where`): `match_class='reject'`, `status='skipped'`, no `articles` row, source `sitemap`/`rss`, a
+**What qualifies** (one WHERE clause, `candidate_where`): `match_class='reject'`, `status='skipped'`, no `articles` row, source `sitemap`, a
 domain whose cache holds a complete crawl, and an id that no committed hand-labeled sample names (`data/ticker_*_sample.csv`, `ticker_*_manual.csv`:
-593 ids). Nothing else is ever deleted: the 323,864 sitemap rejects that keep a quarantined article, the 1,115 `ddg` rejects and every
-`accept`/`review` row stay.
+593 ids; **`reclaim` refuses if a kind of sample file is missing or names no id**, prints the number it protected, and `--expect-kept 593` pins it).
+Source `rss` is **not** in the set: the proof re-derives stored pairs from the sitemap cache, which no `rss` pair can be (0 `rss` rows qualified on
+the rehearsal copy; add it back only with a proof that covers it). Nothing else is ever deleted: the 323,864 sitemap rejects that keep a quarantined
+article, the 1,115 `ddg` rejects and every `accept`/`review` row stay.
 
-**What `reclaim` does:** refuses unless `--backup` is another file that passes `quick_check` and has the live file's fingerprint (counts,
-class counts, orphan articles, `user_version`, a hash of every table and index definition), `--expect N` names the approved count (a different count
-deletes nothing), the disk has the file size free, no `<file>.compact` is left, and, on the real file, `--i-have-the-g3-approval` is given and no
-gateway/crawler process runs. Then one transaction deletes the rows and checks the fingerprint (`discovered_urls` down by exactly the deleted count,
-`articles` unchanged, no orphan, `accept`/`review` unchanged; any failure rolls back), `VACUUM INTO` writes the compacted file, which is checked against
-the same fingerprint and put back in the original journal mode (`VACUUM INTO` writes a rollback-journal file, the queue's is WAL), and it is swapped in.
-The old file is the backup, kept until the maintainer deletes it.
+**The two guards are never inferred from the environment.** `reclaim`, `compact` and `fill_sitemap_cache.py` take exactly one of
+`--i-have-the-g3-approval` (the real file: the process and open-file checks run, whatever the file is called) and `--rehearsal-copy` (a copy: a file
+called `urls.db`, or the one `DATABASE_URL` names, is refused as a copy). Typing the real path without either flag does nothing.
+
+**What `reclaim` does.** Before it writes anything it refuses unless: the sample ids are found; `--backup` is another file that passes `quick_check`
+and has the live file's fingerprint (counts, class counts, orphan articles, `user_version`, the sum and the highest `discovered_urls.id`, a hash of every
+table and index definition); `--expect N` names the approved count (a different count deletes nothing); the disk has the file size plus
+`WAL_HEADROOM` free; no `<file>.compact` is left; no process holds the file (a `pgrep` by name and a scan of `/proc/*/fd`); and it can take the file
+**exclusively**: in WAL mode that fails while any other connection on this host has the file open, even an idle one, whoever owns it, and while it holds
+the lock no other program can read or write the file. Then one transaction deletes the rows and checks the fingerprint (`discovered_urls` down by exactly
+the deleted count, `articles` unchanged, no orphan, `accept`/`review` unchanged; any failure **rolls back**), the commit, `VACUUM INTO` (the path is a bound
+parameter) writes the compacted file, which is checked against the same fingerprint, put back in the original journal mode (`VACUUM INTO` writes a
+rollback-journal file, the queue's is WAL) and given the original's mode bits and owner, and it is swapped in. The old file is the backup, kept until the
+maintainer deletes it.
+
+**Two kinds of failure, two exit codes.** Exit 1, `REFUSED, nothing changed`: nothing was committed, the file is as it was. Exit 2, `INCOMPLETE: the
+delete of N rows is COMMITTED ...`: the commit succeeded but `VACUUM INTO` or the swap failed (a full disk, a compacted file that differs); the file has
+lost the rows and is not compacted, the partial `.compact` is removed, and the backup is intact. A second `reclaim` cannot finish it (0 rows qualify now):
+run `compact --db ... --i-have-the-g3-approval`, which compacts and swaps with no delete and leaves the file as it was if it fails too, or restore the
+backup. The CLI prints a WARNING when the new file's owner is not the original's (the user running it could not `chown`): fix it before restarting a
+service that runs as another user.
 
 ```bash
-PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py evidence --db COPY.db          # read-only; fill the cache of the copy first
-PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db COPY.db --backup COPY.pre.db --expect N
+PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db COPY.db --domain cnbc.com --rehearsal-copy
+PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py evidence --db COPY.db          # read-only
+PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db COPY.db --backup COPY.pre.db --expect N --rehearsal-copy
 ```
+
+**The real file, step by step (G3).** The maintainer runs 1-3 and 5-6 or tells the developer to; nothing below runs before the G3 approval. The code
+cannot see another machine: **the maintainer confirms that no program on any machine opens `urls.db`** (a notebook, a `sqlite3` shell, the thesis
+machine's gateway). `DB` is the real file, `BK` its backup (`urls_t_073.db`, next to it). `fill`, `evidence` and `reclaim` do not migrate the file,
+so it stays at schema version 4 until a service starts on the merged code (the version-5 migration of PR #96 then drops the unused index).
+
+1. **Stop** the gateway and the crawler (and anything else that opens `DB`). Check: `pgrep -af "gateway|news_collector|crawler"` prints nothing.
+2. **Backup** with SQLite's backup API (never `cp` on a WAL file), refusing to overwrite:
+   ```bash
+   export DB=/workspaces/thesis/data/urls.db BK=/workspaces/thesis/data/urls_t_073.db
+   PYTHONPATH=src uv run python - <<'EOF'
+   import os, sqlite3, sys
+   db_path, backup_path = os.environ["DB"], os.environ["BK"]
+   if os.path.exists(backup_path):
+       sys.exit(f"{backup_path} exists: not overwriting")
+   src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+   dst = sqlite3.connect(backup_path)
+   src.backup(dst)
+   print("backup quick_check:", dst.execute("PRAGMA quick_check").fetchone()[0], "->", backup_path)
+   src.close(); dst.close()
+   EOF
+   ```
+3. **Fill the cache** (writes only `sitemap_entries` and `sitemap_crawls`; the backup is verified against the file first):
+   `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Expect
+   `Crawl: made now`, about 109,000 entries, `Pipeline tables: unchanged`, exit 0. An INCOMPLETE crawl exits 1 and leaves the cache empty (the same
+   command may be run again; a complete, fresh crawl is reused).
+4. **Evidence on the real file** (read-only): `... reclaim_sitemap_rejects.py evidence --db $DB`. G3 judges **these** numbers, not the rehearsal's:
+   qualifying rows (`N`), the split, the proof, the protected ids.
+5. **Reclaim**, only with the maintainer's approval of `N`: `... reclaim_sitemap_rejects.py reclaim --db $DB --backup $BK --expect N --expect-kept 593
+   --i-have-the-g3-approval`. About a minute plus the compaction.
+6. **Check by hand**, read-only: `discovered_urls` is the old count minus `N`, `articles` unchanged, `PRAGMA quick_check` ok, `user_version` still 4, the
+   file's header bytes 18-19 are `02 02` (WAL). Then **restart** the services on the merged code and run the step-3 check of the schema-version-5 section
+   above (`user_version` 5, four names).
+7. **If something is wrong:** `REFUSED` (exit 1): nothing changed. `INCOMPLETE` (exit 2): `compact` as above, or restore. Anything else: stop every
+   service, delete `$DB-wal` and `$DB-shm` if present, copy `$BK` over `$DB`, restart. `$BK` is kept until the maintainer deletes it (the
+   `urls.pre-*.db` rule: after a complete collector run and a complete extractor run at the new state, or 14 days, whichever is later).
+
+If `DB` is a single-file bind mount (a container that mounts `urls.db` itself and not its folder), the final rename fails with "device or resource busy":
+mount the folder.
 
 **Rehearsal on a copy of the real file, 2026-10-20** (cnbc cache filled on the copy: 109,550 entries, range 2022-01-01 to 2026-10-20; the real file
 was only read through SQLite's backup API):
@@ -627,6 +684,13 @@ was only read through SQLite's backup API):
 | split | in the cache (in range): 109,452; **before the range: 468,661** (2006 to 2021); **left the sitemap: 0** |
 | `reclaim` | deleted 578,113 in 65 s; `discovered_urls` 1,059,452 → 481,339; `articles` 481,332 unchanged, 0 orphans; `accept` 104,614 and `review` 51,746 unchanged; rejects 903,092 → 324,979 (323,864 with an article + 1,115 `ddg`); `quick_check` ok; `user_version` 4; the cache tables (109,550 entries) intact |
 | file | 2,570,055,680 → 2,289,635,328 bytes: **280 MB reclaimed** (the estimate was 243 MB) |
+
+**Second rehearsal after the review of PR #95, 2026-10-20** (a fresh copy of the real file, the new tools only: `fill_sitemap_cache.py --rehearsal-copy`, then
+`evidence`, then `reclaim --expect 578113 --expect-kept 593 --rehearsal-copy` with a backup made before the fill): the fill made the crawl (109,550 entries,
+`Pipeline tables: unchanged`, 1,059,452 and 481,332 before and after); `evidence` gave the same split (578,113; 109,452 / 468,661 / 0) and the same 17
+pairs; `reclaim` deleted 578,113 in 61.6 s, 593 ids protected, `discovered_urls` 1,059,452 → 481,339, `articles` 481,332, 0 orphans, `accept`/`review`
+unchanged, the file 2,570,055,680 → 2,289,635,328 bytes (280 MB). **The WAL peaked at 299 MB** during the delete, which is why the disk check asks for the
+file size plus 512 MiB (`WAL_HEADROOM`). The ordinary copy of the 2.5 GB file took about 5 minutes on this machine when the disk was busy.
 
 **The proof that the cache re-derives the stored `accept`/`review` pairs** (20 tickers: `KLAC AAPL ON A IT ARE TTD MSFT NVDA CRM` and 10 seeded at
 random): 19,866 stored `sitemap` `accept`/`review` pairs; **5,254 are in the cache and re-derived**; 14,595 are not in the cache (13,686 before the range,

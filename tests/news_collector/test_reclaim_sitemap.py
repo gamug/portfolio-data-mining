@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,10 +15,13 @@ from sitemap_helpers import RANGE, ROOT, Clock, Site, leaf
 from test_reclass_cache import APPLE, DOMAIN, PLAIN, TITLE, TITLED, connector
 
 from news_collector import reclaim_sitemap as rs
+from news_collector import sitemap_cache as sc
+from news_collector import sitemap_fill
 from news_collector.sitemap_cache import SitemapCache
 
 OTHER = "plain.test"
 NINE = 9
+LAST = 10  # the highest id of the `filled` file
 
 
 def put(
@@ -45,7 +52,7 @@ def filled(db: str) -> str:
     """A queue file with one row of each kind and a cache crawl for `cnbc.com` only."""
     conn = sqlite3.connect(db)
     put(conn, 1)  # qualifies
-    put(conn, 2, source="rss")  # qualifies
+    put(conn, 2)  # qualifies too
     put(conn, 3, article=True)  # kept: it has an article
     put(conn, 4, cls="accept")  # kept: not a reject
     put(conn, 5, status="pending")  # kept: it may still be fetched
@@ -53,6 +60,7 @@ def filled(db: str) -> str:
     put(conn, 7, domain=OTHER)  # kept: no cache for this domain
     put(conn, 8)  # kept below: a hand-labeled id
     put(conn, NINE, cls="review", status="ok", article=True)
+    put(conn, LAST, source="rss")  # kept: nothing in the cache can re-derive an rss pair
     conn.execute(
         "INSERT INTO sitemap_crawls (domain, started_at, finished_at, range_start, signature, "
         "complete, entries, failures) VALUES ('cnbc.com','2026-10-20T10:00:00',"
@@ -102,15 +110,15 @@ def test_only_the_never_fetched_rejects_of_a_filled_cache_qualify(
     assert got == [
         1,
         2,
-    ]  # 8 is a labeled id; 3 has an article; 7 has no cache; 4, 5, 6 are not rejects
+    ]  # 8 is a labeled id; 3 has an article; 7 has no cache; 4, 5, 6 are not rejects; 10 is rss
 
 
 def test_reclaim_deletes_the_candidates_and_nothing_else(filled: str, tmp_path: Path) -> None:
     backup = backup_of(filled, tmp_path)
     done = rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
     assert done.deleted == 2
-    assert ids_left(filled) == [3, 4, 5, 6, 7, 8, NINE]
-    assert (done.before.discovered, done.after.discovered) == (NINE, NINE - 2)
+    assert ids_left(filled) == [3, 4, 5, 6, 7, 8, NINE, LAST]
+    assert (done.before.discovered, done.after.discovered) == (LAST, LAST - 2)
     assert done.after.articles == done.before.articles == 2
     assert done.after.orphans == 0
     assert done.after.kept_rows() == done.before.kept_rows()
@@ -119,7 +127,7 @@ def test_reclaim_deletes_the_candidates_and_nothing_else(filled: str, tmp_path: 
         done.after.schema_hash == done.before.schema_hash
     )  # tables and indexes survive VACUUM INTO
     assert done.after.quick_check == "ok"
-    assert ids_left(str(backup)) == list(range(1, NINE + 1))  # the backup is untouched
+    assert ids_left(str(backup)) == list(range(1, LAST + 1))  # the backup is untouched
     assert not Path(filled + ".compact").exists()
     # the file keeps its journal mode (VACUUM INTO writes a rollback-journal file; the queue's is WAL)
     assert Path(filled).read_bytes()[18:20] == Path(str(backup)).read_bytes()[18:20] == b"\x02\x02"
@@ -129,7 +137,7 @@ def test_a_different_expected_count_deletes_nothing(filled: str, tmp_path: Path)
     backup = backup_of(filled, tmp_path)
     with pytest.raises(rs.ReclaimError, match="names 3 rows, 2 qualify"):
         rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=3, check_processes=False)
-    assert ids_left(filled) == list(range(1, NINE + 1))
+    assert ids_left(filled) == list(range(1, LAST + 1))
 
 
 def test_a_domain_without_a_filled_cache_deletes_nothing(db: str, tmp_path: Path) -> None:
@@ -176,7 +184,7 @@ def test_it_refuses_while_a_collector_runs_and_when_the_disk_is_short(
     )
     with pytest.raises(rs.ReclaimError, match="not enough disk"):
         rs.reclaim(Path(filled), backup, folder, expect=2, check_processes=False)
-    assert ids_left(filled) == list(range(1, NINE + 1))
+    assert ids_left(filled) == list(range(1, LAST + 1))
 
 
 def test_a_stale_compact_file_stops_it(filled: str, tmp_path: Path) -> None:
@@ -203,7 +211,7 @@ def test_a_failed_fingerprint_rolls_the_delete_back(filled: str, tmp_path: Path)
     shutil.copy(filled, backup)  # the backup has the trigger too, so only the check can catch it
     with pytest.raises(rs.ReclaimError, match=r"rolled back"):
         rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
-    assert ids_left(filled) == list(range(1, NINE + 1))
+    assert ids_left(filled) == list(range(1, LAST + 1))
 
 
 # --- the proof ------------------------------------------------------------------------------------
@@ -282,8 +290,6 @@ async def test_the_evidence_never_writes_the_file(db: str, site: Site, tmp_path:
     conn = connector()
     cache = SitemapCache(DOMAIN, [ROOT], db, site.fetch, conn.is_article_url, Clock())
     await cache.begin(RANGE, force=True)
-    import hashlib  # noqa: PLC0415
-
     before = hashlib.sha256(Path(db).read_bytes()).hexdigest()
     await rs.gather_evidence(db, {DOMAIN: conn}, data_dir(tmp_path), RANGE, [APPLE.ticker])
     assert hashlib.sha256(Path(db).read_bytes()).hexdigest() == before
@@ -300,4 +306,339 @@ def test_a_delete_that_touches_articles_rolls_back(filled: str, tmp_path: Path) 
     backup = backup_of(filled, tmp_path)
     with pytest.raises(rs.ReclaimError, match="articles changed"):
         rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
-    assert ids_left(filled) == list(range(1, NINE + 1))
+    assert ids_left(filled) == list(range(1, LAST + 1))
+
+
+# --- the review of PR #95 -----------------------------------------------------------------------
+
+
+def test_kept_ids_refuses_missing_or_empty_sample_files(tmp_path: Path) -> None:
+    empty = tmp_path / "nothing"
+    empty.mkdir()
+    with pytest.raises(rs.ReclaimError, match="the labeled ids are not protected"):
+        rs.kept_ids(empty)
+    (empty / "ticker_a_sample.csv").write_text("id,url\n")
+    (empty / "ticker_b_manual.csv").write_text("id,label\n")
+    with pytest.raises(rs.ReclaimError, match="name no id"):
+        rs.kept_ids(empty)
+
+
+def test_a_wrong_data_dir_deletes_nothing(filled: str, tmp_path: Path) -> None:
+    nowhere = tmp_path / "nowhere"
+    nowhere.mkdir()
+    with pytest.raises(rs.ReclaimError, match="not protected"):
+        rs.reclaim(
+            Path(filled), backup_of(filled, tmp_path), nowhere, expect=2, check_processes=False
+        )
+    assert ids_left(filled) == list(range(1, LAST + 1))
+
+
+def test_the_number_of_protected_ids_can_be_pinned(filled: str, tmp_path: Path) -> None:
+    folder = data_dir(tmp_path, 3, 8)  # {3, 8}
+    with pytest.raises(rs.ReclaimError, match="names 593 protected ids, 2 found"):
+        rs.reclaim(
+            Path(filled),
+            backup_of(filled, tmp_path),
+            folder,
+            expect=2,
+            expect_kept=593,
+            check_processes=False,
+        )
+    done = rs.reclaim(
+        Path(filled),
+        backup_of(filled, tmp_path),
+        folder,
+        expect=2,
+        expect_kept=2,
+        check_processes=False,
+    )
+    assert done.kept == 2
+
+
+def test_it_refuses_while_another_connection_has_the_file_open(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(rs, "LOCK_WAIT", 0.2)
+    other = sqlite3.connect(filled)  # an idle connection, as a gateway keeps one
+    other.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()
+    try:
+        with pytest.raises(rs.ReclaimError, match="another connection has"):
+            rs.reclaim(
+                Path(filled),
+                backup_of(filled, tmp_path),
+                data_dir(tmp_path),
+                expect=2,
+                check_processes=False,
+            )
+    finally:
+        other.close()
+    assert ids_left(filled) == list(range(1, LAST + 1))
+
+
+def test_open_handles_sees_a_process_that_holds_the_file(filled: str, tmp_path: Path) -> None:
+    code = (
+        "import sqlite3, sys, time; c = sqlite3.connect(sys.argv[1]); "
+        "c.execute('SELECT 1 FROM sqlite_master').fetchall(); print('up', flush=True); time.sleep(30)"
+    )
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", code, filled], stdout=subprocess.PIPE, text=True
+    )
+    try:
+        assert proc.stdout is not None
+        assert proc.stdout.readline().strip() == "up"
+        found = rs.open_handles(Path(filled))
+        assert any(f"pid {proc.pid} " in line for line in found), found
+        with pytest.raises(rs.ReclaimError, match="stop the gateway"):
+            rs.reclaim(
+                Path(filled),
+                Path(filled + ".none"),
+                data_dir(tmp_path),
+                expect=2,
+                check_processes=True,
+            )
+    finally:
+        proc.kill()
+        proc.wait()
+    assert rs.open_handles(Path(filled)) == []  # this process is not reported
+
+
+def test_a_missing_pgrep_is_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_pgrep(*_a: object, **_k: object) -> None:
+        raise FileNotFoundError("pgrep")
+
+    monkeypatch.setattr(rs.subprocess, "run", no_pgrep)
+    assert rs.running_collectors() == []
+
+
+def test_a_failure_after_the_commit_says_so_and_compact_finishes_it(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup = backup_of(filled, tmp_path)
+
+    def disk_full(_conn: sqlite3.Connection, compact: Path) -> None:
+        compact.write_bytes(b"half a file")
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(rs, "_write_compact", disk_full)
+    with pytest.raises(rs.ReclaimIncomplete, match=r"COMMITTED.*disk is full.*compact") as err:
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+    assert "2 rows" in str(err.value)
+    assert ids_left(filled) == [3, 4, 5, 6, 7, 8, NINE, LAST]  # the rows are gone
+    assert not Path(filled + ".compact").exists()  # the partial file is removed
+    assert ids_left(str(backup)) == list(range(1, LAST + 1))  # the backup is intact
+    monkeypatch.undo()
+
+    done = rs.compact(Path(filled), check_processes=False)
+
+    assert done.after.discovered == LAST - 2
+    assert ids_left(filled) == [3, 4, 5, 6, 7, 8, NINE, LAST]
+    assert not Path(filled + ".compact").exists()
+    assert Path(filled).read_bytes()[18:20] == b"\x02\x02"  # the journal mode survives
+
+
+def test_a_compacted_file_that_differs_is_not_swapped_in_and_is_reported(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backup = backup_of(filled, tmp_path)
+    real = rs._write_compact
+
+    def corrupting(conn: sqlite3.Connection, compact: Path) -> None:
+        real(conn, compact)
+        other = sqlite3.connect(compact)
+        other.execute("DELETE FROM discovered_urls WHERE id = 4")  # a row the delete spared
+        other.commit()
+        other.close()
+
+    monkeypatch.setattr(rs, "_write_compact", corrupting)
+    with pytest.raises(rs.ReclaimIncomplete, match=r"COMMITTED.*differs from the database"):
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+    assert 4 in ids_left(filled)  # the original file was not replaced
+    assert not Path(filled + ".compact").exists()
+
+
+def test_compact_with_nothing_committed_leaves_the_file_as_it_was_on_failure(
+    filled: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = hashlib.sha256(Path(filled).read_bytes()).hexdigest()
+
+    def broken(_conn: sqlite3.Connection, compact: Path) -> None:
+        compact.write_bytes(b"x")
+        raise sqlite3.OperationalError("disk is full")
+
+    monkeypatch.setattr(rs, "_write_compact", broken)
+    with pytest.raises(sqlite3.OperationalError):
+        rs.compact(Path(filled), check_processes=False)
+    assert not Path(filled + ".compact").exists()
+    assert ids_left(filled) == list(range(1, LAST + 1))
+    assert hashlib.sha256(Path(filled).read_bytes()).hexdigest() == before
+
+
+def test_the_swap_keeps_the_mode_bits_and_reports_the_owner(filled: str, tmp_path: Path) -> None:
+    os.chmod(filled, 0o640)
+    done = rs.reclaim(
+        Path(filled),
+        backup_of(filled, tmp_path),
+        data_dir(tmp_path),
+        expect=2,
+        check_processes=False,
+    )
+    assert (Path(filled).stat().st_mode & 0o777) == 0o640
+    assert Path(filled).stat().st_uid == os.getuid()
+    assert done.owner_kept is True
+
+
+def test_the_owner_that_cannot_be_kept_is_reported(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_a: object) -> None:
+        raise PermissionError("not permitted")
+
+    monkeypatch.setattr(rs.os, "chown", refuse)
+    monkeypatch.setattr(rs.os, "getuid", lambda: Path(filled).stat().st_uid + 1)
+    done = rs.reclaim(
+        Path(filled),
+        backup_of(filled, tmp_path),
+        data_dir(tmp_path),
+        expect=2,
+        check_processes=False,
+    )
+    assert done.owner_kept is False
+
+
+def test_a_quote_in_the_file_name_is_not_sql(filled: str, tmp_path: Path) -> None:
+    folder = tmp_path / "o'brien"
+    folder.mkdir()
+    odd = folder / "it's.db"
+    shutil.copy(filled, odd)
+    done = rs.reclaim(
+        odd, backup_of(str(odd), tmp_path), data_dir(tmp_path), expect=2, check_processes=False
+    )
+    assert done.deleted == 2
+
+
+def test_a_domain_named_by_the_caller_must_have_a_complete_crawl(
+    filled: str, tmp_path: Path
+) -> None:
+    with pytest.raises(rs.ReclaimError, match="no complete cache crawl for"):
+        rs.reclaim(
+            Path(filled),
+            backup_of(filled, tmp_path),
+            data_dir(tmp_path),
+            expect=1,
+            domains=[OTHER],
+            check_processes=False,
+        )
+    assert ids_left(filled) == list(range(1, LAST + 1))
+
+
+def test_a_backup_of_other_rows_with_the_same_counts_is_refused(
+    filled: str, tmp_path: Path
+) -> None:
+    backup = backup_of(filled, tmp_path)
+    other = sqlite3.connect(backup)
+    other.execute("UPDATE discovered_urls SET id = 1001 WHERE id = 1")  # same counts, other ids
+    other.commit()
+    other.close()
+    with pytest.raises(rs.ReclaimError, match="differs from the database"):
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+
+
+async def test_a_read_only_cache_reads_and_never_writes_or_crawls(
+    db: str, site: Site, tmp_path: Path
+) -> None:
+    conn = connector()
+    await SitemapCache(DOMAIN, [ROOT], db, site.fetch, conn.is_article_url, Clock()).begin(
+        RANGE, force=True
+    )
+    before = hashlib.sha256(Path(db).read_bytes()).hexdigest()
+
+    async def never(_url: str) -> str:
+        raise AssertionError("a read-only cache never fetches")
+
+    reader = SitemapCache(DOMAIN, [ROOT], db, never, conn.is_article_url, read_only=True)
+    run = await reader.begin(RANGE, force=True, allow_crawl=True)  # asks to crawl: still reads
+
+    assert run.crawl is not None
+    assert len(run.rows) == 2
+    assert hashlib.sha256(Path(db).read_bytes()).hexdigest() == before
+
+
+# --- the fill command (the cache of the real file is filled before G3) ----------------------------
+
+
+@pytest.fixture
+def offline_site(site: Site, monkeypatch: pytest.MonkeyPatch) -> Site:
+    async def fetch_text(_client: object, url: str) -> str:
+        return await site.fetch(url)
+
+    monkeypatch.setattr(sc, "fetch_text", fetch_text)
+    return site
+
+
+async def test_fill_cache_crawls_once_writes_only_the_cache_and_a_second_run_reuses_it(
+    db: str, offline_site: Site, tmp_path: Path
+) -> None:
+    conn = sqlite3.connect(db)
+    put(conn, 1, url=PLAIN)
+    conn.commit()
+    conn.close()
+
+    first = await sitemap_fill.fill_cache(Path(db), connector(), object(), RANGE, backup=None)  # type: ignore[arg-type]
+    second = await sitemap_fill.fill_cache(Path(db), connector(), object(), RANGE, backup=None)  # type: ignore[arg-type]
+
+    assert first.crawled is True
+    assert first.complete is True
+    assert len(first.run.rows) == 2
+    assert first.pipeline_unchanged is True
+    assert second.crawled is False  # a complete, fresh crawl was already there
+    assert offline_site.crawls() == 1
+    assert ids_left(db) == [1]
+
+
+async def test_fill_cache_needs_a_matching_backup_and_a_current_schema(
+    db: str, offline_site: Site, tmp_path: Path
+) -> None:
+    stale = backup_of(db, tmp_path)
+    conn = sqlite3.connect(db)
+    put(conn, 1, url=PLAIN)
+    conn.commit()
+    conn.close()
+    with pytest.raises(rs.ReclaimError, match="differs from the database"):
+        await sitemap_fill.fill_cache(Path(db), connector(), object(), RANGE, backup=stale)  # type: ignore[arg-type]
+    assert offline_site.crawls() == 0  # nothing was fetched or written
+
+    old = sqlite3.connect(tmp_path / "old.db")
+    old.execute("CREATE TABLE discovered_urls (id INTEGER)")
+    old.commit()
+    old.close()
+    with pytest.raises(rs.ReclaimError, match="schema version 4"):
+        await sitemap_fill.fill_cache(
+            tmp_path / "old.db",
+            connector(),
+            object(),  # type: ignore[arg-type]
+            RANGE,
+            backup=None,
+        )
+    with pytest.raises(rs.ReclaimError, match="no database"):
+        await sitemap_fill.fill_cache(
+            tmp_path / "none.db",
+            connector(),
+            object(),  # type: ignore[arg-type]
+            RANGE,
+            backup=None,
+        )
+
+
+async def test_fill_cache_reports_an_incomplete_crawl(
+    db: str, offline_site: Site, tmp_path: Path
+) -> None:
+    offline_site.down.add(ROOT)
+    report = await sitemap_fill.fill_cache(
+        Path(db),
+        connector(),
+        object(),  # type: ignore[arg-type]
+        RANGE,
+        backup=None,
+    )
+    assert report.complete is False
+    assert report.pipeline_unchanged is True

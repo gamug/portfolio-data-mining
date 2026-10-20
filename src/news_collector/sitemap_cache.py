@@ -30,8 +30,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import httpx
+from portfolio_common.db import Database
 
 from data_mining.db import connect
 from news_collector.config import sitemap_retry_after, sitemap_stale_after
@@ -162,8 +164,11 @@ class SitemapCache:
         retry_after: timedelta | None = None,
         stale_after: timedelta | None = None,
         poll: float = POLL_SECONDS,
+        read_only: bool = False,
     ) -> None:
         self.domain = domain
+        # a read-only cache opens the file `mode=ro` and never crawls (the evidence of T-073)
+        self._read_only = read_only
         self._roots = list(roots)
         self._db_path = db_path
         self._fetch = fetch
@@ -233,8 +238,10 @@ class SitemapCache:
                 now = self._clock()
                 latest = await asyncio.to_thread(self._latest_complete)
                 refresh_failures: list[str] = []
-                while allow_crawl and self._must_refresh(
-                    latest, date_range.start, force, requested, now
+                while (
+                    allow_crawl
+                    and not self._read_only
+                    and self._must_refresh(latest, date_range.start, force, requested, now)
                 ):
                     if self._backing_off(force, now):
                         refresh_failures = list(self._last_failures)  # the outage is still on
@@ -458,8 +465,13 @@ class SitemapCache:
             db.close()
         return None if row is None else (row[0], bool(row[1]), row[2] or 0)
 
+    def _reader(self) -> Database:
+        if self._read_only:
+            return connect(f"file:{Path(self._db_path).resolve()}?mode=ro", uri=True)
+        return connect(self._db_path)
+
     def _latest_complete(self) -> Crawl | None:
-        db = connect(self._db_path)
+        db = self._reader()
         try:
             row = db.execute(LATEST_COMPLETE_SQL, (self.domain,)).fetchone()
         finally:
@@ -469,7 +481,7 @@ class SitemapCache:
         return Crawl(row[0], date.fromisoformat(row[1]), row[2], row[3] or 0)
 
     def _load(self, started_at: str) -> tuple[SitemapEntry, ...]:
-        db = connect(self._db_path)
+        db = self._reader()
         try:
             rows = db.execute(CURRENT_ENTRIES_SQL, (self.domain, started_at)).fetchall()
         finally:
