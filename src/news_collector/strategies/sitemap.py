@@ -128,6 +128,13 @@ class SitemapRSSStrategy:
         )
         return results
 
+    def classify_entries(
+        self, entries: list[SitemapEntry], company: str, ticker: str
+    ) -> list[DiscoveredURL]:
+        """The pairs (every class, `reject` included) of already-read sitemap entries for one
+        company, as `discover` would build them: the re-class from the cache uses it (T-072)."""
+        return self._dedupe_and_filter(entries, company, ticker)
+
     def _dedupe_and_filter(
         self, entries: list[SitemapEntry], company: str, ticker: str
     ) -> list[DiscoveredURL]:

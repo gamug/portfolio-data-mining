@@ -513,6 +513,61 @@ characters or more (`AT&T`'s `at t` is not a spelling); `matching.PLURAL_PHRASES
 matcher changes: `ticker_validation_sample.py --refresh SHEET --db urls.db` keeps every row whose class
 still holds (with its label) and replaces only the others, which a person then labels.
 
+## Re-class from the sitemap cache (T-072)
+
+`T-071` stops storing the sitemap pairs the matcher rejects, so a later matcher change cannot promote what was never
+stored. `reclass-sitemap` is the way back: it classes the cached entries again with the current matcher, **with no network
+and no crawl**, and enqueues the pairs that are now `accept`/`review` through the same promote-only `enqueue_batch`.
+
+```bash
+# dry run (the default): opens the database read-only and says what it would insert and promote
+uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL KLAC
+uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv                 # every ticker of a CSV (ticker, name, sector): no network at all
+# write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
+uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
+# the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
+#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
+#   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
+```
+
+- **Current entries only.** It reads the entries the latest complete crawl saw: an entry that left the sitemap (expired) is not
+  re-classed, and a stored row is never derived from the cache and never deleted or demoted.
+- **No crawl.** A domain with no complete crawl of the current roots and cache version that covers the range is an error line
+  (exit status 1, `errors` in the API response), not a refresh: use a discovery with `--refresh-sitemaps` for that. An old cache
+  is used whatever its age.
+- **Idempotent.** A second run inserts and promotes nothing; a matcher change that moves a pair from nothing to `review` (or
+  `review` to `accept`) shows up as one insert (or one promotion), and a worse class later changes nothing. A promoted
+  `skipped` row goes back to `pending`.
+- **Names.** `--tickers` are named as in `discover` (the S&P 500 list and `universe.db`: a network request for the list unless
+  `--sp500 CSV` is given); the sitemap itself is never fetched.
+- **Cost.** The classification is the full scan of today (about 4.6 s a ticker for `cnbc.com`: 503 tickers take about 40 minutes
+  and a `tqdm` bar shows the progress); `T-071`'s token index will make it seconds.
+- **Reject pairs** are counted in the output (`reject`) and never stored.
+- **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with
+  `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 4 it runs the migration: on
+  the real `urls.db` that is behind the gate and backup rules of `T-073`, and a collector or the gateway may be writing at the
+  same time (the writes are batches of 5,000 pairs, promote-only).
+- **Errors.** A failed ticker (a lock, a file without the queue tables, a bad class, the disk) is one error line plus a
+  WARNING in the log; the other tickers go on. The CLI prints "Tickers failed: N" and exits 1; the API answers **200** with
+  `errors` filled, so a client must read `errors`, not only the status code. For a ticker that failed with `--apply`,
+  `inserted`/`promoted` are **at least** what the completed batches wrote: the failed batch may be partly stored (the queue
+  writes it without ids or promotion when the error comes after the insert), and a second run is safe and finishes it.
+
+**What each script reads after `T-071` and `T-073`** (stored rows unless said otherwise):
+
+| script | what it still covers |
+|---|---|
+| `scripts/reclass_rejects.py` | the stored rejects that remain: `ddg` (1,115), the 323,864 sitemap rejects that keep a quarantined article, domains with no cache, the hand-labeled sample rows `T-073` keeps, and the rows stored before `T-071`. Not retired. |
+| `scripts/retag_urls.py` | legacy rows with no `match_reason` (unaffected by `T-071`/`T-073`); its `--hand-check` sheet draws its 40 `reject` pairs from the stored rows, so the sitemap ones come from the kept rows (fetched). |
+| `scripts/score_ticker_rules.py` | reads the committed labeled sample files, so the kept rows matter (`T-073` never deletes a labeled id); its `--diff` scans the corpus that remains. |
+| `scripts/ticker_validation_sample.py` | draws from stored rows by `(class, source)`. After `T-073` the `(reject, sitemap)` stratum is the kept rows, all fetched before the matcher existed, **not** the population that is no longer stored. A tiny or empty stratum draws what exists and prints its size in the sheet (`stratum_size`), and a sheet short of exactly 40 `reject` rows is refused as the T-057 check by `check_sheet` (tests). To look at the pairs the matcher rejects from the cache, the `reject` count of `reclass-sitemap`'s dry run is the number; a hand-check sheet of them has no `discovered_urls` id to key on, so the labeling tools cannot take it (a follow-up if wanted). |
+
+**The 438 known-gap pairs** (`TASKS.md`, "Known gaps"; `PLAN.md` Work item 12), measured read-only on the real `urls.db`
+2026-10-20 with the reconstructed rule (a non-first word of the normalized name, 5+ characters, not a stopword, a whole word of
+the URL path): the rule still finds **438 pairs on 438 URLs**; **0 are in the set `T-073` deletes** (never fetched, no article,
+`sitemap`/`rss`, `cnbc.com`) and **all 438 are in the kept 323,864** (every one has a quarantined article). So the gap keeps its
+whole population and `reclass_rejects.py` still sees it; nothing in it depends on being re-derived from the cache.
+
 ## Content-quality gate (T-060)
 
 `extractor.parse.wall_kind` classifies a login wall, bot challenge or subscribe prompt that passes the length

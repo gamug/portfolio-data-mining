@@ -177,3 +177,74 @@ def test_the_committed_t062_sheet_is_fresh_for_the_shipped_matcher() -> None:
     rows = list(csv.DictReader(sheet.open()))
 
     assert not [p for p in mod._db_problems(rows, Path(os.environ["TICKER_SHEET_DB"]))]
+
+
+# --- a (reject, sitemap) stratum that is tiny or empty (T-072) ---------------------------------------
+# `T-071` stops storing the sitemap rejects and `T-073` deletes the never-fetched ones, so the stratum
+# the T-057 check draws its 20 sitemap rejects from shrinks to the rows kept with a quarantined
+# article, and could be small. This pins what the tool does then, instead of assuming it.
+
+
+def _db_with_sitemap_rejects(tmp_path: Path, rejects: int) -> Path:
+    db = tmp_path / f"urls_{rejects}.db"
+    with sqlite3.connect(db) as con:
+        con.execute(
+            "CREATE TABLE discovered_urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT,"
+            " domain TEXT, company TEXT, ticker TEXT, source TEXT)"
+        )
+        con.execute("CREATE TABLE articles (id INTEGER PRIMARY KEY, title TEXT, body_text TEXT)")
+        rows = (
+            [
+                (f"https://cnbc.com/x/tesla-news-{i}.html", "Tesla, Inc.", "TSLA", "sitemap")
+                for i in range(60)
+            ]
+            + [
+                (
+                    f"https://finance.yahoo.com/news/a-{i}-in-a-month.html",
+                    "Agilent Technologies",
+                    "A",
+                    "ddg",
+                )
+                for i in range(25)
+            ]
+            + [
+                (
+                    f"https://cnbc.com/x/a-{i}-in-a-month.html",
+                    "Agilent Technologies",
+                    "A",
+                    "sitemap",
+                )
+                for i in range(rejects)
+            ]
+        )
+        for url, company, ticker, source in rows:
+            con.execute(
+                "INSERT INTO discovered_urls (url, title, domain, company, ticker, source)"
+                " VALUES (?, NULL, 'x', ?, ?, ?)",
+                (url, company, ticker, source),
+            )
+    return db
+
+
+def test_a_tiny_sitemap_reject_stratum_draws_what_exists_and_says_how_big_it_is(
+    tmp_path: Path,
+) -> None:
+    db = _db_with_sitemap_rejects(tmp_path, rejects=3)
+    rows = mod.draw(db, set(), 1, final=True)
+    sitemap_rejects = [r for r in rows if r["stratum"] == "reject/sitemap"]
+    assert len(sitemap_rejects) == 3  # not the 20 asked for, and no error
+    assert {r["stratum_size"] for r in sitemap_rejects} == {3}  # the sheet says how small it is
+    assert sum(r["match_mode"] == "reject" for r in rows) == 3 + 20  # the ddg stratum still fills
+
+
+def test_an_empty_sitemap_reject_stratum_is_skipped_and_the_sheet_is_refused_as_the_t057_check(
+    tmp_path: Path,
+) -> None:
+    db = _db_with_sitemap_rejects(tmp_path, rejects=0)
+    rows = mod.draw(db, set(), 1, final=True)
+    assert not [r for r in rows if r["stratum"] == "reject/sitemap"]
+    sheet = tmp_path / "sheet.csv"
+    _write_sheet(sheet, [{k: str(v) for k, v in r.items()} for r in rows])
+    problems = mod.check_sheet(sheet, db)
+    # a short sheet is not the T-057 check: it needs exactly 40 reject rows, and says so
+    assert any("reject rows, the check needs exactly 40" in p for p in problems)
