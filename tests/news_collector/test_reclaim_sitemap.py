@@ -749,3 +749,104 @@ def test_a_sample_file_without_an_id_column_or_with_a_bad_id_is_refused(tmp_path
     (folder / "ticker_z_sample.csv").write_text("id,url\n5.0,u\n")
     with pytest.raises(rs.ReclaimError, match="not a number"):
         rs.kept_ids(folder)
+
+
+# --- the review of PR #95, round 3 --------------------------------------------------------------
+
+
+def _other_gets_locked_out(db: str) -> bool:
+    """A second program opens the file: while `reclaim` holds the lock it is refused."""
+    other = sqlite3.connect(db, timeout=0.2)
+    try:
+        other.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()
+    except sqlite3.OperationalError as exc:
+        return "locked" in str(exc)
+    finally:
+        other.close()
+    return False
+
+
+def test_the_file_stays_locked_while_the_compacted_file_is_checked(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[bool] = []
+    real = rs._copy_permissions  # the last step of the checks, run with the lock held
+
+    def spy(original: Path, new: Path) -> bool:
+        seen.append(_other_gets_locked_out(filled))
+        return real(original, new)
+
+    monkeypatch.setattr(rs, "_copy_permissions", spy)
+    rs.reclaim(
+        Path(filled),
+        backup_of(filled, tmp_path),
+        data_dir(tmp_path),
+        expect=2,
+        check_processes=False,
+    )
+    assert seen == [True]  # refused while the compacted file was being verified
+    assert _other_gets_locked_out(filled) is False  # and free once `reclaim` returned
+
+
+def test_compact_also_keeps_the_lock_through_the_verification(
+    filled: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[bool] = []
+    real = rs._copy_permissions
+
+    def spy(original: Path, new: Path) -> bool:
+        seen.append(_other_gets_locked_out(filled))
+        return real(original, new)
+
+    monkeypatch.setattr(rs, "_copy_permissions", spy)
+    rs.compact(Path(filled), check_processes=False)
+    assert seen == [True]
+
+
+def test_nothing_unlocked_runs_between_the_close_and_the_rename(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the close only `_install` runs (the unlink and the rename), never a check."""
+    order: list[str] = []
+    for name in ("_prepare_compact", "_install", "_check_installed"):
+        real = getattr(rs, name)
+
+        def wrapped(*a: object, _real=real, _name=name, **k: object) -> object:  # type: ignore[no-untyped-def]
+            order.append(_name)
+            return _real(*a, **k)
+
+        monkeypatch.setattr(rs, name, wrapped)
+    rs.reclaim(
+        Path(filled),
+        backup_of(filled, tmp_path),
+        data_dir(tmp_path),
+        expect=2,
+        check_processes=False,
+    )
+    assert order == ["_prepare_compact", "_install", "_check_installed"]
+
+
+def test_a_failed_last_check_of_the_file_in_place_is_reported_with_the_backup(
+    filled: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def wrong(_db: Path, _expected: rs.Fingerprint) -> None:
+        raise rs.ReclaimError(
+            "user_version, discovered_urls, articles are (4, 1, 1), expected (4, 8, 2)"
+        )
+
+    monkeypatch.setattr(rs, "_check_installed", wrong)
+    backup = backup_of(filled, tmp_path)
+    with pytest.raises(
+        rs.ReclaimIncomplete, match=r"last check of the file in place failed.*restore it"
+    ):
+        rs.reclaim(Path(filled), backup, data_dir(tmp_path), expect=2, check_processes=False)
+
+
+def test_check_installed_compares_the_counts_and_the_version(filled: str) -> None:
+    conn = sqlite3.connect(filled)
+    fp = rs.fingerprint(conn)
+    conn.close()
+    rs._check_installed(Path(filled), fp)  # the same file: fine
+    fp.discovered += 1
+    with pytest.raises(rs.ReclaimError, match="expected"):
+        rs._check_installed(Path(filled), fp)

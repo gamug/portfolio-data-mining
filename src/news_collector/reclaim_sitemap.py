@@ -2,19 +2,28 @@
 
 `T-071` stops storing the pairs the matcher rejects, so the 578,113 `skipped` `cnbc.com` rejects of
 the `KLAC` run are dead weight: no article, never fetched, and re-derivable from the sitemap cache
-by `reclass-sitemap` (T-072) if the matcher ever changes. This module holds the two halves of the
-task, both usable on a **copy** with no approval, and the second on the real file only at G3:
+by `reclass-sitemap` (T-072) if the matcher ever changes. Three entry points, all usable on a
+**copy** with no approval, and the writing ones on the real file only at G3:
 
 * `gather_evidence` is read-only: what qualifies, how it splits (in the cache, before the range,
   left the sitemap), what the hand-labeled samples keep, and the proof that the cache re-derives
-  every in-range stored `accept`/`review` pair of a sample of tickers.
+  every in-range stored `accept`/`review` pair of a sample of tickers. (Filling the cache first is
+  `news_collector.sitemap_fill`.)
 * `reclaim` deletes the qualifying rows in one transaction, checks the fingerprint before and
-  after, writes a compacted file with `VACUUM INTO` and swaps it in. The old file stays as the
-  backup until the maintainer deletes it.
+  after, writes a compacted file with `VACUUM INTO`, checks it, and swaps it in. The old file
+  stays as the backup until the maintainer deletes it.
+* `compact` does the compaction and the swap with no delete: it finishes a `reclaim` that raised
+  `ReclaimIncomplete` (the delete committed, the compaction failed).
 
 The rows that qualify are exactly `candidate_where`: `match_class='reject'`, `status='skipped'`,
-no `articles` row, source `sitemap`/`rss`, a domain whose cache is filled, and an id that no
-committed hand-labeled sample names. Nothing else is ever deleted.
+no `articles` row, source `sitemap` **only** (the proof re-derives stored pairs from the sitemap
+cache, which no `rss` pair can be), a domain whose latest complete crawl holds entries, and an id
+that no committed hand-labeled sample names. Nothing else is ever deleted.
+
+Locking: `reclaim` and `compact` hold the file exclusively (WAL: it fails while any other
+connection has it open) from the first read until the compacted file has been checked in full; only
+the unlink of `-wal`/`-shm` and the rename follow the close. A last read of the file in place then
+compares its counts with the checked ones.
 """
 
 # ruff: noqa: S608, TRY301 - every SQL string is built from fixed text and runs of "?" marks; values are bound
@@ -581,7 +590,9 @@ def reclaim(
     `backup` must exist, pass `quick_check` and match the file (counts, classes, ids, schema)
     before anything is written; it is the file the maintainer keeps. `expect` is the count the
     approval named: a different count deletes nothing; `expect_kept` does the same for the number
-    of protected sample ids. The file is held exclusively from the first read to the swap.
+    of protected sample ids. The file is held exclusively from the first read until the compacted
+    file has been fully checked; only the unlink of `-wal`/`-shm` and the rename follow the close.
+    A last read of the file in place compares its counts and `user_version` with the checked ones.
 
     Two kinds of failure. `ReclaimError`: nothing was committed, the file is as it was (a failed
     fingerprint check after the delete rolls it back). `ReclaimIncomplete`: the delete is
@@ -607,22 +618,28 @@ def reclaim(
         deleted, after = _delete(conn, where, params, before, expect)
         committed = True
         _write_compact(conn, compact)
-    except ReclaimError:
-        raise
+        # everything slow is checked while the lock is still held; only the rename follows the close
+        owner_kept = _prepare_compact(db_path, compact, mode, after)
+        conn.close()
+        _install(db_path, compact)
     except BaseException as exc:
-        if committed:
+        if committed:  # whatever failed after the commit, the rows are gone from the file
             compact.unlink(missing_ok=True)
             raise _incomplete(deleted, db_path, backup, exc) from exc
+        if isinstance(exc, ReclaimError):
+            raise
         if isinstance(exc, sqlite3.Error | OSError):  # the transaction was rolled back
             raise ReclaimError(f"the delete failed and was rolled back ({exc})") from exc
         raise
     finally:
         conn.close()
     try:
-        owner_kept = _swap_in(db_path, compact, mode, after)
+        _check_installed(db_path, after)
     except Exception as exc:
-        compact.unlink(missing_ok=True)
-        raise _incomplete(deleted, db_path, backup, exc) from exc
+        raise ReclaimIncomplete(
+            f"INCOMPLETE: the compacted file of {db_path} was swapped in but the last check of the "
+            f"file in place failed ({exc}). The backup {backup} is intact: restore it."
+        ) from exc
     return Reclaimed(
         deleted,
         before,
@@ -690,20 +707,24 @@ def compact(
         if before.quick_check != "ok":
             raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
         _write_compact(conn, packed)
+        owner_kept = _prepare_compact(db_path, packed, mode, before)  # the lock is still held
+        conn.close()
+        _install(db_path, packed)
     except BaseException as exc:
         packed.unlink(missing_ok=True)
+        if isinstance(exc, ReclaimError):
+            raise
         if isinstance(exc, sqlite3.Error | OSError):
             raise ReclaimError(f"the file is as it was ({exc})") from exc
         raise
     finally:
         conn.close()
     try:
-        owner_kept = _swap_in(db_path, packed, mode, before)
+        _check_installed(db_path, before)
     except Exception as exc:
-        packed.unlink(missing_ok=True)
-        if isinstance(exc, ReclaimError):
-            raise
-        raise ReclaimError(f"the file is as it was ({exc})") from exc
+        raise ReclaimError(
+            f"swapped in, but the last check of the file in place failed ({exc})"
+        ) from exc
     return Reclaimed(
         0,
         before,
@@ -717,10 +738,11 @@ def compact(
     )
 
 
-def _swap_in(db_path: Path, compact: Path, mode: str, after: Fingerprint) -> bool:
-    """Check the compacted file against the database, give it back its journal mode, mode bits
-    and owner, and swap it in. Returns whether the owner is the original's. Any failure leaves
-    `db_path` as it is (the caller removes the compacted file)."""
+def _prepare_compact(db_path: Path, compact: Path, mode: str, expected: Fingerprint) -> bool:
+    """Check the compacted file against the database, give it back its journal mode, mode bits and
+    owner. Returns whether the owner is the original's. The caller still holds the lock on
+    `db_path`: this is the slow part (a `quick_check` of the whole file) and must not run unlocked.
+    """
     packed = sqlite3.connect(compact)
     try:
         if packed.execute(f"PRAGMA journal_mode={mode}").fetchone()[0] != mode:
@@ -728,13 +750,32 @@ def _swap_in(db_path: Path, compact: Path, mode: str, after: Fingerprint) -> boo
         packed_fp = fingerprint(packed)
     finally:
         packed.close()
-    if packed_fp.quick_check != "ok" or not _same_content(after, packed_fp):
+    if packed_fp.quick_check != "ok" or not _same_content(expected, packed_fp):
         raise ReclaimError("the compacted file differs from the database: not swapped in")
-    owner_kept = _copy_permissions(db_path, compact)
+    return _copy_permissions(db_path, compact)
+
+
+def _install(db_path: Path, compact: Path) -> None:
+    """Drop the old file's `-wal`/`-shm` and rename the compacted file over it: milliseconds."""
     for suffix in ("-wal", "-shm"):
         Path(str(db_path) + suffix).unlink(missing_ok=True)
     compact.replace(db_path)
-    return owner_kept
+
+
+def _check_installed(db_path: Path, expected: Fingerprint) -> None:
+    """A last cheap read of the file in place (counts, not `quick_check`): the checked file."""
+    conn = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True, timeout=60)
+    try:
+        got = (
+            conn.execute("PRAGMA user_version").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM discovered_urls").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0],
+        )
+    finally:
+        conn.close()
+    want = (expected.user_version, expected.discovered, expected.articles)
+    if got != want:
+        raise ReclaimError(f"user_version, discovered_urls, articles are {got}, expected {want}")
 
 
 def _copy_permissions(original: Path, new: Path) -> bool:
