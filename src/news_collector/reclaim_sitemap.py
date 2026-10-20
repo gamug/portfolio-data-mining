@@ -46,6 +46,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from data_mining import resolve_db_path
 from data_mining.matching import CLASS_RANK
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import Company, DateRange
@@ -69,6 +70,35 @@ PROOF_TICKERS = ("KLAC", "AAPL", "ON", "A", "IT", "ARE", "TTD", "MSFT", "NVDA", 
 
 class ReclaimError(Exception):
     """A check failed before anything was committed: the file is as it was."""
+
+
+def check_database(db_path: Path) -> None:
+    """A mistyped `--db` is a refusal, not a traceback (and nothing is created)."""
+    if not Path(db_path).is_file():
+        raise ReclaimError(f"no database at {db_path}")
+
+
+def looks_real(db: Path) -> bool:
+    """The file `DATABASE_URL`/the default names, or any file called `urls.db`."""
+    real = resolve_db_path(None)
+    return db.name == "urls.db" or (real is not None and db.resolve() == Path(real).resolve())
+
+
+def approval_gate(db: Path, *, g3: bool, rehearsal: bool) -> bool:
+    """`check_processes` for a writing step, or a `ReclaimError` saying why it is refused.
+
+    The same rule for `reclaim`, `compact` and the fill: exactly one of `--i-have-the-g3-approval`
+    (the real file: the process and open-file checks run, whatever the file is called) and
+    `--rehearsal-copy`; a file that looks real cannot be called a copy. The guards are never
+    inferred from the environment.
+    """
+    if g3 == rehearsal:
+        raise ReclaimError("give exactly one of --i-have-the-g3-approval and --rehearsal-copy")
+    if rehearsal and looks_real(db):
+        raise ReclaimError(
+            f"{db} looks like the real database: it needs --i-have-the-g3-approval (T-073, G3)"
+        )
+    return g3
 
 
 class ReclaimIncomplete(ReclaimError):
@@ -257,6 +287,7 @@ async def gather_evidence(
     proof_tickers: Sequence[str],
 ) -> Evidence:
     """Everything G3 needs to see, read-only: the file is opened `mode=ro`."""
+    check_database(Path(db_path))
     conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True, timeout=60)
     try:
         ids = kept_ids(data_dir)
@@ -601,6 +632,7 @@ def reclaim(
     """
     began = time.monotonic()
     db_path = Path(db_path)
+    check_database(db_path)
     kept = kept_ids(data_dir)
     if expect_kept is not None and len(kept) != expect_kept:
         raise ReclaimError(f"the approval names {expect_kept} protected ids, {len(kept)} found")
@@ -695,6 +727,7 @@ def compact(
     """
     began = time.monotonic()
     db_path = Path(db_path)
+    check_database(db_path)
     if backup is not None:
         check_backup_file(db_path, backup)
     _check_start(db_path, check_processes)

@@ -621,7 +621,7 @@ article, the 1,115 `ddg` rejects and every `accept`/`review` row stay.
 
 **The two guards are never inferred from the environment.** `reclaim`, `compact` and `fill_sitemap_cache.py` take exactly one of
 `--i-have-the-g3-approval` (the real file: the process and open-file checks run, whatever the file is called) and `--rehearsal-copy` (a copy: a file
-called `urls.db`, or the one `DATABASE_URL` names, is refused as a copy). Typing the real path without either flag does nothing.
+called `urls.db`, or the one `DATABASE_URL` names, is refused as a copy). Typing the real path without either flag does nothing. The three commands read the pair the same way (one shared gate), and a mistyped `--db` (a missing file or a folder) is `REFUSED, nothing changed: no database at ...` (exit 1) in `reclaim`, `compact`, `evidence` and the fill, never a traceback.
 
 **What `reclaim` does.** Before it writes anything it refuses unless: the sample ids are found; `--backup` is another file that passes `quick_check`
 and has the live file's fingerprint (counts, class counts, orphan articles, `user_version`, the sum and the highest `discovered_urls.id`, a hash of every
@@ -641,7 +641,7 @@ backup). The old file is the backup, kept until the maintainer deletes it.
 delete of N rows is COMMITTED ...`: the commit succeeded but `VACUUM INTO` or the swap failed (a full disk, a compacted file that differs); the file has
 lost the rows and is not compacted, the partial `.compact` is removed, and the backup is intact. A second `reclaim` cannot finish it (0 rows qualify now):
 run `compact --db ... --backup ... --i-have-the-g3-approval`, which compacts and swaps with no delete (the backup must exist and pass `quick_check`; it is not compared, the
-file has lost the rows it still has) and leaves the file as it was if it fails too (`REFUSED, the file is as it was`), or restore the backup. Any SQLite or OS
+file has lost the rows it still has) and leaves the file as it was if it fails too (`REFUSED, nothing changed: the file is as it was (...)`), or restore the backup. Any SQLite or OS
 error before the commit is also a `REFUSED` (exit 1, "rolled back"), never a traceback; and the backup is compared to the file **again under the lock**: a program
 that wrote between the check and the lock makes `reclaim` refuse ("make the backup again"). The CLI prints a WARNING when the new file's owner is not the original's (the user running it could not `chown`): fix it before restarting a
 service that runs as another user.

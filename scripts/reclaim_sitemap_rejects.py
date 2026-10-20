@@ -34,7 +34,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from data_mining import resolve_db_path
 from data_mining.env import load_env
 
 load_env()
@@ -45,6 +44,8 @@ from news_collector.reclaim_sitemap import (  # noqa: E402
     PROOF_TICKERS,
     ReclaimError,
     ReclaimIncomplete,
+    approval_gate,
+    check_database,
     compact,
     format_evidence,
     gather_evidence,
@@ -73,6 +74,11 @@ def _tickers(db: str, extra: int, seed: int) -> list[str]:
 
 
 async def cmd_evidence(args: argparse.Namespace) -> int:
+    try:
+        check_database(Path(args.db))
+    except ReclaimError as exc:
+        print(f"REFUSED, nothing changed: {exc}")
+        return 1
     date_range = build_date_range(args.start_date, args.end_date)
     tickers = args.tickers or _tickers(args.db, args.sample, args.seed)
     async with build_client() as client:
@@ -85,26 +91,13 @@ async def cmd_evidence(args: argparse.Namespace) -> int:
     return 0 if found == accepted else 1
 
 
-def looks_real(db: Path) -> bool:
-    """The file `DATABASE_URL`/the default names, or any file called `urls.db`."""
-    real = resolve_db_path(None)
-    return db.name == "urls.db" or (real is not None and db.resolve() == Path(real).resolve())
-
-
 def gate(args: argparse.Namespace) -> bool | None:
-    """`check_processes` for the step, or None (after printing why) when it is refused.
-
-    Every file is treated as the real one unless the caller says it is a rehearsal copy, and a
-    file that looks real cannot be called one: the guards are never inferred from the environment.
-    """
-    db = Path(args.db)
-    if args.g3 == args.rehearsal:
-        print("give exactly one of --i-have-the-g3-approval and --rehearsal-copy")
+    """`check_processes` for the step, or None (after printing why) when it is refused."""
+    try:
+        return approval_gate(Path(args.db), g3=args.g3, rehearsal=args.rehearsal)
+    except ReclaimError as exc:
+        print(f"REFUSED, nothing changed: {exc}")
         return None
-    if args.rehearsal and looks_real(db):
-        print(f"{db} looks like the real database: it needs --i-have-the-g3-approval (T-073, G3)")
-        return None
-    return bool(args.g3)
 
 
 def cmd_reclaim(args: argparse.Namespace) -> int:
@@ -158,7 +151,7 @@ def cmd_compact(args: argparse.Namespace) -> int:
             check_processes=check_processes,
         )
     except ReclaimError as exc:
-        print(f"REFUSED, the file is as it was: {exc}")
+        print(f"REFUSED, nothing changed: {exc}")
         return 1
     print(f"File             : {done.bytes_before} -> {done.bytes_after} bytes")
     print(f"discovered_urls  : {done.after.discovered}, articles {done.after.articles}")

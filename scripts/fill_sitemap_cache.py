@@ -23,31 +23,26 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from data_mining import resolve_db_path
 from data_mining.env import load_env
 
 load_env()
 
 from news_collector.config import build_date_range, default_start_date  # noqa: E402
 from news_collector.orchestrator import build_connectors  # noqa: E402
-from news_collector.reclaim_sitemap import ReclaimError  # noqa: E402
+from news_collector.reclaim_sitemap import ReclaimError, approval_gate  # noqa: E402
 from news_collector.sitemap_fill import fill_cache  # noqa: E402
 from news_collector.utils.http import build_client  # noqa: E402
 
 
-def looks_real(db: Path) -> bool:
-    """The file `DATABASE_URL`/the default names, or any file called `urls.db`."""
-    real = resolve_db_path(None)
-    return db.name == "urls.db" or (real is not None and db.resolve() == Path(real).resolve())
-
-
 async def run(args: argparse.Namespace) -> int:
     db = Path(args.db)
-    if args.rehearsal_copy and looks_real(db):
-        print(f"{db} looks like the real database: use --backup and --i-have-the-g3-approval")
+    try:
+        approval_gate(db, g3=args.g3, rehearsal=args.rehearsal_copy)
+    except ReclaimError as exc:
+        print(f"REFUSED, nothing changed: {exc}")
         return 1
-    if not args.rehearsal_copy and not (args.g3 and args.backup):
-        print("the real database needs --backup and --i-have-the-g3-approval (T-073, G3)")
+    if args.g3 and not args.backup:
+        print("REFUSED, nothing changed: the real database needs --backup (T-073, G3)")
         return 1
     date_range = build_date_range(args.start_date, args.end_date)
     try:
