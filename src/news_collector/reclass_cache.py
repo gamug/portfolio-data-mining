@@ -134,6 +134,7 @@ async def reclass_from_cache(
     """
     began = time.monotonic()
     report = ReclassReport(applied=apply)
+    # One `stat`, deliberately on the loop: `to_thread` would cost more than it saves.
     if not Path(db_path).is_file():  # a connection would create an empty file at a mistyped path
         report.errors.append(f"{db_path}: no such database (nothing was created)")
         return report
@@ -170,10 +171,20 @@ async def reclass_from_cache(
                 result = TickerResult(company.ticker, domain)
                 try:
                     await _one(queue, connector, run, company, date_range, apply, result)
-                except sqlite3.Error as exc:  # a file without the queue tables, or a lock
-                    report.errors.append(
-                        f"{domain} {company.ticker}: database error: {exc}"
-                        f" (written before it: {result.inserted} inserted, {result.promoted} promoted)"
+                except Exception as exc:
+                    # A lock or a file without the queue tables (`sqlite3.Error`), a bad class
+                    # (`ValueError`), the disk (`OSError`): the earlier batches are committed.
+                    kind = (
+                        "database error" if isinstance(exc, sqlite3.Error) else type(exc).__name__
+                    )
+                    written = (
+                        f"written before it: {result.inserted} inserted, {result.promoted} promoted"
+                        if apply
+                        else "dry run, nothing written"
+                    )
+                    report.errors.append(f"{domain} {company.ticker}: {kind}: {exc} ({written})")
+                    log.warning(
+                        "re-class %s %s failed (%s)", domain, company.ticker, written, exc_info=True
                     )
                     if result.inserted or result.promoted:  # batches already committed stay counted
                         report.results.append(result)

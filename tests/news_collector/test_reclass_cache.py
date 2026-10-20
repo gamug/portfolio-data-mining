@@ -241,6 +241,8 @@ async def test_a_file_without_the_queue_tables_is_an_error_line_not_a_crash(
     assert report.results == []
     assert "database error" in report.errors[0]
     assert "AAPL" in report.errors[0]
+    assert "dry run, nothing written" in report.errors[0]
+    assert "inserted" not in report.errors[0]
 
 
 async def test_classify_entries_gives_the_pairs_discover_builds_from_the_cache(
@@ -543,3 +545,30 @@ class _FakeClient:
 
 async def _lookup(tickers: list[str], client: object, start: object) -> list[Company]:
     return [Company(ticker=t, name=f"{t} Inc.") for t in tickers]
+
+
+async def test_a_non_database_error_is_one_error_line_with_the_partial_counts(
+    db: str, site: Site, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    monkeypatch.setattr(reclass_cache, "_WRITE_BATCH", 1)
+    real = URLQueue.enqueue_batch
+    calls = []
+
+    def bad(self: URLQueue, batch: list) -> int:
+        calls.append(1)
+        if len(calls) == TWO:
+            raise ValueError("bad match_class")
+        return real(self, batch)
+
+    monkeypatch.setattr(URLQueue, "enqueue_batch", bad)
+    with caplog.at_level("WARNING", logger="news_collector.reclass_cache"):
+        report = await run(
+            db, conn, apply=True, companies=(APPLE, Company(ticker="MSFT", name="Microsoft"))
+        )
+    assert "ValueError: bad match_class" in report.errors[0]
+    assert "1 inserted" in report.errors[0]
+    # the failed ticker keeps its partial counts and the next one still runs
+    assert [(r.ticker, r.inserted) for r in report.results] == [("AAPL", 1), ("MSFT", 0)]
+    assert any("AAPL failed" in r.getMessage() and r.exc_info for r in caplog.records)
