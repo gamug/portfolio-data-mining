@@ -24,7 +24,11 @@ _FALLBACK_START_DATE = date(2022, 1, 1)
 # 0 turns the back-off off. A forced refresh ignores it.
 ENV_SITEMAP_RETRY_MINUTES = "SITEMAP_RETRY_MINUTES"
 _FALLBACK_SITEMAP_RETRY_MINUTES = 5.0
-_MAX_SITEMAP_RETRY_MINUTES = 30 * 24 * 60  # a month: more is a typo, not a policy
+_MAX_SITEMAP_MINUTES = 30 * 24 * 60  # a month: more is a typo, not a policy
+
+# Minutes after which an unfinished crawl row is a crashed crawl, not a running one (T-070b).
+ENV_SITEMAP_STALE_MINUTES = "SITEMAP_STALE_MINUTES"
+_FALLBACK_SITEMAP_STALE_MINUTES = 30.0
 
 log = logging.getLogger(__name__)
 
@@ -35,28 +39,48 @@ def default_start_date() -> date:
     return date.fromisoformat(raw) if raw else _FALLBACK_START_DATE
 
 
-def sitemap_retry_after() -> timedelta:
-    """The back-off after a failed sitemap refresh. Set via SITEMAP_RETRY_MINUTES (>= 0).
+def _minutes_from_env(name: str, fallback: float, *, allow_zero: bool) -> timedelta:
+    """A number of minutes from the environment: finite, at most a month, > 0 (>= 0 if allowed).
 
-    A value that is not a finite number between 0 and a month is ignored, with a warning: a typo in `.env` must
-    not turn the back-off off or stop the run.
+    Anything else is ignored with a warning: a typo in `.env` must not stop a run, turn a
+    safeguard off, or crash on an overflow.
     """
-    raw = (os.environ.get(ENV_SITEMAP_RETRY_MINUTES) or "").strip()
+    raw = (os.environ.get(name) or "").strip()
     if not raw:
-        return timedelta(minutes=_FALLBACK_SITEMAP_RETRY_MINUTES)
+        return timedelta(minutes=fallback)
     try:
         minutes = float(raw)
     except ValueError:
         minutes = -1.0
-    if not (math.isfinite(minutes) and 0 <= minutes <= _MAX_SITEMAP_RETRY_MINUTES):
+    low_ok = minutes >= 0 if allow_zero else minutes > 0
+    if not (math.isfinite(minutes) and low_ok and minutes <= _MAX_SITEMAP_MINUTES):
         log.warning(
-            "%s=%r is not a number of minutes between 0 and a month: using %s",
-            ENV_SITEMAP_RETRY_MINUTES,
+            "%s=%r is not a number of minutes %s a month: using %s",
+            name,
             raw,
-            _FALLBACK_SITEMAP_RETRY_MINUTES,
+            "between 0 and" if allow_zero else "above 0 and at most",
+            fallback,
         )
-        minutes = _FALLBACK_SITEMAP_RETRY_MINUTES
+        minutes = fallback
     return timedelta(minutes=minutes)
+
+
+def sitemap_retry_after() -> timedelta:
+    """The back-off after a failed sitemap refresh. Set via SITEMAP_RETRY_MINUTES (>= 0)."""
+    return _minutes_from_env(
+        ENV_SITEMAP_RETRY_MINUTES, _FALLBACK_SITEMAP_RETRY_MINUTES, allow_zero=True
+    )
+
+
+def sitemap_stale_after() -> timedelta:
+    """How old an unfinished crawl row must be to count as a crashed crawl (T-070b).
+
+    Set via SITEMAP_STALE_MINUTES (> 0, default 30). A crawl slower than this is taken over by
+    a second process, so a domain whose sitemap needs longer must raise it (`ft` took 837 s).
+    """
+    return _minutes_from_env(
+        ENV_SITEMAP_STALE_MINUTES, _FALLBACK_SITEMAP_STALE_MINUTES, allow_zero=False
+    )
 
 
 def today_utc() -> date:

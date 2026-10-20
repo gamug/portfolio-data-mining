@@ -98,6 +98,11 @@ CREATE TABLE IF NOT EXISTS articles (
 # are UTC ISO-8601 with microseconds and no offset (`2026-10-19T10:00:00.000000`; `range_start`
 # is a date); `last_seen` equals the `started_at` of the crawl that saw the entry, which the
 # schema does not enforce; `complete` is 0 or 1.
+#
+# Queries (their SQL is in `news_collector.sitemap_cache`, and a test runs it on this schema): the
+# latest complete crawl is found by the primary key `(domain, started_at)`, already in the order the
+# lookup wants; `ix_sitemap_crawls_latest` is not used by it (T-070b ordered by `started_at`, not by
+# `finished_at`); `ix_sitemap_crawls_open` serves the crawl in progress.
 SITEMAP_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS sitemap_entries (
     domain TEXT NOT NULL, url TEXT NOT NULL, lastmod TEXT, title TEXT,

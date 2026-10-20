@@ -194,8 +194,23 @@ T-071 is merged**.
   entries (`tracemalloc`), so the gateway's resident size grows by that much after its first discovery request and stays.
 - **Errors:** a database error while the cache is read or refreshed is not an exception of the run: it is a failure of every pair of that
   domain (not checkpointed), and the other domains run.
-- **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The
-  cost of the duplicate is 10 s and the same rows (an upsert).
+- **Two processes, one crawl (T-070b).** The gateway and the crawler are two processes on one file. A process that must refresh first
+  claims the domain: one `BEGIN IMMEDIATE` transaction looks for an unfinished `sitemap_crawls` row younger than the stale timeout and,
+  finding none, inserts its own (`finished_at` empty); the other process finds it, **waits** (it looks again every 5 s) and then reads what
+  the winner wrote. If the winner **failed** the waiter crawls nothing (one outage, one crawl) and applies the failed-refresh cases above;
+  a winner whose row is older than **30 minutes** (`SITEMAP_STALE_MINUTES` in `.env`, a number > 0) is a crashed crawl and is **taken
+  over**: its row is ignored (it stays, as history) and the waiter crawls. A crawl that raises or is cancelled closes its row as failed at
+  once. A slow domain needs the setting raised (`ft` took 837 s): a crawl longer than the timeout is crawled twice. Like the retry
+  setting, it is read once per process, **and the gateway and the crawler must use the same value**: each judges the other's unfinished
+  row with its own (30 and 60 would let the first take over a live 40-minute crawl); both read the one repo-root `.env`, so they agree
+  unless one is overridden in its environment. A waiting process whose range is wider than the winner's crawls after it.
+  Three consequences: (1) **a request waits for the crawl it finds:** an API request for a domain that the crawler is crawling waits
+  for that crawl, up to the stale timeout (about 12 s for `cnbc.com`), because the waiter holds the process's lock for the domain;
+  (2) **the gateway and the crawler are assumed to share a clock**, since the row's `started_at` is written by one process and judged
+  by the other (a skew larger than the timeout would make a live crawl look dead); (3) **two crawls can overlap after a takeover**
+  (the first was only slow): the newest crawl's data wins whichever finishes last (the latest complete crawl is the one with the latest
+  `started_at`, and an older crawl never moves an entry's `last_seen` back).
+
 - **Usage:**
   ```bash
   # the cache is on by default for a domain with sitemap roots; a cache at most 7 days old is used
@@ -205,6 +220,8 @@ T-071 is merged**.
   # the same on the API: {"refresh_sitemaps": true} in the body of /discovery/run-all or /cnbc/
   ```
   A run that used an old cache because the refresh failed prints `Warnings` in its summary and returns `warnings` in the API response.
+- **A crawl in progress** shows as a `sitemap_crawls` row with no `finished_at` (the query below lists it); a row of a dead process stays
+  until the 90-day purge and does no harm.
 - **Look at it** (read-only, from the repository root; `DB` as above):
   ```bash
   PYTHONPATH=src uv run python - <<'EOF'

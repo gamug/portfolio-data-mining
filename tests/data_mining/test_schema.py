@@ -24,6 +24,7 @@ from data_mining.schema import (
     run_migrations,
 )
 from extractor.db import connect, ensure_articles_table
+from news_collector.sitemap_cache import CURRENT_ENTRIES_SQL, LATEST_COMPLETE_SQL, OPEN_CRAWL_SQL
 from news_collector.storage.queue import URLQueue
 
 LEGACY_ARTICLES_SCHEMA = """
@@ -352,29 +353,26 @@ def test_the_design_queries_use_an_index_on_the_migrated_schema(db: Database) ->
         "INSERT INTO sitemap_crawls VALUES ('cnbc.com', '2026-10-19T10:00:00.000000', NULL, 0, "
         "'2022-01-01', 'sig', NULL, NULL)"
     )
+    # the SQL text is the cache's own (`news_collector.sitemap_cache`): this test must run the
+    # queries the code runs, not a copy of them
     queries = {
-        "latest complete crawl": (
-            "SELECT started_at, finished_at, range_start, signature FROM sitemap_crawls "
-            "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1",
-            (DOMAIN,),
-        ),
-        "crawl in progress": (
-            "SELECT 1 FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL "
-            "AND started_at > ?",
-            (DOMAIN, "2026-10-19T09:30:00.000000"),
-        ),
-        "current entries": (
-            "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ?",
-            (DOMAIN, "2026-10-19T10:00:00.000000"),
-        ),
+        "latest complete crawl": (LATEST_COMPLETE_SQL, (DOMAIN,)),
+        "crawl in progress": (OPEN_CRAWL_SQL, (DOMAIN, "2026-10-19T09:30:00.000000")),
+        "current entries": (CURRENT_ENTRIES_SQL, (DOMAIN, "2026-10-19T10:00:00.000000")),
     }
+    plans = {}
     for name, (sql, params) in queries.items():
-        plan = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql, params))
-        assert "SEARCH" in plan, (name, plan)
-        assert "SCAN" not in plan, (name, plan)
+        plans[name] = " ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + sql, params))
+        assert "SEARCH" in plans[name], (name, plans[name])
+        assert "SCAN" not in plans[name], (name, plans[name])
+    # the latest complete crawl is ordered by `started_at` (T-070b): the primary key
+    # `(domain, started_at)` gives that order, so it is a search with no sort
+    assert "sqlite_autoindex_sitemap_crawls" in plans["latest complete crawl"]
+    assert "TEMP B-TREE" not in plans["latest complete crawl"]
+    assert "ix_sitemap_crawls_open" in plans["crawl in progress"]
     # the in-progress row is found inside the timeout and not after it
     sql, params = queries["crawl in progress"]
-    assert db.execute(sql, params).fetchall() == [(1,)]
+    assert db.execute(sql, params).fetchall() == [("2026-10-19T10:00:00.000000",)]
     assert db.execute(sql, (DOMAIN, "2026-10-19T10:30:00.000000")).fetchall() == []
 
 

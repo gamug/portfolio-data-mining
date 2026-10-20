@@ -71,10 +71,11 @@ class Site:
         self.pages = pages
         self.fetches: dict[str, int] = {}
         self.down: set[str] = set()
+        self.delay = 0.0  # seconds a fetch takes: a crawl that another process can overlap
 
     async def fetch(self, url: str) -> str:
         self.fetches[url] = self.fetches.get(url, 0) + 1
-        await asyncio.sleep(0)  # a real fetch yields: concurrent callers interleave here
+        await asyncio.sleep(self.delay)  # a real fetch yields: concurrent callers interleave here
         if url in self.down or url not in self.pages:
             raise httpx.HTTPStatusError("403", request=MagicMock(), response=MagicMock())
         return self.pages[url]
@@ -180,3 +181,34 @@ def cnbc_strategy(site: Site, cache: SitemapRun | None) -> SitemapRSSStrategy:
 
 def seen(pairs: list) -> list[tuple]:
     return sorted((p.url, p.match_class, p.match_reason, p.title, p.pub_date) for p in pairs)
+
+
+def child_crawl(db: str, results: object, barrier: object) -> None:
+    """The body of one of two real processes (T-070b): a slow crawl of a one-entry sitemap through
+    `SitemapCache`, reporting (fetches made here, entries read, failures, waits entered) on
+    `results`. Both processes pass the barrier after their imports and just before `begin`, so
+    the second always arrives while the first is crawling."""
+    fetches = waits = 0
+    page = leaf(("https://example.test/a-1", "2024-05-01"))
+
+    async def fetch(_url: str) -> str:
+        nonlocal fetches
+        fetches += 1
+        await asyncio.sleep(1.0)  # slow: the other process is already waiting
+        return page
+
+    async def main() -> tuple[int, int, int, int]:
+        cache = SitemapCache("example.test", [ROOT], db, fetch, lambda _u: True, poll=0.05)
+        real_wait = cache._wait_for
+
+        async def counting(other: str | None) -> str | None:
+            nonlocal waits
+            waits += 1
+            return await real_wait(other)
+
+        cache._wait_for = counting  # type: ignore[method-assign]
+        barrier.wait(timeout=60)  # type: ignore[attr-defined]
+        run = await cache.begin(RANGE)
+        return fetches, len(run.entries(RANGE)[0]), len(run.failures), waits
+
+    results.put(asyncio.run(main()))  # type: ignore[attr-defined]
