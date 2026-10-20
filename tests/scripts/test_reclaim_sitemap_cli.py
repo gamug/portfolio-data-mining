@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+from datetime import date
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from news_collector import reclaim_sitemap as rs
+from news_collector.models import SitemapEntry
+from news_collector.sitemap_cache import Crawl, SitemapRun
+from news_collector.sitemap_fill import FillReport
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -171,3 +175,106 @@ def test_compact_on_the_real_file_needs_a_backup(
     ns = argparse.Namespace(db=str(tmp_path / "x.db"), g3=True, rehearsal=False, backup=None)
     assert reclaim_cli.cmd_compact(ns) == 1
     assert "needs --backup" in capsys.readouterr().out
+
+
+# --- the success paths: what the maintainer reads after the file has been swapped ----------------
+
+
+def fingerprint(discovered: int, articles: int = 2) -> rs.Fingerprint:
+    return rs.Fingerprint(
+        discovered=discovered, articles=articles, orphans=0, quick_check="ok",
+        by_class={"accept": 1, "review": 1, "reject": discovered - 2},
+    )  # fmt: skip
+
+
+def reclaimed(owner_kept: bool = True) -> rs.Reclaimed:
+    return rs.Reclaimed(
+        deleted=2, before=fingerprint(10), after=fingerprint(8), bytes_before=2000,
+        bytes_after=1500, backup=Path("urls_t_073.db"), seconds=3.5, kept=593, owner_kept=owner_kept,
+    )  # fmt: skip
+
+
+def test_a_successful_reclaim_prints_the_report_and_exits_0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(reclaim_cli, "reclaim", lambda *_a, **_k: reclaimed())
+    assert reclaim_cli.cmd_reclaim(args(str(tmp_path / "x.db"), rehearsal=True)) == 0
+    out = capsys.readouterr().out
+    for line in ("Deleted          : 2", "Protected ids    : 593", "discovered_urls  : 10 -> 8",
+                 "(orphans 0)", "500 reclaimed", "Backup kept      : urls_t_073.db", "Final check"):  # fmt: skip
+        assert line in out
+    assert "WARNING" not in out
+
+
+def test_a_reclaim_whose_owner_could_not_be_kept_still_exits_0_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(reclaim_cli, "reclaim", lambda *_a, **_k: reclaimed(owner_kept=False))
+    assert reclaim_cli.cmd_reclaim(args(str(tmp_path / "x.db"), rehearsal=True)) == 0
+    assert "WARNING: the new file is owned by this user" in capsys.readouterr().out
+
+
+def test_a_successful_compact_prints_and_exits_0_and_a_refused_one_says_the_file_is_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ns = argparse.Namespace(db=str(tmp_path / "x.db"), g3=False, rehearsal=True, backup=None)
+    monkeypatch.setattr(reclaim_cli, "compact", lambda *_a, **_k: reclaimed(owner_kept=False))
+    assert reclaim_cli.cmd_compact(ns) == 0
+    out = capsys.readouterr().out
+    assert "File             : 2000 -> 1500 bytes" in out
+    assert "discovered_urls  : 8, articles 2" in out
+    assert "WARNING" in out
+
+    def refused(*_a: object, **_k: object) -> None:
+        raise rs.ReclaimError("the file is as it was (disk is full)")
+
+    monkeypatch.setattr(reclaim_cli, "compact", refused)
+    assert reclaim_cli.cmd_compact(ns) == 1
+    assert "REFUSED, the file is as it was" in capsys.readouterr().out
+
+
+def fill_args(tmp_path: Path) -> argparse.Namespace:
+    return argparse.Namespace(
+        db=str(tmp_path / "x.db"), domain="cnbc.com", backup=None, g3=False, rehearsal_copy=True,
+        force=False, start_date=date(2022, 1, 1), end_date=date(2026, 10, 20),
+    )  # fmt: skip
+
+
+def fill_report(run: SitemapRun, after: rs.Fingerprint) -> FillReport:
+    return FillReport("cnbc.com", run, True, fingerprint(10), after)
+
+
+async def test_a_successful_fill_prints_the_report_and_exits_0(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    entries = (
+        SitemapEntry(url="https://www.cnbc.com/2024/a.html"),
+        SitemapEntry(url="https://www.cnbc.com/2024/b.html"),
+    )
+    crawl = Crawl("2026-10-20T10:00:00.000000", date(2022, 1, 1), "sig", 2)
+
+    async def fake(*_a: object, **_k: object) -> FillReport:
+        return fill_report(SitemapRun("cnbc.com", crawl, rows=entries), fingerprint(10))
+
+    monkeypatch.setattr(fill_cli, "fill_cache", fake)
+    assert await fill_cli.run(fill_args(tmp_path)) == 0
+    out = capsys.readouterr().out
+    assert "Crawl            : made now" in out
+    assert "Entries          : 2 (range from 2022-01-01)" in out
+    assert "Pipeline tables  : unchanged" in out
+
+
+async def test_an_incomplete_fill_exits_1_and_a_changed_pipeline_is_said(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    async def fake(*_a: object, **_k: object) -> FillReport:
+        return fill_report(
+            SitemapRun("cnbc.com", None, failures=("child 3 failed",)), fingerprint(11)
+        )
+
+    monkeypatch.setattr(fill_cli, "fill_cache", fake)
+    assert await fill_cli.run(fill_args(tmp_path)) == 1
+    out = capsys.readouterr().out
+    assert "child 3 failed" in out
+    assert "Pipeline tables  : CHANGED" in out
+    assert "INCOMPLETE: the cache is not usable" in out

@@ -631,8 +631,11 @@ table and index definition); `--expect N` names the approved count (a different 
 the lock no other program can read or write the file. Then one transaction deletes the rows and checks the fingerprint (`discovered_urls` down by exactly
 the deleted count, `articles` unchanged, no orphan, `accept`/`review` unchanged; any failure **rolls back**), the commit, `VACUUM INTO` (the path is a bound
 parameter) writes the compacted file, which is checked against the same fingerprint, put back in the original journal mode (`VACUUM INTO` writes a
-rollback-journal file, the queue's is WAL) and given the original's mode bits and owner, and it is swapped in. The old file is the backup, kept until the
-maintainer deletes it.
+rollback-journal file, the queue's is WAL) and given the original's mode bits and owner, and it is swapped in. **The lock is held through all of that
+checking** (a `quick_check` of the 2.3 GB compacted file takes about 13 s, and a program that opened the file in those seconds would have its writes thrown away
+by the rename); only the unlink of `-wal`/`-shm` and the rename follow the close, and a last cheap read of the file in place (`user_version` and the row counts of
+`discovered_urls` and `articles`, equal to the checked ones) ends the step (`Final check` in the output; if it fails the step is `INCOMPLETE`: restore the
+backup). The old file is the backup, kept until the maintainer deletes it.
 
 **Two kinds of failure, two exit codes.** Exit 1, `REFUSED, nothing changed`: nothing was committed, the file is as it was. Exit 2, `INCOMPLETE: the
 delete of N rows is COMMITTED ...`: the commit succeeded but `VACUUM INTO` or the swap failed (a full disk, a compacted file that differs); the file has

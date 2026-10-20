@@ -137,6 +137,7 @@ def cmd_reclaim(args: argparse.Namespace) -> int:
         f"File             : {done.bytes_before} -> {done.bytes_after} bytes ({done.bytes_before - done.bytes_after} reclaimed)"
     )
     print(f"Backup kept      : {done.backup} (the maintainer deletes it)")
+    print("Final check      : the file in place has the checked counts and user_version")
     print(f"Elapsed          : {done.seconds:.1f}s")
     if not done.owner_kept:
         print("WARNING: the new file is owned by this user, not by the original's owner: chown it")
@@ -161,6 +162,7 @@ def cmd_compact(args: argparse.Namespace) -> int:
         return 1
     print(f"File             : {done.bytes_before} -> {done.bytes_after} bytes")
     print(f"discovered_urls  : {done.after.discovered}, articles {done.after.articles}")
+    print("Final check      : the file in place has the checked counts and user_version")
     if not done.owner_kept:
         print("WARNING: the new file is owned by this user, not by the original's owner: chown it")
     return 0
