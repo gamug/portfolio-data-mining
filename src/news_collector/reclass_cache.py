@@ -73,6 +73,7 @@ class ReclassReport:
     applied: bool
     results: list[TickerResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    failed: int = 0  # tickers whose step raised (each has an error line)
     elapsed_seconds: float = 0.0
 
     def total(self, name: str) -> int:
@@ -115,6 +116,26 @@ def _classify(
     entries, _failures = run.entries(date_range)
     strategy = SitemapRSSStrategy(connector, cast(httpx.AsyncClient, None), run)
     return len(entries), strategy.classify_entries(entries, company.name, company.ticker)
+
+
+def _record_failure(
+    report: ReclassReport, domain: str, result: TickerResult, apply: bool, exc: Exception
+) -> None:
+    """One error line, a WARNING with the traceback and the partial counts of a failed ticker."""
+    # A lock or a file without the queue tables (`sqlite3.Error`), a bad class (`ValueError`),
+    # the disk (`OSError`): the earlier batches are committed.
+    kind = "database error" if isinstance(exc, sqlite3.Error) else type(exc).__name__
+    written = (
+        f"at least {result.inserted} inserted, {result.promoted} promoted in completed "
+        "batches; the failed batch may be partly stored; a second run is safe and finishes it"
+        if apply
+        else "dry run, nothing written"
+    )
+    report.errors.append(f"{domain} {result.ticker}: {kind}: {exc} ({written})")
+    log.warning("re-class %s %s failed (%s)", domain, result.ticker, written, exc_info=True)
+    report.failed += 1
+    if result.inserted or result.promoted:  # batches already committed stay counted
+        report.results.append(result)
 
 
 async def reclass_from_cache(
@@ -172,22 +193,9 @@ async def reclass_from_cache(
                 try:
                     await _one(queue, connector, run, company, date_range, apply, result)
                 except Exception as exc:
-                    # A lock or a file without the queue tables (`sqlite3.Error`), a bad class
-                    # (`ValueError`), the disk (`OSError`): the earlier batches are committed.
-                    kind = (
-                        "database error" if isinstance(exc, sqlite3.Error) else type(exc).__name__
-                    )
-                    written = (
-                        f"written before it: {result.inserted} inserted, {result.promoted} promoted"
-                        if apply
-                        else "dry run, nothing written"
-                    )
-                    report.errors.append(f"{domain} {company.ticker}: {kind}: {exc} ({written})")
-                    log.warning(
-                        "re-class %s %s failed (%s)", domain, company.ticker, written, exc_info=True
-                    )
-                    if result.inserted or result.promoted:  # batches already committed stay counted
-                        report.results.append(result)
+                    _record_failure(report, domain, result, apply, exc)
+                    if progress is not None:  # the pair was processed: the bar counts it
+                        progress(result)
                     continue
                 log.info(
                     "re-class %s %s: %d entries, %s, new %d, promotable %d, inserted %d, promoted %d",

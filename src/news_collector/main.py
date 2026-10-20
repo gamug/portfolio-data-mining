@@ -214,6 +214,8 @@ async def cmd_reclass_sitemap(args: argparse.Namespace) -> int:
     else:
         print(f"Would insert / promote: {report.total('new')} / {report.total('promotable')}")
     print(f"Elapsed          : {report.elapsed_seconds:.1f}s")
+    if report.failed:
+        print(f"Tickers failed   : {report.failed} (see the errors below and the log)")
     _print_notes("Errors", report.errors)
     return 1 if report.errors else 0
 

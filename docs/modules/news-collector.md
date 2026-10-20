@@ -515,11 +515,6 @@ still holds (with its label) and replaces only the others, which a person then l
 
 ## Re-class from the sitemap cache (T-072)
 
-A path that is not an existing file is an error line and nothing is created, in a dry run and with `--apply`. `--apply`
-opens the queue like a collector does, so on a file below schema version 4 it runs the migration: on the real
-`urls.db` that is behind the gate and backup rules of `T-073`, and a collector or the gateway may be writing at the
-same time (the writes are batches of 5,000 pairs, promote-only).
-
 `T-071` stops storing the sitemap pairs the matcher rejects, so a later matcher change cannot promote what was never
 stored. `reclass-sitemap` is the way back: it classes the cached entries again with the current matcher, **with no network
 and no crawl**, and enqueues the pairs that are now `accept`/`review` through the same promote-only `enqueue_batch`.
@@ -548,6 +543,15 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 - **Cost.** The classification is the full scan of today (about 4.6 s a ticker for `cnbc.com`: 503 tickers take about 40 minutes
   and a `tqdm` bar shows the progress); `T-071`'s token index will make it seconds.
 - **Reject pairs** are counted in the output (`reject`) and never stored.
+- **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with
+  `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 4 it runs the migration: on
+  the real `urls.db` that is behind the gate and backup rules of `T-073`, and a collector or the gateway may be writing at the
+  same time (the writes are batches of 5,000 pairs, promote-only).
+- **Errors.** A failed ticker (a lock, a file without the queue tables, a bad class, the disk) is one error line plus a
+  WARNING in the log; the other tickers go on. The CLI prints "Tickers failed: N" and exits 1; the API answers **200** with
+  `errors` filled, so a client must read `errors`, not only the status code. For a ticker that failed with `--apply`,
+  `inserted`/`promoted` are **at least** what the completed batches wrote: the failed batch may be partly stored (the queue
+  writes it without ids or promotion when the error comes after the insert), and a second run is safe and finishes it.
 
 **What each script reads after `T-071` and `T-073`** (stored rows unless said otherwise):
 

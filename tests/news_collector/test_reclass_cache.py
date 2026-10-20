@@ -342,7 +342,9 @@ def test_the_cli_exits_1_when_a_domain_has_no_cache(
 ) -> None:
     async def fake(*_a: object, **_k: object):  # type: ignore[no-untyped-def]
         return ReclassReport(
-            applied=False, errors=["cnbc.com: sitemap cache of cnbc.com does not cover x"]
+            applied=False,
+            failed=2,
+            errors=["cnbc.com: sitemap cache of cnbc.com does not cover x"],
         )
 
     class FakeClient:
@@ -362,7 +364,9 @@ def test_the_cli_exits_1_when_a_domain_has_no_cache(
     argv = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "reclass-sitemap", "--tickers", "AAPL"]
     args = collector_main.build_parser().parse_args(argv)
     assert asyncio.run(collector_main.cmd_reclass_sitemap(args)) == 1
-    assert "does not cover" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "does not cover" in out
+    assert "Tickers failed   : 2" in out
 
 
 async def test_the_route_is_a_dry_run_by_default_and_apply_writes(
@@ -469,7 +473,10 @@ async def test_a_database_error_in_a_later_batch_keeps_what_was_written(
     report = await run(db, conn, apply=True)
     assert len(report.errors) == 1
     assert "database is locked" in report.errors[0]
-    assert "1 inserted" in report.errors[0]
+    assert "at least 1 inserted" in report.errors[0]
+    assert "may be partly stored" in report.errors[0]
+    assert "a second run is safe" in report.errors[0]
+    assert report.failed == 1
     assert [r.inserted for r in report.results] == [1]
     assert report.total("inserted") == len(stored(db)) == 1
 
@@ -568,7 +575,21 @@ async def test_a_non_database_error_is_one_error_line_with_the_partial_counts(
             db, conn, apply=True, companies=(APPLE, Company(ticker="MSFT", name="Microsoft"))
         )
     assert "ValueError: bad match_class" in report.errors[0]
-    assert "1 inserted" in report.errors[0]
+    assert "at least 1 inserted" in report.errors[0]
     # the failed ticker keeps its partial counts and the next one still runs
     assert [(r.ticker, r.inserted) for r in report.results] == [("AAPL", 1), ("MSFT", 0)]
     assert any("AAPL failed" in r.getMessage() and r.exc_info for r in caplog.records)
+
+
+async def test_the_progress_callback_also_sees_a_failed_ticker(
+    db: str, site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    monkeypatch.setattr(
+        URLQueue, "enqueue_batch", lambda self, batch: (_ for _ in ()).throw(OSError("disk"))
+    )
+    seen_tickers: list[str] = []
+    report = await run(db, conn, apply=True, progress=lambda r: seen_tickers.append(r.ticker))
+    assert seen_tickers == ["AAPL"]
+    assert report.failed == 1
