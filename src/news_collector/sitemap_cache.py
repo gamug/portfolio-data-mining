@@ -34,7 +34,7 @@ from datetime import UTC, date, datetime, timedelta
 import httpx
 
 from data_mining.db import connect
-from news_collector.config import sitemap_retry_after
+from news_collector.config import sitemap_retry_after, sitemap_stale_after
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, SitemapEntry
 from news_collector.strategies.sitemap import crawl_sitemaps, summarize_failures
@@ -51,6 +51,14 @@ PURGE_DAYS = 90
 SIGNATURE_LENGTH = 16
 # A crawl keeps every entry from its start on: the run's end is applied when the rows are read.
 OPEN_END = date.max
+# A process that finds another crawling the domain looks again this often (T-070b).
+POLL_SECONDS = 5.0
+
+# The crawl in progress: unfinished and younger than the stale timeout (the partial index serves it).
+OPEN_CRAWL_SQL = (
+    "SELECT started_at FROM sitemap_crawls WHERE domain = ? AND finished_at IS NULL "
+    "AND started_at > ? ORDER BY started_at DESC LIMIT 1"
+)
 
 Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO date), title
 
@@ -82,6 +90,14 @@ class Crawl:
 
     def age(self, now: datetime) -> timedelta:
         return now - datetime.fromisoformat(self.started_at)
+
+
+@dataclass(frozen=True)
+class Claim:
+    """The answer of `_claim`: this process's crawl (`started_at`), or the one it must wait for."""
+
+    started_at: str | None
+    other: str | None
 
 
 @dataclass(frozen=True)
@@ -131,6 +147,8 @@ class SitemapCache:
         is_article_url: Callable[[str], bool],
         clock: Callable[[], datetime] = utc_now,
         retry_after: timedelta | None = None,
+        stale_after: timedelta | None = None,
+        poll: float = POLL_SECONDS,
     ) -> None:
         self.domain = domain
         self._roots = list(roots)
@@ -140,6 +158,9 @@ class SitemapCache:
         self._clock = clock
         # after a failed refresh the process does not crawl again for this long unless forced
         self._retry_after = retry_after if retry_after is not None else sitemap_retry_after()
+        # an unfinished crawl row older than this is a crashed crawl: ignored, and taken over
+        self._stale_after = stale_after if stale_after is not None else sitemap_stale_after()
+        self._poll = poll
         self._failed_at: datetime | None = None  # the last failed refresh, for the back-off
         self._last_failures: list[str] = []
         self._signature = signature(roots)
@@ -194,13 +215,25 @@ class SitemapCache:
                 now = self._clock()
                 latest = await asyncio.to_thread(self._latest_complete)
                 refresh_failures: list[str] = []
-                if self._must_refresh(latest, date_range.start, force, requested, now):
+                while self._must_refresh(latest, date_range.start, force, requested, now):
                     if self._backing_off(force, now):
                         refresh_failures = list(self._last_failures)  # the outage is still on
-                    else:
-                        refresh_failures = await self._refresh(date_range.start, latest)
+                        break
+                    crawl_start = self._crawl_start(date_range.start, latest)
+                    claim = await asyncio.to_thread(self._claim, crawl_start)
+                    if claim.started_at is not None:  # this process crawls
+                        refresh_failures = await self._refresh(claim.started_at, crawl_start)
                         self._failed_at = now if refresh_failures else None
                         self._last_failures = refresh_failures
+                        latest = await asyncio.to_thread(self._latest_complete)
+                        break
+                    # another process is crawling this domain: wait for it, then look again
+                    outcome = await self._wait_for(claim.other)
+                    force = False  # a crawl that finished after the request is the forced one
+                    if outcome is not None:  # the winner failed: nobody crawls again for it
+                        refresh_failures = [outcome]
+                        self._failed_at, self._last_failures = now, refresh_failures
+                        break
                     latest = await asyncio.to_thread(self._latest_complete)
                 return await self._run_for(latest, date_range, refresh_failures, now)
         except Exception as exc:
@@ -271,12 +304,18 @@ class SitemapCache:
     # The crawl
     # ------------------------------------------------------------------
 
-    async def _refresh(self, start: date, latest: Crawl | None) -> list[str]:
-        """Crawl and, when complete, upsert. Returns the failures (empty = complete)."""
-        began = self._clock()
-        # a refresh never narrows, but only a crawl made under the same rules is a basis
+    def _crawl_start(self, start: date, latest: Crawl | None) -> date:
+        """A refresh never narrows, but only a crawl made under the same rules is a basis."""
         same_rules = latest is not None and latest.signature == self._signature
-        crawl_start = min(start, latest.range_start) if latest and same_rules else start
+        return min(start, latest.range_start) if latest and same_rules else start
+
+    async def _refresh(self, started_at: str, crawl_start: date) -> list[str]:
+        """Crawl the domain this process has claimed (`started_at`) and, when complete, upsert.
+
+        The claim's row is closed in every case: by the write, or, when the crawl raises or the
+        task is cancelled, as a failed crawl, so the other processes do not wait for the timeout.
+        Returns the failures (empty = complete).
+        """
         self.crawls += 1
         log.info("sitemap crawl of %s from %s", self.domain, crawl_start)
         try:
@@ -285,10 +324,14 @@ class SitemapCache:
             )
             rows = self._rows_from(entries) if not failures else {}
             await asyncio.to_thread(
-                self._write, stamp(began), crawl_start, rows, len(entries), len(failures)
+                self._write, started_at, crawl_start, rows, len(entries), len(failures)
             )
+        except asyncio.CancelledError:
+            self._close_failed(started_at, crawl_start)
+            raise
         except Exception as exc:
             log.warning("sitemap refresh of %s raised: %s", self.domain, exc)
+            self._close_failed(started_at, crawl_start)
             return [f"sitemap refresh raised: {exc}"]
         log.info(
             "sitemap crawl of %s: %d entries stored, %d failure(s)",
@@ -297,6 +340,38 @@ class SitemapCache:
             len(failures),
         )
         return failures
+
+    def _close_failed(self, started_at: str, crawl_start: date) -> None:
+        """Mark the claimed crawl as failed; a database error here leaves it to the timeout."""
+        try:
+            self._write(started_at, crawl_start, {}, 0, 1)
+        except Exception as exc:
+            log.warning("could not close the crawl of %s at %s: %s", self.domain, started_at, exc)
+
+    async def _wait_for(self, other: str | None) -> str | None:
+        """Wait for another process's crawl (its `started_at`) to finish or go stale.
+
+        Returns None when the crawl completed, or went stale or vanished (the caller looks at
+        the table again and may crawl, taking over), and the reason when it failed.
+        """
+        log.info("sitemap crawl of %s by another process (%s): waiting", self.domain, other)
+        while other is not None:
+            row = await asyncio.to_thread(self._crawl_row, other)
+            if row is None:
+                return None
+            finished_at, complete, failures = row
+            if finished_at is not None:
+                if complete:
+                    return None
+                return (
+                    f"sitemap crawl of {self.domain} by another process ({other}) failed "
+                    f"({failures} failure(s))"
+                )
+            if self._clock() - datetime.fromisoformat(other) >= self._stale_after:
+                log.warning("sitemap crawl of %s at %s is stale: taking over", self.domain, other)
+                return None
+            await asyncio.sleep(self._poll)
+        return None
 
     def _rows_from(self, entries: list[SitemapEntry]) -> dict[str, Row]:
         """What is stored: valid, normalized, article URLs; the first entry of a URL wins."""
@@ -313,6 +388,50 @@ class SitemapCache:
     # ------------------------------------------------------------------
     # Database (every call runs in a worker thread, on its own connection)
     # ------------------------------------------------------------------
+
+    def _claim(self, range_start: date) -> Claim:
+        """Take the right to crawl the domain, or name the crawl that holds it.
+
+        One `BEGIN IMMEDIATE` transaction: it looks for an unfinished crawl row younger than the
+        stale timeout (the partial index) and, finding none, inserts this process's row, so two
+        processes cannot both start. A row older than the timeout is a crashed crawl: ignored.
+        """
+        db = connect(self._db_path, wal=True)
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            now = self._clock()
+            row = db.execute(
+                OPEN_CRAWL_SQL, (self.domain, stamp(now - self._stale_after))
+            ).fetchone()
+            if row is not None:
+                db.rollback()
+                return Claim(None, row[0])
+            started_at = stamp(now)
+            db.execute(
+                "INSERT INTO sitemap_crawls (domain, started_at, finished_at, complete, "
+                "range_start, signature, entries, failures) VALUES (?, ?, NULL, 0, ?, ?, NULL, NULL)",
+                (self.domain, started_at, range_start.isoformat(), self._signature),
+            )
+            db.commit()
+            return Claim(started_at, None)
+        except BaseException:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def _crawl_row(self, started_at: str) -> tuple[str | None, bool, int] | None:
+        """(finished_at, complete, failures) of one crawl row, None when it is gone."""
+        db = connect(self._db_path)
+        try:
+            row = db.execute(
+                "SELECT finished_at, complete, failures FROM sitemap_crawls "
+                "WHERE domain = ? AND started_at = ?",
+                (self.domain, started_at),
+            ).fetchone()
+        finally:
+            db.close()
+        return None if row is None else (row[0], bool(row[1]), row[2] or 0)
 
     def _latest_complete(self) -> Crawl | None:
         db = connect(self._db_path)
@@ -346,7 +465,8 @@ class SitemapCache:
     def _write(
         self, started_at: str, range_start: date, rows: dict[str, Row], seen: int, failures: int
     ) -> None:
-        """One transaction: the crawl row, and for a complete crawl the upsert and the purge."""
+        """One transaction: close the claimed crawl row, and for a complete crawl the upsert and
+        the purge. (The row is inserted at once if there is none.)"""
         complete = failures == 0
         db = connect(self._db_path, wal=True)
         try:
@@ -364,7 +484,10 @@ class SitemapCache:
                     )
                 db.execute(
                     "INSERT INTO sitemap_crawls (domain, started_at, finished_at, complete, "
-                    "range_start, signature, entries, failures) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "range_start, signature, entries, failures) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT (domain, started_at) DO UPDATE SET finished_at = excluded.finished_at, "
+                    "complete = excluded.complete, entries = excluded.entries, "
+                    "failures = excluded.failures",
                     (
                         self.domain,
                         started_at,

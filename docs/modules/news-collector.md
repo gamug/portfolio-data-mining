@@ -194,8 +194,15 @@ T-071 is merged**.
   entries (`tracemalloc`), so the gateway's resident size grows by that much after its first discovery request and stays.
 - **Errors:** a database error while the cache is read or refreshed is not an exception of the run: it is a failure of every pair of that
   domain (not checkpointed), and the other domains run.
-- **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The
-  cost of the duplicate is 10 s and the same rows (an upsert).
+- **Two processes, one crawl (T-070b).** The gateway and the crawler are two processes on one file. A process that must refresh first
+  claims the domain: one `BEGIN IMMEDIATE` transaction looks for an unfinished `sitemap_crawls` row younger than the stale timeout and,
+  finding none, inserts its own (`finished_at` empty); the other process finds it, **waits** (it looks again every 5 s) and then reads what
+  the winner wrote. If the winner **failed** the waiter crawls nothing (one outage, one crawl) and applies the failed-refresh cases above;
+  a winner whose row is older than **30 minutes** (`SITEMAP_STALE_MINUTES` in `.env`, a number > 0) is a crashed crawl and is **taken
+  over**: its row is ignored (it stays, as history) and the waiter crawls. A crawl that raises or is cancelled closes its row as failed at
+  once. A slow domain needs the setting raised (`ft` took 837 s): a crawl longer than the timeout is crawled twice. Like the retry
+  setting, it is read once per process. A waiting process whose range is wider than the winner's crawls after it.
+
 - **Usage:**
   ```bash
   # the cache is on by default for a domain with sitemap roots; a cache at most 7 days old is used
@@ -205,6 +212,8 @@ T-071 is merged**.
   # the same on the API: {"refresh_sitemaps": true} in the body of /discovery/run-all or /cnbc/
   ```
   A run that used an old cache because the refresh failed prints `Warnings` in its summary and returns `warnings` in the API response.
+- **A crawl in progress** shows as a `sitemap_crawls` row with no `finished_at` (the query below lists it); a row of a dead process stays
+  until the 90-day purge and does no harm.
 - **Look at it** (read-only, from the repository root; `DB` as above):
   ```bash
   PYTHONPATH=src uv run python - <<'EOF'
