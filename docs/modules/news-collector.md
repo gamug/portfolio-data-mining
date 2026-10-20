@@ -594,3 +594,44 @@ To re-fetch the listed ids, set their `discovered_urls.status` back to `pending`
 99/100 pass; `test_enqueue_inserts_at_most_len_input` is a pre-existing Windows-only flake
 (a hypothesis-generated property test races a temp-SQLite-file cleanup against an open
 connection — `PermissionError: file in use`, not a logic bug in this codebase).
+
+## Reclaim the never-fetched sitemap rejects (T-073, gate G3)
+
+`scripts/reclaim_sitemap_rejects.py` (`news_collector/reclaim_sitemap.py`) has two commands. **`evidence`** is read-only on any file and prints what
+G3 judges; **`reclaim`** deletes, compacts and swaps, and on the real `urls.db` runs **only at G3**.
+
+**What qualifies** (one WHERE clause, `candidate_where`): `match_class='reject'`, `status='skipped'`, no `articles` row, source `sitemap`/`rss`, a
+domain whose cache holds a complete crawl, and an id that no committed hand-labeled sample names (`data/ticker_*_sample.csv`, `ticker_*_manual.csv`:
+593 ids). Nothing else is ever deleted: the 323,864 sitemap rejects that keep a quarantined article, the 1,115 `ddg` rejects and every
+`accept`/`review` row stay.
+
+**What `reclaim` does:** refuses unless `--backup` is another file that passes `quick_check` and has the live file's fingerprint (counts,
+class counts, orphan articles, `user_version`, a hash of every table and index definition), `--expect N` names the approved count (a different count
+deletes nothing), the disk has the file size free, no `<file>.compact` is left, and, on the real file, `--i-have-the-g3-approval` is given and no
+gateway/crawler process runs. Then one transaction deletes the rows and checks the fingerprint (`discovered_urls` down by exactly the deleted count,
+`articles` unchanged, no orphan, `accept`/`review` unchanged; any failure rolls back), `VACUUM INTO` writes the compacted file, which is checked against
+the same fingerprint and put back in the original journal mode (`VACUUM INTO` writes a rollback-journal file, the queue's is WAL), and it is swapped in.
+The old file is the backup, kept until the maintainer deletes it.
+
+```bash
+PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py evidence --db COPY.db          # read-only; fill the cache of the copy first
+PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db COPY.db --backup COPY.pre.db --expect N
+```
+
+**Rehearsal on a copy of the real file, 2026-10-20** (cnbc cache filled on the copy: 109,550 entries, range 2022-01-01 to 2026-10-20; the real file
+was only read through SQLite's backup API):
+
+| step | result |
+|---|---|
+| qualifying rows | **578,113**, all `cnbc.com`; the hand-labeled ids remove 0 (as measured 2026-10-18) |
+| split | in the cache (in range): 109,452; **before the range: 468,661** (2006 to 2021); **left the sitemap: 0** |
+| `reclaim` | deleted 578,113 in 65 s; `discovered_urls` 1,059,452 → 481,339; `articles` 481,332 unchanged, 0 orphans; `accept` 104,614 and `review` 51,746 unchanged; rejects 903,092 → 324,979 (323,864 with an article + 1,115 `ddg`); `quick_check` ok; `user_version` 4; the cache tables (109,550 entries) intact |
+| file | 2,570,055,680 → 2,289,635,328 bytes: **280 MB reclaimed** (the estimate was 243 MB) |
+
+**The proof that the cache re-derives the stored `accept`/`review` pairs** (20 tickers: `KLAC AAPL ON A IT ARE TTD MSFT NVDA CRM` and 10 seeded at
+random): 19,866 stored `sitemap` `accept`/`review` pairs; **5,254 are in the cache and re-derived**; 14,595 are not in the cache (13,686 before the range,
+909 whose URL left the sitemap): they stay stored and are never part of the delete; **17 are in range, in the cache and classed `reject` by the
+current matcher** (`ON`, `A`, `GL`, `ALL`: market-wrap slugs such as `stocks-making-the-biggest-moves-midday-…-on-…`, where the ticker is an English word;
+stored `accept`/`review` on 2026-08-10 to 12 by the matcher of that day). The plan's pass condition says "0 in-range pairs missing". Read literally it is **not
+met by 17 pairs**; it is a change of the matcher, not a loss of the cache (the URL is in the cache and `reclass-sitemap` sees it), and `reclaim` never
+touches an `accept`/`review` row. Whether that satisfies G3 is the maintainer's call.
