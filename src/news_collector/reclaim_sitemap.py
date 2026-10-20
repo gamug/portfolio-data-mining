@@ -79,19 +79,32 @@ def kept_ids(data_dir: Path) -> set[int]:
         if not paths:
             raise ReclaimError(f"no {pattern} in {data_dir}: the labeled ids are not protected")
         for path in paths:
-            with path.open(newline="", encoding="utf-8") as fh:
-                ids.update(int(r["id"]) for r in csv.DictReader(fh) if r.get("id"))
+            ids.update(_ids_of(path))
     if not ids:
         raise ReclaimError(f"the sample files in {data_dir} name no id")
     return ids
 
 
+def _ids_of(path: Path) -> set[int]:
+    """The ids of one sample file. A file with no `id` column would protect nothing, silently."""
+    with path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        if "id" not in (reader.fieldnames or []):
+            raise ReclaimError(f"{path.name} has no id column: its rows would not be protected")
+        try:
+            return {int(r["id"]) for r in reader if r.get("id")}
+        except ValueError as exc:
+            raise ReclaimError(f"{path.name} has an id that is not a number: {exc}") from exc
+
+
 def cache_domains(conn: sqlite3.Connection) -> list[str]:
-    """Domains whose sitemap cache holds a complete crawl."""
+    """Domains whose latest complete crawl holds entries: an empty crawl is not a filled cache."""
     return [
         r[0]
         for r in conn.execute(
-            "SELECT DISTINCT domain FROM sitemap_crawls WHERE complete = 1 ORDER BY domain"
+            "SELECT domain FROM sitemap_crawls c WHERE complete = 1 AND started_at = "
+            "(SELECT MAX(started_at) FROM sitemap_crawls WHERE domain = c.domain AND complete = 1) "
+            "AND entries > 0 ORDER BY domain"
         )
     ]
 
@@ -417,13 +430,16 @@ def verify_backup(db_path: Path, backup: Path) -> Fingerprint:
         raise ReclaimError("the backup is the database itself")
     if not backup.is_file():
         raise ReclaimError(f"no backup at {backup}")
-    live = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True, timeout=60)
-    saved = sqlite3.connect(f"file:{backup.resolve()}?mode=ro", uri=True, timeout=60)
     try:
-        want, have = fingerprint(live), fingerprint(saved)
-    finally:
-        live.close()
-        saved.close()
+        live = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True, timeout=60)
+        saved = sqlite3.connect(f"file:{backup.resolve()}?mode=ro", uri=True, timeout=60)
+        try:
+            want, have = fingerprint(live), fingerprint(saved)
+        finally:
+            live.close()
+            saved.close()
+    except sqlite3.Error as exc:
+        raise ReclaimError(f"the backup or the database cannot be read: {exc}") from exc
     if have.quick_check != "ok":
         raise ReclaimError(f"the backup fails quick_check: {have.quick_check}")
     if not _same_content(want, have):
@@ -512,7 +528,7 @@ def _check_start(db_path: Path, check_processes: bool) -> None:
 
 
 def _plan(
-    conn: sqlite3.Connection, domains: Sequence[str] | None, expect: int
+    conn: sqlite3.Connection, domains: Sequence[str] | None, expect: int, backup_fp: Fingerprint
 ) -> tuple[str, list[str], Fingerprint, str]:
     """The WHERE clause, the fingerprint and the journal mode, after the checks that need the file."""
     filled = cache_domains(conn)
@@ -523,6 +539,11 @@ def _plan(
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]  # VACUUM INTO writes "delete"
     if before.quick_check != "ok":
         raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
+    if not _same_content(before, backup_fp):
+        raise ReclaimError(
+            "the file changed after the backup was checked (a program wrote to it): "
+            "make the backup again"
+        )
     will = conn.execute(f"SELECT COUNT(*) FROM discovered_urls WHERE {where}", params).fetchone()[0]
     if will != expect:
         raise ReclaimError(f"the approval names {expect} rows, {will} qualify: nothing deleted")
@@ -573,7 +594,7 @@ def reclaim(
     if expect_kept is not None and len(kept) != expect_kept:
         raise ReclaimError(f"the approval names {expect_kept} protected ids, {len(kept)} found")
     _check_start(db_path, check_processes)
-    verify_backup(db_path, backup)
+    backup_fp = verify_backup(db_path, backup)
     size = db_path.stat().st_size
     compact = db_path.with_name(db_path.name + ".compact")
 
@@ -582,7 +603,7 @@ def reclaim(
     committed = False
     try:
         _load_kept(conn, kept)
-        where, params, before, mode = _plan(conn, domains, expect)
+        where, params, before, mode = _plan(conn, domains, expect, backup_fp)
         deleted, after = _delete(conn, where, params, before, expect)
         committed = True
         _write_compact(conn, compact)
@@ -592,6 +613,8 @@ def reclaim(
         if committed:
             compact.unlink(missing_ok=True)
             raise _incomplete(deleted, db_path, backup, exc) from exc
+        if isinstance(exc, sqlite3.Error | OSError):  # the transaction was rolled back
+            raise ReclaimError(f"the delete failed and was rolled back ({exc})") from exc
         raise
     finally:
         conn.close()
@@ -625,14 +648,38 @@ def _write_compact(conn: sqlite3.Connection, compact: Path) -> None:
     conn.execute("VACUUM INTO ?", (str(compact),))
 
 
-def compact(db_path: Path, *, check_processes: bool = True) -> Reclaimed:
+def check_backup_file(db_path: Path, backup: Path) -> None:
+    """The backup exists, is another file and passes `quick_check`. Not compared to the database:
+    after an `INCOMPLETE` the database has lost the rows the backup still has."""
+    if backup.resolve() == db_path.resolve():
+        raise ReclaimError("the backup is the database itself")
+    if not backup.is_file():
+        raise ReclaimError(f"no backup at {backup}")
+    try:
+        saved = sqlite3.connect(f"file:{backup.resolve()}?mode=ro", uri=True, timeout=60)
+        try:
+            result = saved.execute("PRAGMA quick_check").fetchone()[0]
+        finally:
+            saved.close()
+    except sqlite3.Error as exc:
+        raise ReclaimError(f"the backup cannot be read: {exc}") from exc
+    if result != "ok":
+        raise ReclaimError(f"the backup fails quick_check: {result}")
+
+
+def compact(
+    db_path: Path, *, backup: Path | None = None, check_processes: bool = True
+) -> Reclaimed:
     """Compact and swap, with no delete: the step that finishes a `ReclaimIncomplete`.
 
     The file keeps every row it has now; the compacted file is checked against it and swapped in.
-    Nothing is committed, so any failure leaves the file as it was.
+    Nothing is committed, so any failure leaves the file as it was (a `ReclaimError`). `backup`,
+    when given, must exist and pass `quick_check`.
     """
     began = time.monotonic()
     db_path = Path(db_path)
+    if backup is not None:
+        check_backup_file(db_path, backup)
     _check_start(db_path, check_processes)
     size = db_path.stat().st_size
     packed = db_path.with_name(db_path.name + ".compact")
@@ -643,16 +690,20 @@ def compact(db_path: Path, *, check_processes: bool = True) -> Reclaimed:
         if before.quick_check != "ok":
             raise ReclaimError(f"the database fails quick_check: {before.quick_check}")
         _write_compact(conn, packed)
-    except BaseException:
+    except BaseException as exc:
         packed.unlink(missing_ok=True)
+        if isinstance(exc, sqlite3.Error | OSError):
+            raise ReclaimError(f"the file is as it was ({exc})") from exc
         raise
     finally:
         conn.close()
     try:
         owner_kept = _swap_in(db_path, packed, mode, before)
-    except Exception:
+    except Exception as exc:
         packed.unlink(missing_ok=True)
-        raise
+        if isinstance(exc, ReclaimError):
+            raise
+        raise ReclaimError(f"the file is as it was ({exc})") from exc
     return Reclaimed(
         0,
         before,
@@ -691,6 +742,8 @@ def _copy_permissions(original: Path, new: Path) -> bool:
     and, when permitted, owner. False when the owner could not be kept (the CLI warns)."""
     info = original.stat()
     new.chmod(stat.S_IMODE(info.st_mode))
+    if not hasattr(os, "getuid"):  # Windows: no owner to keep
+        return True
     if (info.st_uid, info.st_gid) == (os.getuid(), os.getgid()):
         return True
     try:

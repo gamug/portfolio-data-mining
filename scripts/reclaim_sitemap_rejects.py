@@ -11,9 +11,10 @@
     PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db REAL.db \
         --backup REAL_BACKUP.db --expect 578113 --expect-kept 593 --i-have-the-g3-approval
 
-    # finish a run that printed INCOMPLETE (rows deleted, file not compacted):
+    # finish a run that printed INCOMPLETE (rows deleted, file not compacted); the backup must
+    # exist and pass quick_check (it is not compared: the file has lost the rows it still has):
     PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py compact --db REAL.db \
-        --i-have-the-g3-approval
+        --backup REAL_BACKUP.db --i-have-the-g3-approval
 
 `reclaim` needs `--backup` (another file that passes `quick_check` and has the same fingerprint),
 `--expect N` (the count the maintainer approved: a different count deletes nothing) and exactly one
@@ -79,7 +80,9 @@ async def cmd_evidence(args: argparse.Namespace) -> int:
     print(format_evidence(ev, date_range))
     for ticker, url, cls in ev.proof.rejected_now[:20]:
         print(f"  NOW REJECTED {ticker} {url} (cache class {cls})")
-    return 1 if ev.proof.rejected_now else 0
+    found, accepted = len(ev.proof.rejected_now), args.expect_now_rejected
+    print(f"Now-rejected pairs: {found} (the maintainer accepted {accepted})")
+    return 0 if found == accepted else 1
 
 
 def looks_real(db: Path) -> bool:
@@ -144,8 +147,15 @@ def cmd_compact(args: argparse.Namespace) -> int:
     check_processes = gate(args)
     if check_processes is None:
         return 1
+    if check_processes and not args.backup:
+        print("the real database needs --backup (a file that exists and passes quick_check)")
+        return 1
     try:
-        done = compact(Path(args.db), check_processes=check_processes)
+        done = compact(
+            Path(args.db),
+            backup=Path(args.backup) if args.backup else None,
+            check_processes=check_processes,
+        )
     except ReclaimError as exc:
         print(f"REFUSED, the file is as it was: {exc}")
         return 1
@@ -168,6 +178,13 @@ def main() -> int:
     )
     ev.add_argument("--sample", type=int, default=10, help="seeded extra tickers for the proof")
     ev.add_argument("--seed", type=int, default=0)
+    ev.add_argument(
+        "--expect-now-rejected",
+        type=int,
+        default=0,
+        help="the accepted number of stored accept/review pairs the matcher now rejects (G3: 17); "
+        "exit 1 when the count differs, so a different set is never read as the accepted one",
+    )
     ev.add_argument("--start-date", type=date.fromisoformat, default=default_start_date())
     ev.add_argument("--end-date", type=date.fromisoformat, default=None)
     rc = sub.add_parser("reclaim", help="delete, compact and swap (a copy, or the real file at G3)")
@@ -177,6 +194,7 @@ def main() -> int:
     rc.add_argument("--expect-kept", type=int, help="the number of protected sample ids (593)")
     cp = sub.add_parser("compact", help="compact and swap with no delete (finishes an INCOMPLETE)")
     cp.add_argument("--db", required=True)
+    cp.add_argument("--backup", help="required on the real file: must exist and pass quick_check")
     for step in (rc, cp):
         step.add_argument("--i-have-the-g3-approval", dest="g3", action="store_true")
         step.add_argument("--rehearsal-copy", dest="rehearsal", action="store_true")

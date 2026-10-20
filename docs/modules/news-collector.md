@@ -565,7 +565,7 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 **The 438 known-gap pairs** (`TASKS.md`, "Known gaps"; `PLAN.md` Work item 12), measured read-only on the real `urls.db`
 2026-10-20 with the reconstructed rule (a non-first word of the normalized name, 5+ characters, not a stopword, a whole word of
 the URL path): the rule still finds **438 pairs on 438 URLs**; **0 are in the set `T-073` deletes** (never fetched, no article,
-`sitemap`/`rss`, `cnbc.com`) and **all 438 are in the kept 323,864** (every one has a quarantined article). So the gap keeps its
+`sitemap`, `cnbc.com`) and **all 438 are in the kept 323,864** (every one has a quarantined article). So the gap keeps its
 whole population and `reclass_rejects.py` still sees it; nothing in it depends on being re-derived from the cache.
 
 ## Content-quality gate (T-060)
@@ -602,7 +602,7 @@ Three scripts: `scripts/fill_sitemap_cache.py` fills the cache of one domain wit
 and swaps) and **`compact`** (finishes a `reclaim` that printed INCOMPLETE). On the real `urls.db` the writes run **only at G3**.
 
 **What qualifies** (one WHERE clause, `candidate_where`): `match_class='reject'`, `status='skipped'`, no `articles` row, source `sitemap`, a
-domain whose cache holds a complete crawl, and an id that no committed hand-labeled sample names (`data/ticker_*_sample.csv`, `ticker_*_manual.csv`:
+domain whose **latest complete crawl holds entries** (a complete crawl of an empty urlset is not a filled cache), and an id that no committed hand-labeled sample names (`data/ticker_*_sample.csv`, `ticker_*_manual.csv`:
 593 ids; **`reclaim` refuses if a kind of sample file is missing or names no id**, prints the number it protected, and `--expect-kept 593` pins it).
 Source `rss` is **not** in the set: the proof re-derives stored pairs from the sitemap cache, which no `rss` pair can be (0 `rss` rows qualified on
 the rehearsal copy; add it back only with a proof that covers it). Nothing else is ever deleted: the 323,864 sitemap rejects that keep a quarantined
@@ -626,8 +626,10 @@ maintainer deletes it.
 **Two kinds of failure, two exit codes.** Exit 1, `REFUSED, nothing changed`: nothing was committed, the file is as it was. Exit 2, `INCOMPLETE: the
 delete of N rows is COMMITTED ...`: the commit succeeded but `VACUUM INTO` or the swap failed (a full disk, a compacted file that differs); the file has
 lost the rows and is not compacted, the partial `.compact` is removed, and the backup is intact. A second `reclaim` cannot finish it (0 rows qualify now):
-run `compact --db ... --i-have-the-g3-approval`, which compacts and swaps with no delete and leaves the file as it was if it fails too, or restore the
-backup. The CLI prints a WARNING when the new file's owner is not the original's (the user running it could not `chown`): fix it before restarting a
+run `compact --db ... --backup ... --i-have-the-g3-approval`, which compacts and swaps with no delete (the backup must exist and pass `quick_check`; it is not compared, the
+file has lost the rows it still has) and leaves the file as it was if it fails too (`REFUSED, the file is as it was`), or restore the backup. Any SQLite or OS
+error before the commit is also a `REFUSED` (exit 1, "rolled back"), never a traceback; and the backup is compared to the file **again under the lock**: a program
+that wrote between the check and the lock makes `reclaim` refuse ("make the backup again"). The CLI prints a WARNING when the new file's owner is not the original's (the user running it could not `chown`): fix it before restarting a
 service that runs as another user.
 
 ```bash
@@ -659,16 +661,19 @@ so it stays at schema version 4 until a service starts on the merged code (the v
    ```
 3. **Fill the cache** (writes only `sitemap_entries` and `sitemap_crawls`; the backup is verified against the file first):
    `PYTHONPATH=src uv run python scripts/fill_sitemap_cache.py --db $DB --domain cnbc.com --backup $BK --i-have-the-g3-approval`. Expect
-   `Crawl: made now`, about 109,000 entries, `Pipeline tables: unchanged`, exit 0. An INCOMPLETE crawl exits 1 and leaves the cache empty (the same
+   `Crawl: made now` (about 14 requests to cnbc.com: the `sitemapAll.xml` index and its 13 children on 2026-10-20), about 109,000 entries, `Pipeline tables: unchanged`, exit 0. An INCOMPLETE crawl exits 1 and leaves the cache empty (the same
    command may be run again; a complete, fresh crawl is reused).
-4. **Evidence on the real file** (read-only): `... reclaim_sitemap_rejects.py evidence --db $DB`. G3 judges **these** numbers, not the rehearsal's:
-   qualifying rows (`N`), the split, the proof, the protected ids.
+4. **Evidence on the real file** (read-only): `... reclaim_sitemap_rejects.py evidence --db $DB --expect-now-rejected 17`. G3 judges **these** numbers, not the
+   rehearsal's: qualifying rows (`N`), the split, the proof, the protected ids. The 17 stored pairs the matcher now rejects are the ones the maintainer accepted
+   (2026-10-20): `--expect-now-rejected 17` makes the exit status 0 for exactly 17 and 1 for any other count, so a different set is never read as the accepted one.
 5. **Reclaim**, only with the maintainer's approval of `N`: `... reclaim_sitemap_rejects.py reclaim --db $DB --backup $BK --expect N --expect-kept 593
    --i-have-the-g3-approval`. About a minute plus the compaction.
 6. **Check by hand**, read-only: `discovered_urls` is the old count minus `N`, `articles` unchanged, `PRAGMA quick_check` ok, `user_version` still 4, the
-   file's header bytes 18-19 are `02 02` (WAL). Then **restart** the services on the merged code and run the step-3 check of the schema-version-5 section
-   above (`user_version` 5, four names).
-7. **If something is wrong:** `REFUSED` (exit 1): nothing changed. `INCOMPLETE` (exit 2): `compact` as above, or restore. Anything else: stop every
+   file's header bytes 18-19 are `02 02` (WAL). On the thesis machine `urls.db` is owned by `root` (mode 0777, in a folder everyone can write) and the tool runs as
+   `vscode`, so `reclaim` prints the owner WARNING even on success: that is expected there and needs no fix, the services run as `vscode`. Then **restart** the
+   services on the merged code and run the check of the section "After merging the schema-version-5 change (T-073)" above (`user_version` 5, the four names, the
+   three counts).
+7. **If something is wrong:** `REFUSED` (exit 1): nothing changed. `INCOMPLETE` (exit 2): `compact --backup $BK` as above, or restore. Anything else: stop every
    service, delete `$DB-wal` and `$DB-shm` if present, copy `$BK` over `$DB`, restart. `$BK` is kept until the maintainer deletes it (the
    `urls.pre-*.db` rule: after a complete collector run and a complete extractor run at the new state, or 14 days, whichever is later).
 

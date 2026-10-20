@@ -9,7 +9,9 @@
         --backup REAL_BACKUP.db --i-have-the-g3-approval
 
 It runs one crawl of the domain's sitemaps (the `T-070a` code) and writes only the two cache tables;
-it stores no pair and runs no matcher. A complete, fresh crawl already in the file is reused, so a
+it stores no pair and runs no matcher. Unlike `reclaim` it takes no exclusive lock and runs no process
+check: a cache write is safe next to the gateway (the `T-070b` crawl guard), and the runbook stops the
+services for the whole G3 window anyway. A complete, fresh crawl already in the file is reused, so a
 second run is a no-op. Exit status 1 when the crawl is incomplete or the step is refused.
 """
 
