@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import multiprocessing
 import sqlite3
+import time
 from datetime import timedelta
 
 import pytest
@@ -34,6 +35,7 @@ POLL = 0.01
 STALE = timedelta(minutes=30)
 TWO = 2
 THREE = 3
+TICKS = 3
 WAIT_LIMIT = 5.0  # seconds: a waiter that never gives up fails the test instead of hanging it
 
 
@@ -298,20 +300,102 @@ def test_a_bad_stale_timeout_is_ignored_with_a_warning(
 
 def test_two_operating_system_processes_make_one_crawl(db: str) -> None:
     ctx = multiprocessing.get_context("spawn")  # two fresh interpreters, nothing shared
-    results = ctx.Queue()
-    procs = [ctx.Process(target=child_crawl, args=(db, results)) for _ in range(TWO)]
+    results, barrier = ctx.Queue(), ctx.Barrier(TWO)
+    procs = [ctx.Process(target=child_crawl, args=(db, results, barrier)) for _ in range(TWO)]
     for proc in procs:
         proc.start()
-    outputs = [results.get(timeout=60) for _ in procs]
+    outputs = [results.get(timeout=120) for _ in procs]
     for proc in procs:
         proc.join(timeout=60)
     assert all(proc.exitcode == 0 for proc in procs)
-    assert sorted(fetches for fetches, _, _ in outputs) == [
-        0,
-        1,
-    ]  # one crawled, one fetched nothing
-    assert [(entries, failures) for _, entries, failures in outputs] == [
-        (1, 0),
-        (1, 0),
-    ]  # both read it
+    assert sorted(o[0] for o in outputs) == [0, 1]  # one crawled, one fetched nothing
+    assert sorted(o[3] for o in outputs) == [0, 1]  # and the other one waited: the overlap is real
+    assert [(o[1], o[2]) for o in outputs] == [(1, 0), (1, 0)]  # both read the entry, no failure
     assert rows(db, "SELECT COUNT(*), SUM(complete) FROM sitemap_crawls") == [(1, 1)]
+
+
+# --- overlapping crawls after a takeover -------------------------------------------------------------
+
+
+def write_crawl(cache: SitemapCache, started_at: str, urls: list[str]) -> None:
+    """Claim and finish a crawl as a process would, with the given entries."""
+    conn = sqlite3.connect(cache._db_path)
+    conn.execute(
+        "INSERT OR IGNORE INTO sitemap_crawls VALUES (?, ?, NULL, 0, '2022-01-01', ?, NULL, NULL)",
+        (DOMAIN, started_at, sc.signature([ROOT])),
+    )
+    conn.commit()
+    conn.close()
+    cache._write(started_at, START, {u: (u, "2024-05-01", None) for u in urls}, len(urls), 0)
+
+
+@pytest.mark.parametrize("older_finishes_last", [True, False])
+async def test_overlapping_crawls_leave_the_newest_crawls_rows_current(
+    db: str, older_finishes_last: bool
+) -> None:
+    clock = Clock()
+    cache = process(db, Site({}), clock)
+    older = sc.stamp(clock.now)  # A: the slow winner
+    newer = sc.stamp(clock.now + timedelta(minutes=40))  # B: the takeover
+    for started in (older, newer):  # both claimed: the takeover ignored the stale row
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "INSERT INTO sitemap_crawls VALUES (?, ?, NULL, 0, '2022-01-01', ?, NULL, NULL)",
+            (DOMAIN, started, sc.signature([ROOT])),
+        )
+        conn.commit()
+        conn.close()
+    finish = [(older, ["u1", "u2"]), (newer, ["u2", "u3"])]
+    for started, urls in finish if not older_finishes_last else finish[::-1]:
+        write_crawl(cache, started, urls)
+    latest = cache._latest_complete()
+    assert latest is not None
+    assert latest.started_at == newer  # the newest data, whichever finished last
+    assert sorted(e.url for e in cache._load(latest.started_at)) == ["u2", "u3"]  # u3 is there
+    # the entry both crawls saw keeps the newer `last_seen`; the older crawl's own is not current
+    assert dict(rows(db, "SELECT url, last_seen FROM sitemap_entries"))["u2"] == newer
+    assert dict(rows(db, "SELECT url, last_seen FROM sitemap_entries"))["u1"] == older
+
+
+def test_the_latest_complete_lookup_is_a_search_not_a_scan(db: str) -> None:
+    conn = sqlite3.connect(db)
+    plan = " ".join(
+        r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sc.LATEST_COMPLETE_SQL, (DOMAIN,))
+    )
+    conn.close()
+    assert "SEARCH" in plan
+    assert "SCAN" not in plan  # a few rows sorted in a temp b-tree is fine; a table scan is not
+
+
+# --- a cancelled crawl does not freeze the loop ------------------------------------------------------
+
+
+async def test_a_cancelled_crawl_closes_its_row_without_blocking_the_event_loop(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    site = standard_site()
+    site.delay = 5.0
+    real = SitemapCache._close_failed
+
+    def slow_close(self: SitemapCache, *args: object) -> None:
+        time.sleep(0.4)  # a locked file: the busy timeout, in the worker thread
+        real(self, *args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(SitemapCache, "_close_failed", slow_close)
+    task = asyncio.create_task(process(db, site, Clock()).begin(RANGE))
+    await asyncio.sleep(POLL * 5)
+    ticks = 0
+
+    async def other_domain() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    pair = asyncio.create_task(other_domain())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    pair.cancel()
+    assert ticks >= TICKS  # the loop ran while the row was being closed
+    assert rows(db, "SELECT complete, failures FROM sitemap_crawls") == [(0, 1)]

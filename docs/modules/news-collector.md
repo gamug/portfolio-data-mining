@@ -202,6 +202,12 @@ T-071 is merged**.
   over**: its row is ignored (it stays, as history) and the waiter crawls. A crawl that raises or is cancelled closes its row as failed at
   once. A slow domain needs the setting raised (`ft` took 837 s): a crawl longer than the timeout is crawled twice. Like the retry
   setting, it is read once per process. A waiting process whose range is wider than the winner's crawls after it.
+  Three consequences: (1) **a request waits for the crawl it finds:** an API request for a domain that the crawler is crawling waits
+  for that crawl, up to the stale timeout (about 12 s for `cnbc.com`), because the waiter holds the process's lock for the domain;
+  (2) **the gateway and the crawler are assumed to share a clock**, since the row's `started_at` is written by one process and judged
+  by the other (a skew larger than the timeout would make a live crawl look dead); (3) **two crawls can overlap after a takeover**
+  (the first was only slow): the newest crawl's data wins whichever finishes last (the latest complete crawl is the one with the latest
+  `started_at`, and an older crawl never moves an entry's `last_seen` back).
 
 - **Usage:**
   ```bash

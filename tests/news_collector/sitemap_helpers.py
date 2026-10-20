@@ -183,21 +183,32 @@ def seen(pairs: list) -> list[tuple]:
     return sorted((p.url, p.match_class, p.match_reason, p.title, p.pub_date) for p in pairs)
 
 
-def child_crawl(db: str, results: object) -> None:
+def child_crawl(db: str, results: object, barrier: object) -> None:
     """The body of one of two real processes (T-070b): a slow crawl of a one-entry sitemap through
-    `SitemapCache`, reporting (fetches made here, entries read, failures) on `results`."""
-    fetches = 0
+    `SitemapCache`, reporting (fetches made here, entries read, failures, waits entered) on
+    `results`. Both processes pass the barrier after their imports and just before `begin`, so
+    the second always arrives while the first is crawling."""
+    fetches = waits = 0
     page = leaf(("https://example.test/a-1", "2024-05-01"))
 
     async def fetch(_url: str) -> str:
         nonlocal fetches
         fetches += 1
-        await asyncio.sleep(1.5)  # slow: the other process arrives while it runs
+        await asyncio.sleep(3.0)  # slow: the other process is already waiting
         return page
 
-    async def main() -> tuple[int, int, int]:
+    async def main() -> tuple[int, int, int, int]:
         cache = SitemapCache("example.test", [ROOT], db, fetch, lambda _u: True, poll=0.05)
+        real_wait = cache._wait_for
+
+        async def counting(other: str | None) -> str | None:
+            nonlocal waits
+            waits += 1
+            return await real_wait(other)
+
+        cache._wait_for = counting  # type: ignore[method-assign]
+        barrier.wait(timeout=60)  # type: ignore[attr-defined]
         run = await cache.begin(RANGE)
-        return fetches, len(run.entries(RANGE)[0]), len(run.failures)
+        return fetches, len(run.entries(RANGE)[0]), len(run.failures), waits
 
     results.put(asyncio.run(main()))  # type: ignore[attr-defined]

@@ -60,6 +60,14 @@ OPEN_CRAWL_SQL = (
     "AND started_at > ? ORDER BY started_at DESC LIMIT 1"
 )
 
+# The latest complete crawl is the one whose data is the newest: the latest `started_at`, which is
+# also the `last_seen` of its entries. Not `finished_at`: with two overlapping crawls (a takeover)
+# the older one can finish last (T-070b). Served by `ix_sitemap_crawls_latest` (domain, complete).
+LATEST_COMPLETE_SQL = (
+    "SELECT started_at, range_start, signature, entries FROM sitemap_crawls "
+    "WHERE domain = ? AND complete = 1 ORDER BY started_at DESC LIMIT 1"
+)
+
 Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO date), title
 
 
@@ -327,11 +335,13 @@ class SitemapCache:
                 self._write, started_at, crawl_start, rows, len(entries), len(failures)
             )
         except asyncio.CancelledError:
-            self._close_failed(started_at, crawl_start)
+            # in a thread, shielded: a locked file must not freeze the loop for the busy timeout,
+            # and a second cancel must not leave the row open
+            await asyncio.shield(asyncio.to_thread(self._close_failed, started_at, crawl_start))
             raise
         except Exception as exc:
             log.warning("sitemap refresh of %s raised: %s", self.domain, exc)
-            self._close_failed(started_at, crawl_start)
+            await asyncio.to_thread(self._close_failed, started_at, crawl_start)
             return [f"sitemap refresh raised: {exc}"]
         log.info(
             "sitemap crawl of %s: %d entries stored, %d failure(s)",
@@ -436,11 +446,7 @@ class SitemapCache:
     def _latest_complete(self) -> Crawl | None:
         db = connect(self._db_path)
         try:
-            row = db.execute(
-                "SELECT started_at, range_start, signature, entries FROM sitemap_crawls "
-                "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1",
-                (self.domain,),
-            ).fetchone()
+            row = db.execute(LATEST_COMPLETE_SQL, (self.domain,)).fetchone()
         finally:
             db.close()
         if row is None:
@@ -476,7 +482,9 @@ class SitemapCache:
                         "INSERT INTO sitemap_entries (domain, url, lastmod, title, first_seen, last_seen) "
                         "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (domain, url) DO UPDATE SET "
                         "lastmod = excluded.lastmod, title = excluded.title, "
-                        "last_seen = excluded.last_seen",
+                        "last_seen = excluded.last_seen "
+                        # an older crawl that finishes last never moves an entry back in time
+                        "WHERE excluded.last_seen >= sitemap_entries.last_seen",
                         (
                             (self.domain, url, lastmod, title, started_at, started_at)
                             for url, lastmod, title in rows.values()
@@ -509,7 +517,7 @@ class SitemapCache:
                 db.execute(
                     "DELETE FROM sitemap_crawls WHERE domain = ? AND started_at < ? AND NOT "
                     "(complete = 1 AND started_at = (SELECT started_at FROM sitemap_crawls "
-                    "WHERE domain = ? AND complete = 1 ORDER BY finished_at DESC LIMIT 1))",
+                    "WHERE domain = ? AND complete = 1 ORDER BY started_at DESC LIMIT 1))",
                     (self.domain, cutoff, self.domain),
                 )
         finally:
