@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import httpx
@@ -20,7 +21,8 @@ from news_collector.models import Company, DateRange, DiscoveredURL
 # Stand in for a real connector/httpx client that the monkeypatched discovery
 # function never actually touches -- cast() documents that instead of
 # constructing real (heavier, network-capable) instances just for typing.
-_FAKE_CONNECTOR = cast(BaseConnector, object())
+# no sitemap roots: the route makes no cache (T-070a)
+_FAKE_CONNECTOR = cast(BaseConnector, SimpleNamespace(config=SimpleNamespace(sitemap_roots=[])))
 _FAKE_CLIENT = cast(httpx.AsyncClient, object())
 
 
@@ -44,6 +46,7 @@ async def test_run_domain_discovery_respects_concurrency_limit(
         client: httpx.AsyncClient,
         date_range: DateRange,
         extra_fetch: object = None,
+        cache: object = None,
     ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
         nonlocal in_flight, max_in_flight
         in_flight += 1
@@ -80,6 +83,7 @@ async def test_run_domain_discovery_default_concurrency_is_five(
         client: httpx.AsyncClient,
         date_range: DateRange,
         extra_fetch: object = None,
+        cache: object = None,
     ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
         nonlocal in_flight, max_in_flight
         in_flight += 1

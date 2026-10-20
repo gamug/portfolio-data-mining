@@ -84,9 +84,6 @@ Pair = tuple[str, str, str | None]  # class, reason, pub_date (ISO)
 START = date(2022, 1, 1)
 # The cache DDL is `data_mining.schema.SITEMAP_CACHE_DDL`; the script creates it only in memory
 # or in a temporary file.
-# Bumped when `is_article_url` or the normalization changes: the cached rows were filtered by the
-# old rule. The test of the pinned URLs fails when a result changes without a new version.
-CACHE_VERSION = 1
 # Cumulative shares of the synthetic URL variants, then the share of entries with a title and of
 # entries without a `lastmod`.
 P_TICKER_URL, P_NAME_S_URL, P_NAME_CORP_URL, P_TITLE, P_NO_LASTMOD = 0.25, 0.4, 0.5, 0.7, 0.03

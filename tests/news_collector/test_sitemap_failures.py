@@ -12,6 +12,7 @@ import pytest
 
 import news_collector.orchestrator as mod
 from data_mining.matching import Match
+from news_collector import sitemap_cache
 from news_collector.api.routers import _common
 from news_collector.connectors.ft import FTConnector
 from news_collector.connectors.nasdaq import NasdaqConnector
@@ -132,11 +133,12 @@ async def _run(orch: DiscoveryOrchestrator, monkeypatch: pytest.MonkeyPatch, pag
     async def no_ddg(self, *_: object) -> list:
         return []
 
-    async def fetch(self, url: str) -> str:
+    async def fetch(_client: object, url: str) -> str:
         return await _Pages(pages).fetch(url)
 
     monkeypatch.setattr(mod.DDGStrategy, "discover", no_ddg)
-    monkeypatch.setattr(mod.SitemapRSSStrategy, "_fetch", fetch)
+    # the orchestrator reads the sitemap through its cache (T-070a), which fetches with this
+    monkeypatch.setattr(sitemap_cache, "fetch_text", fetch)
     return await orch.run(
         [Company(ticker="ACME", name="Acme")], domains=["example.test"], date_range=_RANGE
     )
@@ -151,7 +153,9 @@ async def test_failed_domain_is_an_error_and_a_later_run_retries(
     assert _ROOT in stats.errors[0]
     assert not _done(queue)
 
-    # the source recovers: the next run is not skipped and checkpoints the pair
+    # the source recovers and the next run is a new process (the CLI; a gateway would wait out the
+    # 5-minute back-off of the cache, or be forced): the pair is not skipped and is checkpointed
+    sitemap_cache.reset_shared_caches()
     stats = await _run(orch, monkeypatch, {_ROOT: _LEAF})
     assert stats.errors == []
     assert _done(queue)

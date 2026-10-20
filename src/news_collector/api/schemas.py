@@ -46,6 +46,13 @@ class DiscoverRequest(BaseModel):
     concurrency: int = Field(
         default=5, ge=1, le=20, description="Max tickers discovered in parallel for this domain"
     )
+    refresh_sitemaps: bool = Field(
+        default=False,
+        description=(
+            "Crawl the domain's sitemap even when its cache is at most 7 days old. Two forced "
+            "requests at the same time make one crawl; the cache never narrows."
+        ),
+    )
 
 
 class RunAllRequest(BaseModel):
@@ -74,6 +81,13 @@ class RunAllRequest(BaseModel):
         default=None, description="SQLite queue path (default: $DATABASE_URL)"
     )
     concurrency: int = Field(default=5, ge=1, le=20, description="Max parallel discovery tasks")
+    refresh_sitemaps: bool = Field(
+        default=False,
+        description=(
+            "Crawl the domain's sitemap even when its cache is at most 7 days old. Two forced "
+            "requests at the same time make one crawl; the cache never narrows."
+        ),
+    )
     resume: bool = Field(
         default=True,
         description=(
@@ -122,6 +136,13 @@ class DiscoverResponse(BaseModel):
     inserted: int
     elapsed_seconds: float
     errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Not errors: the sitemap cache was used although its refresh failed (the age of the "
+            "crawl is in the text). The pair is checkpointed."
+        ),
+    )
     start_date: date = Field(description="Inclusive start of the range this run used.")
     end_date: date = Field(description="Inclusive end of the range this run used.")
 
@@ -138,6 +159,13 @@ class RunAllResponse(BaseModel):
     by_domain: dict[str, int]
     by_company: dict[str, int]
     errors: list[str]
+    warnings: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Not errors: the sitemap cache was used although its refresh failed (the age of the "
+            "crawl is in the text). The pair is checkpointed."
+        ),
+    )
     elapsed_seconds: float
     skipped_pairs: int = Field(
         default=0,

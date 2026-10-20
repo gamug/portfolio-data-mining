@@ -160,6 +160,62 @@ tables when they start, in either order or together (the second waits for the fi
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
 
+## The sitemap cache of a domain (T-070a)
+
+A domain with `sitemap_roots` (today only `cnbc.com`) is crawled **once per domain**, not once per ticker: `news_collector/sitemap_cache.py`
+stores the in-range entries in `sitemap_entries` and every ticker reads them. The matching is still the full scan of today and the
+`reject` pairs are still stored (T-071 changes both), so **the rule above stands: no `cnbc.com` discovery on the real database until
+T-071 is merged**.
+
+- **Fresh enough:** the latest complete crawl is used while it started at most **7 days** ago, whatever the run's end date. The age is
+  judged once, when the run starts. A run that needs today's sitemap passes **`--refresh-sitemaps`** (CLI) or `"refresh_sitemaps": true`
+  (`/discovery/run-all` and the per-domain routes); two forced requests at the same time make one crawl.
+- **It refreshes** when there is no complete crawl, the sitemap roots or the filter (`CACHE_VERSION`) changed, the run starts before the
+  crawl's `range_start`, the crawl is older than 7 days, or it is forced. A refresh never narrows the cache and never replaces it: entries
+  are upserted with `last_seen` = the crawl's `started_at`, an entry missing from a complete crawl stays in the table but is no longer
+  current, and a complete refresh deletes entries not seen for 90 days (and crawl rows older than that, but the latest complete one).
+- **Complete** means every root and child was fetched and parsed. One failed child makes the crawl incomplete: only its `sitemap_crawls`
+  row is written. A domain whose child always fails (`ft`) is unsupported and must keep its `sitemap_roots` empty.
+- **A failed refresh:** a cache that covers the run and is at most 7 days old is used; an older one is used with a warning that carries its
+  age; one that does not cover the run (or none) fails every pair of the domain with the reason, and the pairs are not checkpointed.
+- **An outage is tried once.** After a failed refresh a process does not crawl again for **5 minutes** (`SITEMAP_RETRY_MINUTES` in `.env`, a number
+  >= 0, `0` = retry on every run; a bad value is ignored with a warning) unless the call is forced; the runs of those minutes use the cache
+  as in the failed-refresh cases above. The failed attempt is a `sitemap_crawls` row with `complete = 0`; every refresh, complete or not,
+  deletes crawl rows older than 90 days except the latest complete one. A gateway whose source recovers inside the window keeps failing
+  that domain until the window ends or the call is forced; a separate CLI run is a new process and is not affected.
+  The setting is read once, when the process makes the domain's cache, so **a running gateway needs a restart to see a new
+  `SITEMAP_RETRY_MINUTES`**; each CLI run reads it afresh.
+- **The run summary names an unusable domain once**, with the number of pairs it left undone (`cnbc.com: sitemap cache of ... does not cover ...
+  (503 pairs not checkpointed)`), not once per ticker; every pair of the domain is still not checkpointed.
+- **Warnings:** when the refresh failed and the run went on with the cache (cases a and b), the run says so: `Warnings` in the CLI
+  summary, `warnings` on `RunAllResponse` and on each `DiscoverResponse`, with the age of the crawl used. It is not an error: the pairs are
+  checkpointed and the exit status is 0. A cache the run cannot use (case c) is an error, as above.
+- **Memory:** a process holds the rows of the crawl it last read for as long as it lives: about 26.5 MB for the 109,493 `cnbc.com`
+  entries (`tracemalloc`), so the gateway's resident size grows by that much after its first discovery request and stays.
+- **Errors:** a database error while the cache is read or refreshed is not an exception of the run: it is a failure of every pair of that
+  domain (not checkpointed), and the other domains run.
+- **One process.** The gateway and the crawler are two processes: until T-070b each may crawl once when both find the cache stale. The
+  cost of the duplicate is 10 s and the same rows (an upsert).
+- **Usage:**
+  ```bash
+  # the cache is on by default for a domain with sitemap roots; a cache at most 7 days old is used
+  uv run python cli/news_collector_cli.py discover --tickers AAPL --domains cnbc.com
+  # crawl the sitemap now, whatever the age of the cache (10 s); the cache is never narrowed
+  uv run python cli/news_collector_cli.py discover --tickers AAPL --domains cnbc.com --refresh-sitemaps
+  # the same on the API: {"refresh_sitemaps": true} in the body of /discovery/run-all or /cnbc/
+  ```
+  A run that used an old cache because the refresh failed prints `Warnings` in its summary and returns `warnings` in the API response.
+- **Look at it** (read-only, from the repository root; `DB` as above):
+  ```bash
+  PYTHONPATH=src uv run python - <<'EOF'
+  import os, sqlite3
+  db = sqlite3.connect(f"file:{os.environ['DB']}?mode=ro", uri=True)
+  for row in db.execute("SELECT domain, started_at, complete, range_start, entries, failures FROM sitemap_crawls ORDER BY started_at DESC LIMIT 5"):
+      print(row)
+  print("entries:", db.execute("SELECT domain, COUNT(*) FROM sitemap_entries GROUP BY domain").fetchall())
+  EOF
+  ```
+
 ## New S&P 500 members backfill automatically (no special-casing needed)
 
 The universe is mutable (see `common.universe_history`, [pricing.md](pricing.md)): a ticker

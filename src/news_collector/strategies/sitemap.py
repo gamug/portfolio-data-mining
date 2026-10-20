@@ -6,7 +6,9 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 import feedparser  # type: ignore
@@ -18,6 +20,9 @@ from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, DiscoveredURL, SitemapEntry
 from news_collector.utils.http import fetch_text
 from news_collector.utils.url import is_valid_http_url, normalize_url
+
+if TYPE_CHECKING:
+    from news_collector.sitemap_cache import SitemapRun
 
 log = logging.getLogger(__name__)
 
@@ -51,9 +56,13 @@ class SitemapRSSStrategy:
         self,
         connector: BaseConnector,
         client: httpx.AsyncClient,
+        cache: SitemapRun | None = None,
     ) -> None:
         self._connector = connector
         self._client = client
+        # T-070a: the run's decision about the domain's cache (`SitemapRun`): the sitemap entries
+        # come from it (crawled once per domain, not once per ticker); `None` is today's live fetch.
+        self._cache = cache
         # Sitemap roots and children that could not be fetched or parsed in the last
         # `discover` call (T-076). The orchestrator reads it: a pair with failures is
         # reported and not checkpointed.
@@ -81,9 +90,14 @@ class SitemapRSSStrategy:
 
         # 1. Crawl sitemap trees
         if self._connector.config.sitemap_roots:
-            entries.extend(
-                await self._crawl_sitemaps(self._connector.config.sitemap_roots, date_range)
-            )
+            if self._cache is not None:
+                cached, cache_failures = self._cache.entries(date_range)
+                entries.extend(cached)
+                self.failures.extend(cache_failures)
+            else:
+                entries.extend(
+                    await self._crawl_sitemaps(self._connector.config.sitemap_roots, date_range)
+                )
 
         # 2. Parse RSS feeds
         for feed_url in self._connector.config.rss_feeds:
@@ -155,42 +169,8 @@ class SitemapRSSStrategy:
 
     async def _crawl_sitemaps(self, roots: list[str], date_range: DateRange) -> list[SitemapEntry]:
         """BFS over sitemap index tree; collect leaf entries within date range."""
-        visited: set[str] = set()
-        pending: list[str] = list(roots)
-        entries: list[SitemapEntry] = []
-
-        while pending:
-            url = pending.pop(0)
-            if url in visited:
-                continue
-            visited.add(url)
-
-            try:
-                text = await self._fetch(url)
-            except Exception as exc:
-                log.warning("Sitemap fetch failed %s: %s", url, exc)
-                self.failures.append(f"sitemap fetch failed {url}: {exc}")
-                continue
-
-            try:
-                # defusedxml guards against XXE/entity-expansion attacks --
-                # sitemap XML is fetched from whatever domain is being
-                # scraped, so it's untrusted input.
-                root = DefusedET.fromstring(text)
-            except (ET.ParseError, DefusedXmlException) as exc:
-                log.warning("Sitemap XML parse error %s: %s", url, exc)
-                self.failures.append(f"sitemap XML parse error {url}: {exc}")
-                continue
-
-            tag = root.tag.lower()
-            if "sitemapindex" in tag:
-                # Sitemap index — expand child sitemaps
-                child_urls = _parse_sitemap_index(root, date_range)
-                pending.extend(u for u in child_urls if u not in visited)
-            else:
-                # Leaf sitemap — collect article entries
-                entries.extend(_parse_sitemap_leaf(root, date_range))
-
+        entries, failures = await crawl_sitemaps(self._fetch, roots, date_range)
+        self.failures.extend(failures)
         return entries
 
     async def _parse_rss(self, feed_url: str) -> list[SitemapEntry]:
@@ -257,6 +237,54 @@ class SitemapRSSStrategy:
 
     async def _fetch(self, url: str) -> str:
         return await fetch_text(self._client, url)
+
+
+async def crawl_sitemaps(
+    fetch: Callable[[str], Awaitable[str]], roots: list[str], date_range: DateRange
+) -> tuple[list[SitemapEntry], list[str]]:
+    """BFS over a sitemap index tree: the leaf entries within `date_range`, and the failures.
+
+    A failure is a root or child that could not be fetched or parsed (T-076); a crawl is
+    *complete* (T-070a, the cache) only when the list is empty.
+    """
+    visited: set[str] = set()
+    pending: list[str] = list(roots)
+    entries: list[SitemapEntry] = []
+    failures: list[str] = []
+
+    while pending:
+        url = pending.pop(0)
+        if url in visited:
+            continue
+        visited.add(url)
+
+        try:
+            text = await fetch(url)
+        except Exception as exc:
+            log.warning("Sitemap fetch failed %s: %s", url, exc)
+            failures.append(f"sitemap fetch failed {url}: {exc}")
+            continue
+
+        try:
+            # defusedxml guards against XXE/entity-expansion attacks --
+            # sitemap XML is fetched from whatever domain is being
+            # scraped, so it's untrusted input.
+            root = DefusedET.fromstring(text)
+        except (ET.ParseError, DefusedXmlException) as exc:
+            log.warning("Sitemap XML parse error %s: %s", url, exc)
+            failures.append(f"sitemap XML parse error {url}: {exc}")
+            continue
+
+        tag = root.tag.lower()
+        if "sitemapindex" in tag:
+            # Sitemap index — expand child sitemaps
+            child_urls = _parse_sitemap_index(root, date_range)
+            pending.extend(u for u in child_urls if u not in visited)
+        else:
+            # Leaf sitemap — collect article entries
+            entries.extend(_parse_sitemap_leaf(root, date_range))
+
+    return entries, failures
 
 
 # ------------------------------------------------------------------
