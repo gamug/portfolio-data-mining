@@ -173,7 +173,7 @@ index and stamps 4, and the next new-code start drops it again (it looks like a 
 command is not run again (it refuses to overwrite). If the restart is later, or any write must survive a restore, make a new
 backup of the file as it is, with another name (`urls_t_073_v5.db`), the same way as step 1 above.
 
-*Rehearse it right before the restart* (read-only on the source, the copy must not exist; a few minutes for the copy):
+*Rehearse it right before the restart* (read-only on the source, the copy must not exist; it needs the file's size free in `/tmp` and a few minutes for the copy):
 `PYTHONPATH=src uv run python scripts/rehearse_sitemap_cache_migration.py --source $BK --copy /tmp/urls_v5_rehearsal.db` with `BK` the
 backup (a version-4 file with the index). Every line must read `ok`.
 (Rehearsed 2026-10-20 on a copy of a copy of the real file with the cache filled: 0.005 s, pipeline fingerprint identical, version 4 → 5, the
@@ -196,9 +196,21 @@ Expect `user_version: 5`; **four** names (`ix_sitemap_crawls_open`, `ix_sitemap_
 equal to those of the file just before the restart (after the G3 reclaim: the backup's `discovered_urls` minus the rows deleted, `articles` and
 `discovery_progress` unchanged).
 
-*If anything differs:* stop both services, then either run `rollback_sitemap_cache` (it refuses a file that is not at version 5, drops the two cache tables and
-stamps 3, the way step 4 of the version-4 section does) and restart on the old code, or restore the backup. Keep the backup under the same rule as
-the `urls.pre-*.db` files (the maintainer deletes it).
+*If anything differs:* stop both services, then either restore the backup (copy it over `$DB` with the services stopped, after deleting `$DB-wal` and `$DB-shm` if present),
+or run the rollback below and restart on the old code. Keep the backup under the same rule as the `urls.pre-*.db` files (the maintainer deletes it).
+```bash
+PYTHONPATH=src uv run python - <<'EOF'
+import os, sqlite3
+from portfolio_common.db import Database
+from data_mining.schema import rollback_sitemap_cache
+db = Database(sqlite3.connect(os.environ["DB"]))
+rollback_sitemap_cache(db)
+db.commit()
+print("user_version now:", db.schema_version)
+db.close()
+EOF
+```
+It refuses a file that is not at version 5, drops the two cache tables and stamps 3: expect `user_version now: 3` and no `sitemap_*` name in the check above.
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.

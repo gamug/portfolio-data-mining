@@ -652,7 +652,7 @@ def test_a_version_3_build_leaves_the_cache_and_the_next_start_restamps_5(db: Da
     db.commit()
     before = _fingerprint(db)
 
-    _apply_schema_as_version_3(db)  # the old build starts on the version-4 file
+    _apply_schema_as_version_3(db)  # the old build starts on the version-5 file
 
     assert db.schema_version == PREVIOUS_SCHEMA_VERSION
     assert _table_names(db) >= CACHE_TABLES  # ignored, not dropped
