@@ -167,6 +167,9 @@ def apply_schema(db: Database) -> None:
     db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
     db.create_schema(_ARTICLES_DDL)
     db.create_schema(SITEMAP_CACHE_DDL)
+    # the stamp can precede the drop of a version-4 file's unused index (`run_migrations`, which
+    # every start-up calls next): a caller of this alone leaves version 5 with the index, which
+    # the next `run_migrations` drops
     db.set_schema_version(SCHEMA_VERSION)
 
 

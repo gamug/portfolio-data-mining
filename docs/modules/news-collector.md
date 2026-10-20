@@ -86,13 +86,13 @@ print(before, q._conn.execute(
     " WHERE name='idx_match_class'), (SELECT * FROM pragma_user_version) FROM discovered_urls").fetchone()[:])
 PY
 ```
-Expect the same row count before and after, every row `accept`, the index present and user_version 4
-(the 481,332-row corpus gave that on 2026-10-15, when the version was 2; `initialize()` now also adds
-`articles.prev_fetch_status` and, since T-069, the two empty sitemap-cache tables, and stamps **4**: the expected
-`user_version` is 4). The cache migration has its own rehearsal on a copy,
+Expect the same row count before and after, every row `accept`, the index present and the version stamped
+(the 481,332-row corpus gave that on 2026-10-15, when the version was 2, and the expected `user_version` was then 2; `initialize()` now also adds
+`articles.prev_fetch_status` and, since T-069, the two sitemap-cache tables, and stamps **5** since T-073: the expected
+`user_version` is `SCHEMA_VERSION`, 5). The cache migration has its own rehearsal on a copy,
 `scripts/rehearse_sitemap_cache_migration.py` (`--source` is opened read-only, `--copy` must not exist).
 
-**After merging the schema-version-4 change (T-069), on the real file.** Run every command from the repository root; `DB` is the
+**After merging the schema-version-4 change (T-069), on the real file** *(historical: done 2026-10-19 at version 4; its expectations, `user_version` 4 and five cache names, are those of that build. For a current build use the schema-version-5 section below, which has its own check)*. Run every command from the repository root; `DB` is the
 file the gateway and the crawler open (`$DATABASE_URL`, else `data/urls.db`; the thesis machine uses `/workspaces/thesis/data/urls.db`).
 The `sqlite3` command-line tool is not installed there, so each step is a short Python command. The two services create the cache
 tables when they start, in either order or together (the second waits for the first's write lock).
@@ -159,14 +159,46 @@ tables when they start, in either order or together (the second waits for the fi
 
 **After merging the schema-version-5 change (T-073), on the real file.** Version 5 only drops `ix_sitemap_crawls_latest`, the
 index version 4 created and no query has used since T-070b (the latest complete crawl is found by the primary key
-`(domain, started_at)`). It holds no data: the cache tables, the pipeline tables and every row stay as they are, and a
-version-4 build that starts on a version-5 file re-creates the index and stamps 4. The first service that starts on the new code
-runs the `DROP INDEX IF EXISTS`; it is a schema change on the real file (constitution #10), so make a backup first, the same way
-as step 1 above but with the file name you choose (`T-073` used `urls_t_073.db`, next to `urls.db`; it refuses to overwrite).
-After the restart, step 3 above applies with two changes: expect `user_version: 5` and **four** names (`ix_sitemap_crawls_open`,
-`ix_sitemap_entries_lastmod`, `sitemap_crawls`, `sitemap_entries`), and the three counts equal to the backup's. Rehearsed on a copy
-of the real file (2026-10-20, `scripts/rehearse_sitemap_cache_migration.py`): 0.005 s, pipeline fingerprint identical, version 4 → 5,
-the index gone, a second run changes nothing, the rollback restores version 3 with no cache object, `quick_check` ok.
+`(domain, started_at)`). It holds no data: the cache tables, the pipeline tables and every row stay as they are.
+
+*Who migrates the file.* The first program that opens the file with the merged code runs the `DROP INDEX IF EXISTS`, whichever it is: the
+gateway, the crawler, the extractor, `reclass-sitemap --apply` (the CLI and the API route), the collector CLI. `fill_sitemap_cache.py`,
+`reclaim_sitemap_rejects.py evidence`/`reclaim`/`compact` and the migration rehearsal do **not** migrate (the G3 steps leave the file at version 4).
+It is a schema change on the real file (constitution #10), so a backup comes first. Restart the gateway and the crawler on the new code
+**together**: a service still running the old code is harmless (it never reads the index), but an old build restarted later re-creates the
+index and stamps 4, and the next new-code start drops it again (it looks like a flip-flop in a check, and it is not a fault).
+
+*Which backup.* If the restart follows the G3 steps of "Reclaim the never-fetched sitemap rejects" (the same maintenance window),
+`urls_t_073.db` (made before the fill and the reclaim) is the backup of the whole window, G3 and this migration, and the backup
+command is not run again (it refuses to overwrite). If the restart is later, or any write must survive a restore, make a new
+backup of the file as it is, with another name (`urls_t_073_v5.db`), the same way as step 1 above.
+
+*Rehearse it right before the restart* (read-only on the source, the copy must not exist; a few minutes for the copy):
+`PYTHONPATH=src uv run python scripts/rehearse_sitemap_cache_migration.py --source $BK --copy /tmp/urls_v5_rehearsal.db` with `BK` the
+backup (a version-4 file with the index). Every line must read `ok`.
+(Rehearsed 2026-10-20 on a copy of a copy of the real file with the cache filled: 0.005 s, pipeline fingerprint identical, version 4 → 5, the
+index gone, a second run changes nothing, the rollback restores version 3 with no cache object, `quick_check` ok.)
+
+*Check the real file after the restart* (read-only):
+```bash
+PYTHONPATH=src uv run python - <<'EOF'
+import os, sqlite3
+db = sqlite3.connect(f"file:{os.environ['DB']}?mode=ro", uri=True)
+print("user_version:", db.execute("PRAGMA user_version").fetchone()[0], "(expected 5)")
+print("sitemap objects:", [r[0] for r in db.execute(
+    "SELECT name FROM sqlite_master WHERE name LIKE '%sitemap_%' "
+    "AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name")])
+for t in ("discovered_urls", "articles", "discovery_progress"):
+    print(f"{t}: {db.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]}")
+EOF
+```
+Expect `user_version: 5`; **four** names (`ix_sitemap_crawls_open`, `ix_sitemap_entries_lastmod`, `sitemap_crawls`, `sitemap_entries`); and the three counts
+equal to those of the file just before the restart (after the G3 reclaim: the backup's `discovered_urls` minus the rows deleted, `articles` and
+`discovery_progress` unchanged).
+
+*If anything differs:* stop both services, then either run `rollback_sitemap_cache` (it refuses a file that is not at version 5, drops the two cache tables and
+stamps 3, the way step 4 of the version-4 section does) and restart on the old code, or restore the backup. Keep the backup under the same rule as
+the `urls.pre-*.db` files (the maintainer deletes it).
 
 Every row in `discovered_urls` carries a stable `id` primary key — the crawler holds it as
 a foreign key back to this table, rather than re-matching on the `url` string.
@@ -555,7 +587,8 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
   and a `tqdm` bar shows the progress); `T-071`'s token index will make it seconds.
 - **Reject pairs** are counted in the output (`reject`) and never stored.
 - **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with
-  `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 4 it runs the migration: on
+  `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 5 it runs the migration (version 5 drops
+  the unused cache index, see "After merging the schema-version-5 change"): on
   the real `urls.db` that is behind the gate and backup rules of `T-073`, and a collector or the gateway may be writing at the
   same time (the writes are batches of 5,000 pairs, promote-only).
 - **Errors.** A failed ticker (a lock, a file without the queue tables, a bad class, the disk) is one error line plus a
