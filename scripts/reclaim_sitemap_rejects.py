@@ -5,12 +5,22 @@
 
     # the deletion, on a COPY first (the rehearsal), with a backup that matches it:
     PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db COPY.db \
-        --backup COPY.pre.db --expect 578113
+        --backup COPY.pre.db --expect 578113 --rehearsal-copy
+
+    # the real file, only with the maintainer's approval (G3), the services stopped:
+    PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py reclaim --db REAL.db \
+        --backup REAL_BACKUP.db --expect 578113 --expect-kept 593 --i-have-the-g3-approval
+
+    # finish a run that printed INCOMPLETE (rows deleted, file not compacted):
+    PYTHONPATH=src uv run python scripts/reclaim_sitemap_rejects.py compact --db REAL.db \
+        --i-have-the-g3-approval
 
 `reclaim` needs `--backup` (another file that passes `quick_check` and has the same fingerprint),
-`--expect N` (the count the maintainer approved: a different count deletes nothing) and, on the
-file `DATABASE_URL` names, `--i-have-the-g3-approval`. It refuses while the gateway or a crawler
-runs. See `news_collector/reclaim_sitemap.py` and `TASKS.md` T-073.
+`--expect N` (the count the maintainer approved: a different count deletes nothing) and exactly one
+of `--i-have-the-g3-approval` (the process and open-file checks run, whatever the file is called) or
+`--rehearsal-copy` (refused for a file called `urls.db` or the one `DATABASE_URL` names). It holds
+the file exclusively, so it also refuses while any program has the file open. See
+`news_collector/reclaim_sitemap.py` and `TASKS.md` T-073.
 """
 
 from __future__ import annotations
@@ -33,6 +43,8 @@ from news_collector.orchestrator import build_connectors  # noqa: E402
 from news_collector.reclaim_sitemap import (  # noqa: E402
     PROOF_TICKERS,
     ReclaimError,
+    ReclaimIncomplete,
+    compact,
     format_evidence,
     gather_evidence,
     reclaim,
@@ -70,19 +82,49 @@ async def cmd_evidence(args: argparse.Namespace) -> int:
     return 1 if ev.proof.rejected_now else 0
 
 
-def cmd_reclaim(args: argparse.Namespace) -> int:
-    db = Path(args.db)
+def looks_real(db: Path) -> bool:
+    """The file `DATABASE_URL`/the default names, or any file called `urls.db`."""
     real = resolve_db_path(None)
-    is_real = real is not None and db.resolve() == Path(real).resolve()
-    if is_real and not args.g3:
-        print("this is the real database: it needs --i-have-the-g3-approval (T-073, G3)")
+    return db.name == "urls.db" or (real is not None and db.resolve() == Path(real).resolve())
+
+
+def gate(args: argparse.Namespace) -> bool | None:
+    """`check_processes` for the step, or None (after printing why) when it is refused.
+
+    Every file is treated as the real one unless the caller says it is a rehearsal copy, and a
+    file that looks real cannot be called one: the guards are never inferred from the environment.
+    """
+    db = Path(args.db)
+    if args.g3 == args.rehearsal:
+        print("give exactly one of --i-have-the-g3-approval and --rehearsal-copy")
+        return None
+    if args.rehearsal and looks_real(db):
+        print(f"{db} looks like the real database: it needs --i-have-the-g3-approval (T-073, G3)")
+        return None
+    return bool(args.g3)
+
+
+def cmd_reclaim(args: argparse.Namespace) -> int:
+    check_processes = gate(args)
+    if check_processes is None:
         return 1
     try:
-        done = reclaim(db, Path(args.backup), DATA_DIR, expect=args.expect, check_processes=is_real)
+        done = reclaim(
+            Path(args.db),
+            Path(args.backup),
+            DATA_DIR,
+            expect=args.expect,
+            expect_kept=args.expect_kept,
+            check_processes=check_processes,
+        )
+    except ReclaimIncomplete as exc:
+        print(exc)
+        return 2
     except ReclaimError as exc:
         print(f"REFUSED, nothing changed: {exc}")
         return 1
     print(f"Deleted          : {done.deleted}")
+    print(f"Protected ids    : {done.kept} (hand-labeled samples)")
     print(f"discovered_urls  : {done.before.discovered} -> {done.after.discovered}")
     print(
         f"articles         : {done.before.articles} -> {done.after.articles} (orphans {done.after.orphans})"
@@ -93,6 +135,24 @@ def cmd_reclaim(args: argparse.Namespace) -> int:
     )
     print(f"Backup kept      : {done.backup} (the maintainer deletes it)")
     print(f"Elapsed          : {done.seconds:.1f}s")
+    if not done.owner_kept:
+        print("WARNING: the new file is owned by this user, not by the original's owner: chown it")
+    return 0
+
+
+def cmd_compact(args: argparse.Namespace) -> int:
+    check_processes = gate(args)
+    if check_processes is None:
+        return 1
+    try:
+        done = compact(Path(args.db), check_processes=check_processes)
+    except ReclaimError as exc:
+        print(f"REFUSED, the file is as it was: {exc}")
+        return 1
+    print(f"File             : {done.bytes_before} -> {done.bytes_after} bytes")
+    print(f"discovered_urls  : {done.after.discovered}, articles {done.after.articles}")
+    if not done.owner_kept:
+        print("WARNING: the new file is owned by this user, not by the original's owner: chown it")
     return 0
 
 
@@ -114,11 +174,16 @@ def main() -> int:
     rc.add_argument("--db", required=True)
     rc.add_argument("--backup", required=True)
     rc.add_argument("--expect", type=int, required=True, help="the approved count of rows")
-    rc.add_argument("--i-have-the-g3-approval", dest="g3", action="store_true")
+    rc.add_argument("--expect-kept", type=int, help="the number of protected sample ids (593)")
+    cp = sub.add_parser("compact", help="compact and swap with no delete (finishes an INCOMPLETE)")
+    cp.add_argument("--db", required=True)
+    for step in (rc, cp):
+        step.add_argument("--i-have-the-g3-approval", dest="g3", action="store_true")
+        step.add_argument("--rehearsal-copy", dest="rehearsal", action="store_true")
     args = parser.parse_args()
     if args.command == "evidence":
         return asyncio.run(cmd_evidence(args))
-    return cmd_reclaim(args)
+    return cmd_reclaim(args) if args.command == "reclaim" else cmd_compact(args)
 
 
 if __name__ == "__main__":
