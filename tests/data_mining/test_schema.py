@@ -156,7 +156,7 @@ def _index_names(db: Database) -> set[str]:
     }
 
 
-def test_schema_version_is_4() -> None:
+def test_schema_version_is_5() -> None:
     assert SCHEMA_VERSION == PINNED_VERSION
 
 
@@ -256,11 +256,10 @@ def test_fresh_schema_has_prev_fetch_status_outside_the_upsert_columns(db: Datab
 # ---------------------------------------------------------------------------------------------
 
 MIN_WAIT = 0.2  # seconds the second connection must have waited
-PINNED_VERSION = 4  # the history is in schema.py
+PINNED_VERSION = 5  # the history is in schema.py
 CACHE_TABLES = {"sitemap_entries", "sitemap_crawls"}
 CACHE_INDEXES = {
     "ix_sitemap_entries_lastmod",
-    "ix_sitemap_crawls_latest",
     "ix_sitemap_crawls_open",
 }
 PIPELINE_TABLES = {"discovered_urls", "discovery_progress", "articles"}
@@ -317,6 +316,48 @@ def test_the_migration_adds_the_cache_to_a_version_3_database_and_changes_nothin
     assert _index_names(db) >= CACHE_INDEXES
     assert _fingerprint(db) == before  # same rows, same definitions
     assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 0
+
+
+def test_the_migration_drops_the_unused_index_of_a_version_4_file_and_keeps_the_cache(
+    db: Database,
+) -> None:
+    apply_schema(db)
+    _seed_pipeline(db)
+    stamp = "2026-10-19T00:00:00.000000"
+    db.execute(
+        "INSERT INTO sitemap_entries VALUES ('cnbc.com', 'https://x/2024/a.html', "
+        "'2024-05-01', NULL, ?, ?)",
+        (stamp, stamp),
+    )
+    db.execute(
+        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', ?, ?, 1, '2022-01-01', 's', 1, 0)",
+        (stamp, stamp),
+    )
+    # the file exactly as version 4 left it: the index exists and the stamp is 4
+    db.execute(
+        "CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at)"
+    )
+    db.set_schema_version(4)
+    db.commit()
+    before = _fingerprint(db)
+
+    apply_schema(db)
+    run_migrations(db)
+    run_migrations(db)  # idempotent
+
+    assert "ix_sitemap_crawls_latest" not in _index_names(db)
+    assert _index_names(db) >= CACHE_INDEXES  # the other two stay
+    assert db.schema_version == SCHEMA_VERSION == 5
+    assert _fingerprint(db) == before  # the pipeline tables are untouched
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM sitemap_crawls").fetchone()[0] == 1
+
+
+def test_a_fresh_database_never_has_the_dropped_index(db: Database) -> None:
+    apply_schema(db)
+    run_migrations(db)
+
+    assert "ix_sitemap_crawls_latest" not in _index_names(db)
 
 
 def test_the_migration_on_an_empty_database_is_a_noop_like_the_other_steps(db: Database) -> None:
@@ -436,13 +477,13 @@ def test_complete_refuses_a_value_other_than_0_or_1(db: Database) -> None:
         db.execute("INSERT INTO sitemap_crawls VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ok)
 
 
-def test_the_rollback_refuses_a_database_that_is_not_at_version_4(db: Database) -> None:
+def test_the_rollback_refuses_a_database_that_is_not_at_version_5(db: Database) -> None:
     apply_schema(db)
     rollback_sitemap_cache(db)  # version 3 now
-    with pytest.raises(ValueError, match="expects schema version 4"):
+    with pytest.raises(ValueError, match="expects schema version 5"):
         rollback_sitemap_cache(db)  # twice
     db.set_schema_version(SCHEMA_VERSION + 1)
-    with pytest.raises(ValueError, match="found 5"):
+    with pytest.raises(ValueError, match="found 6"):
         rollback_sitemap_cache(db)  # a later version is never lowered
     assert db.schema_version == SCHEMA_VERSION + 1
 
@@ -518,7 +559,7 @@ def test_two_connections_starting_together_migrate_one_file_once(tmp_path: Path)
 
 
 def _apply_schema_as_version_3(db: Database) -> None:
-    """The previous `apply_schema`: the same two DDL scripts (unchanged in version 4) and the
+    """The previous `apply_schema`: the same two DDL scripts (unchanged since version 4) and the
     version stamp 3, with no knowledge of the cache. It is faithful only while those two scripts
     stay as they are: if one changes, freeze a copy of the version-3 text here."""
     db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
@@ -526,7 +567,78 @@ def _apply_schema_as_version_3(db: Database) -> None:
     db.set_schema_version(PREVIOUS_SCHEMA_VERSION)
 
 
-def test_a_version_3_build_leaves_the_cache_and_the_next_start_restamps_4(db: Database) -> None:
+V4_ONLY_INDEX = (
+    "CREATE INDEX IF NOT EXISTS ix_sitemap_crawls_latest "
+    "ON sitemap_crawls (domain, complete, finished_at);"
+)
+
+
+def _apply_schema_as_version_4(db: Database) -> None:
+    """The version-4 `apply_schema`: the same pipeline and cache DDL plus the index version 5 drops,
+    stamp 4. Frozen here because the version-4 code no longer exists."""
+    db.create_schema(_DISCOVERY_DDL.replace("{autoincrement_pk}", db.dialect.autoincrement_pk))
+    db.create_schema(_ARTICLES_DDL)
+    db.create_schema(SITEMAP_CACHE_DDL)
+    db.create_schema(V4_ONLY_INDEX)
+    db.set_schema_version(4)
+
+
+def test_a_version_4_build_on_a_version_5_file_recreates_the_index_and_the_next_start_drops_it(
+    db: Database,
+) -> None:
+    """The version is not monotonic: an old build restarted later brings the index back (harmless,
+    nothing reads it) and stamps 4; the current build then drops it again and reads 5."""
+    apply_schema(db)
+    run_migrations(db)
+    stamp = "2026-10-19T00:00:00.000000"
+    db.execute(
+        "INSERT INTO sitemap_entries VALUES ('cnbc.com', 'https://x/2024/a.html', "
+        "'2024-05-01', NULL, ?, ?)",
+        (stamp, stamp),
+    )
+    db.execute(
+        "INSERT INTO sitemap_crawls VALUES ('cnbc.com', ?, ?, 1, '2022-01-01', 's', 1, 0)",
+        (stamp, stamp),
+    )
+    _seed_pipeline(db)
+    db.commit()
+    assert "ix_sitemap_crawls_latest" not in _index_names(db)
+    assert db.schema_version == SCHEMA_VERSION == 5
+    before = _fingerprint(db)
+
+    _apply_schema_as_version_4(db)  # the old build starts on the version-5 file
+
+    assert "ix_sitemap_crawls_latest" in _index_names(db)
+    assert db.schema_version == 4
+    assert _fingerprint(db) == before
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM sitemap_crawls").fetchone()[0] == 1
+
+    apply_schema(db)  # the new build starts again, as every start-up does
+    run_migrations(db)
+
+    assert "ix_sitemap_crawls_latest" not in _index_names(db)
+    assert db.schema_version == SCHEMA_VERSION
+    assert _fingerprint(db) == before
+    assert db.execute("SELECT COUNT(*) FROM sitemap_entries").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM sitemap_crawls").fetchone()[0] == 1
+
+
+def test_apply_schema_alone_stamps_5_and_run_migrations_then_drops_the_old_index(
+    db: Database,
+) -> None:
+    """The stamp can precede the drop inside one start-up; the next `run_migrations` closes it."""
+    _apply_schema_as_version_4(db)
+    apply_schema(db)  # the stamp, without the migration step
+    assert db.schema_version == SCHEMA_VERSION
+    assert "ix_sitemap_crawls_latest" in _index_names(db)
+
+    run_migrations(db)
+
+    assert "ix_sitemap_crawls_latest" not in _index_names(db)
+
+
+def test_a_version_3_build_leaves_the_cache_and_the_next_start_restamps_5(db: Database) -> None:
     """Going back to the old code needs no data step: it ignores the cache tables and stamps 3."""
     apply_schema(db)
     run_migrations(db)
@@ -540,7 +652,7 @@ def test_a_version_3_build_leaves_the_cache_and_the_next_start_restamps_4(db: Da
     db.commit()
     before = _fingerprint(db)
 
-    _apply_schema_as_version_3(db)  # the old build starts on the version-4 file
+    _apply_schema_as_version_3(db)  # the old build starts on the version-5 file
 
     assert db.schema_version == PREVIOUS_SCHEMA_VERSION
     assert _table_names(db) >= CACHE_TABLES  # ignored, not dropped
