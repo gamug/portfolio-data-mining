@@ -236,7 +236,8 @@ class SitemapCache:
                     claim = await asyncio.to_thread(self._claim, crawl_start)
                     if claim.started_at is not None:  # this process crawls
                         refresh_failures = await self._refresh(claim.started_at, crawl_start)
-                        self._failed_at = now if refresh_failures else None
+                        # the back-off runs from the failure, not from the start of a slow crawl
+                        self._failed_at = self._clock() if refresh_failures else None
                         self._last_failures = refresh_failures
                         latest = await asyncio.to_thread(self._latest_complete)
                         break
@@ -245,7 +246,7 @@ class SitemapCache:
                     force = False  # a crawl that finished after the request is the forced one
                     if outcome is not None:  # the winner failed: nobody crawls again for it
                         refresh_failures = [outcome]
-                        self._failed_at, self._last_failures = now, refresh_failures
+                        self._failed_at, self._last_failures = self._clock(), refresh_failures
                         break
                     latest = await asyncio.to_thread(self._latest_complete)
                 return await self._run_for(latest, date_range, refresh_failures, now)

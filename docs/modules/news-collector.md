@@ -201,7 +201,9 @@ T-071 is merged**.
   a winner whose row is older than **30 minutes** (`SITEMAP_STALE_MINUTES` in `.env`, a number > 0) is a crashed crawl and is **taken
   over**: its row is ignored (it stays, as history) and the waiter crawls. A crawl that raises or is cancelled closes its row as failed at
   once. A slow domain needs the setting raised (`ft` took 837 s): a crawl longer than the timeout is crawled twice. Like the retry
-  setting, it is read once per process. A waiting process whose range is wider than the winner's crawls after it.
+  setting, it is read once per process, **and the gateway and the crawler must use the same value**: each judges the other's unfinished
+  row with its own (30 and 60 would let the first take over a live 40-minute crawl); both read the one repo-root `.env`, so they agree
+  unless one is overridden in its environment. A waiting process whose range is wider than the winner's crawls after it.
   Three consequences: (1) **a request waits for the crawl it finds:** an API request for a domain that the crawler is crawling waits
   for that crawl, up to the stale timeout (about 12 s for `cnbc.com`), because the waiter holds the process's lock for the domain;
   (2) **the gateway and the crawler are assumed to share a clock**, since the row's `started_at` is written by one process and judged

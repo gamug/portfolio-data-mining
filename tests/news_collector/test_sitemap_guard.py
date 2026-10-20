@@ -397,3 +397,50 @@ async def test_a_cancelled_crawl_closes_its_row_without_blocking_the_event_loop(
     pair.cancel()
     assert ticks >= TICKS  # the loop ran while the row was being closed
     assert rows(db, "SELECT complete, failures FROM sitemap_crawls") == [(0, 1)]
+
+
+# --- the back-off runs from the failure ------------------------------------------------------------
+
+
+async def test_the_back_off_holds_after_a_slow_failed_crawl(db: str) -> None:
+    clock = Clock()
+
+    async def slow_failing_fetch(_url: str) -> str:
+        clock.advance(minutes=10)  # a site that hangs, then fails: longer than the 5-minute window
+        raise RuntimeError("down")
+
+    cache = SitemapCache(
+        DOMAIN,
+        [ROOT],
+        db,
+        slow_failing_fetch,
+        lambda _u: True,
+        clock,
+        stale_after=STALE,
+        poll=POLL,
+        retry_after=timedelta(minutes=5),
+    )
+    await cache.begin(RANGE)
+    await cache.begin(RANGE)  # straight after: still backing off
+    assert cache.crawls == 1
+
+
+async def test_a_waiter_that_waited_a_long_time_for_a_failed_winner_backs_off_from_its_failure(
+    db: str,
+) -> None:
+    site = standard_site()
+    clock = Clock()
+    winner = sc.stamp(clock.now)
+    open_crawl(db, winner)
+    waiter = process(db, site, clock, retry_after=timedelta(minutes=5))
+
+    async def winner_fails_after_ten_minutes() -> None:
+        await asyncio.sleep(POLL * 5)
+        clock.advance(minutes=10)
+        finish_crawl(db, winner, complete=False)
+
+    run, _ = await asyncio.gather(waiter.begin(RANGE), winner_fails_after_ten_minutes())
+    assert run.crawl is None
+    await waiter.begin(RANGE)  # straight after: it does not claim and crawl by itself
+    assert waiter.crawls == 0
+    assert site.crawls() == 0
