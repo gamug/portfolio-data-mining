@@ -1273,7 +1273,7 @@ environment stays above `.env`, and then, in the `T-066b` design session the sam
 **Status: open (added 2026-10-18; the maintainer chose option B that day and schedules the work).**
 - `T-068`: measured and designed 2026-10-19; **G1 decided 2026-10-19 (freshness 7 days for every run)**; closed (PR #88 merged).
 - `T-069`: closed (PR #90 merged; **G2 approved 2026-10-19**; the real file is at schema version 4 since 2026-10-19, checked after a verified backup, PR #91).
-- `T-070a`: closed (PR #92 merged 2026-10-20; the gateway runs it on `master` and the real file is at version 4, checked): `news_collector/sitemap_cache.py`, one crawl per domain per process. `T-070b` (the guard across processes) is written (PR #93, not merged). Every gate (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.
+- `T-070a`: closed (PR #92 merged 2026-10-20; the gateway runs it on `master` and the real file is at version 4, checked): `news_collector/sitemap_cache.py`, one crawl per domain per process. `T-070b` is closed (PR #93, 2026-10-20): the guard across processes; `T-071` is next, and its PR gives the first evidence of the guard on the real file. Every gate (G1, G2, G3) is a maintainer approval; nothing in this item touches the real `urls.db` before its gate.
 
 **Problem (measured 2026-10-18 on the real database).** The `KLAC` `cnbc.com` discovery of `T-064` step 5 added 578,117 `reject`/`skipped` rows
 (+243 MB, about 420 bytes a row with five indexes; `discovered_urls` 481,334 → 1,059,452 rows, the file 2.27 → 2.51 GB). The cause is the
@@ -1355,6 +1355,8 @@ so a full run of the 503 tickers would have added about 503 × 578,000 ≈ 290 m
       entries INTEGER, failures INTEGER, PRIMARY KEY (domain, started_at)
   );
   CREATE INDEX ix_sitemap_crawls_latest ON sitemap_crawls (domain, complete, finished_at);
+  -- the latest-complete-crawl lookup orders by started_at (T-070b) and is served by the primary key
+  -- (domain, started_at): this index is no longer used by the code; dropping it is a schema change (G2), not made
   CREATE INDEX ix_sitemap_crawls_open ON sitemap_crawls (domain, started_at) WHERE finished_at IS NULL;
   -- rollback (the indexes go with their tables):
   DROP TABLE sitemap_crawls; DROP TABLE sitemap_entries;

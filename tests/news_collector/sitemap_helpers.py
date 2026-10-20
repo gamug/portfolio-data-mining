@@ -194,7 +194,7 @@ def child_crawl(db: str, results: object, barrier: object) -> None:
     async def fetch(_url: str) -> str:
         nonlocal fetches
         fetches += 1
-        await asyncio.sleep(3.0)  # slow: the other process is already waiting
+        await asyncio.sleep(1.0)  # slow: the other process is already waiting
         return page
 
     async def main() -> tuple[int, int, int, int]:

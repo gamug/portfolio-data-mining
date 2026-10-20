@@ -62,11 +62,16 @@ OPEN_CRAWL_SQL = (
 
 # The latest complete crawl is the one whose data is the newest: the latest `started_at`, which is
 # also the `last_seen` of its entries. Not `finished_at`: with two overlapping crawls (a takeover)
-# the older one can finish last (T-070b). Served by `ix_sitemap_crawls_latest` (domain, complete).
+# the older one can finish last (T-070b). The primary key `(domain, started_at)` serves it: the rows of a domain come in `started_at` order
+# (no sort), walking back to the first complete one; `ix_sitemap_crawls_latest` (domain, complete,
+# finished_at) is no longer used by the code (dropping it is a schema change, G2: not made here).
 LATEST_COMPLETE_SQL = (
     "SELECT started_at, range_start, signature, entries FROM sitemap_crawls "
     "WHERE domain = ? AND complete = 1 ORDER BY started_at DESC LIMIT 1"
 )
+
+# The entries a run reads: those the latest complete crawl saw (`last_seen` = its `started_at`).
+CURRENT_ENTRIES_SQL = "SELECT url, lastmod, title FROM sitemap_entries WHERE domain = ? AND last_seen = ? ORDER BY url"
 
 Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO date), title
 
@@ -456,11 +461,7 @@ class SitemapCache:
     def _load(self, started_at: str) -> tuple[SitemapEntry, ...]:
         db = connect(self._db_path)
         try:
-            rows = db.execute(
-                "SELECT url, lastmod, title FROM sitemap_entries "
-                "WHERE domain = ? AND last_seen = ? ORDER BY url",
-                (self.domain, started_at),
-            ).fetchall()
+            rows = db.execute(CURRENT_ENTRIES_SQL, (self.domain, started_at)).fetchall()
         finally:
             db.close()
         return tuple(

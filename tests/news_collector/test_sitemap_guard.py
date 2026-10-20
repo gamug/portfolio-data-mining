@@ -317,15 +317,19 @@ def test_two_operating_system_processes_make_one_crawl(db: str) -> None:
 # --- overlapping crawls after a takeover -------------------------------------------------------------
 
 
-def write_crawl(cache: SitemapCache, started_at: str, urls: list[str]) -> None:
-    """Claim and finish a crawl as a process would, with the given entries."""
-    conn = sqlite3.connect(cache._db_path)
+def claim(db: str, started_at: str) -> None:
+    """A process claimed the domain at `started_at`: an unfinished crawl row."""
+    conn = sqlite3.connect(db)
     conn.execute(
-        "INSERT OR IGNORE INTO sitemap_crawls VALUES (?, ?, NULL, 0, '2022-01-01', ?, NULL, NULL)",
+        "INSERT INTO sitemap_crawls VALUES (?, ?, NULL, 0, '2022-01-01', ?, NULL, NULL)",
         (DOMAIN, started_at, sc.signature([ROOT])),
     )
     conn.commit()
     conn.close()
+
+
+def finish(cache: SitemapCache, started_at: str, urls: list[str]) -> None:
+    """The write that closes a claimed crawl with the given entries, as a process does."""
     cache._write(started_at, START, {u: (u, "2024-05-01", None) for u in urls}, len(urls), 0)
 
 
@@ -338,16 +342,10 @@ async def test_overlapping_crawls_leave_the_newest_crawls_rows_current(
     older = sc.stamp(clock.now)  # A: the slow winner
     newer = sc.stamp(clock.now + timedelta(minutes=40))  # B: the takeover
     for started in (older, newer):  # both claimed: the takeover ignored the stale row
-        conn = sqlite3.connect(db)
-        conn.execute(
-            "INSERT INTO sitemap_crawls VALUES (?, ?, NULL, 0, '2022-01-01', ?, NULL, NULL)",
-            (DOMAIN, started, sc.signature([ROOT])),
-        )
-        conn.commit()
-        conn.close()
-    finish = [(older, ["u1", "u2"]), (newer, ["u2", "u3"])]
-    for started, urls in finish if not older_finishes_last else finish[::-1]:
-        write_crawl(cache, started, urls)
+        claim(db, started)
+    finish_order = [(older, ["u1", "u2"]), (newer, ["u2", "u3"])]
+    for started, urls in finish_order[::-1] if older_finishes_last else finish_order:
+        finish(cache, started, urls)
     latest = cache._latest_complete()
     assert latest is not None
     assert latest.started_at == newer  # the newest data, whichever finished last
