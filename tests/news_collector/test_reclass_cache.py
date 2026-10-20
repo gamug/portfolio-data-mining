@@ -16,8 +16,10 @@ from sitemap_helpers import RANGE, ROOT, START, Clock, Site, cnbc_strategy, leaf
 
 from data_mining.matching import Match
 from news_collector import main as collector_main
+from news_collector import reclass_cache
 from news_collector.api.deps import get_client
 from news_collector.api.routers import discovery
+from news_collector.api.schemas import MAX_RECLASS_TICKERS, ReclassRequest
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.models import Company, DateRange
 from news_collector.reclass_cache import ReclassReport, reclass_from_cache
@@ -429,6 +431,115 @@ def test_the_route_needs_tickers_and_caps_them(db: str, monkeypatch: pytest.Monk
     http = TestClient(app)
     none = http.post("/discovery/reclass-sitemap", json={"db_path": db})
     assert none.status_code == 422
-    many = [f"T{i}" for i in range(discovery.MAX_RECLASS_TICKERS + 1)]
+    many = [f"T{i}" for i in range(MAX_RECLASS_TICKERS + 1)]
     over = http.post("/discovery/reclass-sitemap", json={"tickers": many, "db_path": db})
     assert over.status_code == 422
+
+
+def test_the_request_model_carries_the_contract() -> None:
+    schema = ReclassRequest.model_json_schema()
+    assert "tickers" in schema["required"]
+    tickers = schema["properties"]["tickers"]
+    assert (tickers["minItems"], tickers["maxItems"]) == (1, MAX_RECLASS_TICKERS)
+    assert "S&P 500 is the CLI" in tickers["description"]
+    assert "entire S&P 500, fetched" not in tickers["description"]
+    assert ReclassRequest(
+        tickers=["AAPL"] * MAX_RECLASS_TICKERS
+    ).tickers  # as sent: duplicates count
+
+
+async def test_a_database_error_in_a_later_batch_keeps_what_was_written(
+    db: str, site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    monkeypatch.setattr(reclass_cache, "_WRITE_BATCH", 1)
+    real = URLQueue.enqueue_batch
+    calls = []
+
+    def flaky(self: URLQueue, batch: list) -> int:
+        calls.append(1)
+        if len(calls) == TWO:
+            raise sqlite3.OperationalError("database is locked")
+        return real(self, batch)
+
+    monkeypatch.setattr(URLQueue, "enqueue_batch", flaky)
+    report = await run(db, conn, apply=True)
+    assert len(report.errors) == 1
+    assert "database is locked" in report.errors[0]
+    assert "1 inserted" in report.errors[0]
+    assert [r.inserted for r in report.results] == [1]
+    assert report.total("inserted") == len(stored(db)) == 1
+
+
+async def test_it_logs_one_line_per_ticker(
+    db: str, site: Site, caplog: pytest.LogCaptureFixture
+) -> None:
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    with caplog.at_level("INFO", logger="news_collector.reclass_cache"):
+        await run(db, conn, apply=False)
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("re-class cnbc.com AAPL")
+    ]
+    assert len(lines) == 1
+    assert "new 2" in lines[0]
+
+
+class _Bar:
+    last: _Bar
+
+    def __init__(self, total: int, **_k: object) -> None:
+        self.total, self.n = total, 0
+        _Bar.last = self
+
+    def update(self, k: int) -> None:
+        self.n += k
+
+    def close(self) -> None:
+        self.closed_at = (self.n, self.total)
+
+
+def test_the_bar_ends_where_it_got_when_a_domain_has_no_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def fake(*_a: object, **_k: object) -> ReclassReport:
+        return ReclassReport(applied=False, errors=["cnbc.com: no cache"])
+
+    monkeypatch.setattr(collector_main, "reclass_from_cache", fake)
+    monkeypatch.setattr(collector_main, "build_client", _FakeClient)
+    monkeypatch.setattr(collector_main, "build_connectors", cnbc_connectors)
+    monkeypatch.setattr(collector_main, "lookup_companies", _lookup)
+    monkeypatch.setattr(collector_main, "tqdm", _Bar)
+    argv = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "reclass-sitemap", "--tickers", "AAPL"]
+    args = collector_main.build_parser().parse_args(argv)
+    assert asyncio.run(collector_main.cmd_reclass_sitemap(args)) == 1
+    assert _Bar.last.closed_at == (0, 0)
+
+
+def test_the_cli_on_a_missing_database_exits_1_and_creates_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(collector_main, "build_client", _FakeClient)
+    monkeypatch.setattr(collector_main, "build_connectors", cnbc_connectors)
+    monkeypatch.setattr(collector_main, "lookup_companies", _lookup)
+    missing = tmp_path / "typo.db"
+    argv = ["--db", str(missing), "--log-dir", "", "reclass-sitemap", "--tickers", "AAPL"]
+    args = collector_main.build_parser().parse_args(argv)
+    assert asyncio.run(collector_main.cmd_reclass_sitemap(args)) == 1
+    assert "no such database" in capsys.readouterr().out
+    assert not missing.exists()
+
+
+class _FakeClient:
+    async def __aenter__(self) -> _FakeClient:
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+
+async def _lookup(tickers: list[str], client: object, start: object) -> list[Company]:
+    return [Company(ticker=t, name=f"{t} Inc.") for t in tickers]

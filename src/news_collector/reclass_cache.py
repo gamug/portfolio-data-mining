@@ -167,10 +167,16 @@ async def reclass_from_cache(
                 len(run.rows),
             )
             for company in companies:
+                result = TickerResult(company.ticker, domain)
                 try:
-                    result = await _one(queue, connector, run, company, date_range, apply)
+                    await _one(queue, connector, run, company, date_range, apply, result)
                 except sqlite3.Error as exc:  # a file without the queue tables, or a lock
-                    report.errors.append(f"{domain} {company.ticker}: database error: {exc}")
+                    report.errors.append(
+                        f"{domain} {company.ticker}: database error: {exc}"
+                        f" (written before it: {result.inserted} inserted, {result.promoted} promoted)"
+                    )
+                    if result.inserted or result.promoted:  # batches already committed stay counted
+                        report.results.append(result)
                     continue
                 log.info(
                     "re-class %s %s: %d entries, %s, new %d, promotable %d, inserted %d, promoted %d",
@@ -199,19 +205,20 @@ async def _one(
     company: Company,
     date_range: DateRange,
     apply: bool,
-) -> TickerResult:
-    result = TickerResult(company.ticker, run.domain)
+    result: TickerResult,
+) -> None:
+    """Fill `result`; on a database error it keeps what earlier batches already wrote."""
     result.entries, pairs = await asyncio.to_thread(_classify, connector, run, company, date_range)
     result.classes.update(p.match_class for p in pairs)
     stored = [p for p in pairs if p.match_class in _STORED]
     if not stored:
-        return result
+        return
     if apply:
         for chunk in _chunks(stored, _WRITE_BATCH):
             result.inserted += await asyncio.to_thread(queue.enqueue_batch, chunk)
             result.promoted += queue.last_promotion.promoted
             result.lifted += queue.last_promotion.lifted
-        return result
+        return
     known = await asyncio.to_thread(
         stored_classes, queue.db_path, sorted({(p.url, p.ticker) for p in stored})
     )
@@ -223,4 +230,3 @@ async def _one(
             result.new += 1
         elif CLASS_RANK[cls] > CLASS_RANK[known[key]]:  # type: ignore[index]
             result.promotable += 1
-    return result

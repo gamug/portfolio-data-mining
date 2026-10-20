@@ -531,7 +531,7 @@ uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv       
 # write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
 uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 # the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
-#   the route needs `tickers` (at most 50: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
+#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
 #   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
 ```
 

@@ -28,9 +28,6 @@ from news_collector.storage.queue import URLQueue
 
 router = APIRouter(prefix="/discovery", tags=["Discovery"])
 
-# About 4 minutes of classification for `cnbc.com` at 4.6 s a ticker.
-MAX_RECLASS_TICKERS = 50
-
 
 @router.post("/run-all", response_model=RunAllResponse)
 async def run_all(
@@ -133,16 +130,11 @@ async def reclass_sitemap(
     complete crawl that covers the range is an error line: this route never crawls (use a
     discovery with `refresh_sitemaps` for that).
 
-    `tickers` is required and at most `MAX_RECLASS_TICKERS`: the classification takes about
+    `tickers` is required and at most `MAX_RECLASS_TICKERS` as sent (the request model, a 422 otherwise): the classification takes about
     4.6 s a ticker for `cnbc.com` and this request has no progress and cannot be stopped, and an
     `apply` writes from the gateway process while collectors may be writing. The whole S&P 500 is
     the CLI's job (`reclass-sitemap`, with a progress bar).
     """
-    if not req.tickers or len(req.tickers) > MAX_RECLASS_TICKERS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"tickers is required, at most {MAX_RECLASS_TICKERS} (the CLI re-classes more)",
-        )
     try:
         date_range = build_date_range(req.start_date, req.end_date)
     except InvalidRangeError as exc:

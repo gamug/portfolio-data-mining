@@ -125,10 +125,22 @@ class DiscoveredURLOut(BaseModel):
     match_reason: str | None = None
 
 
+# About 4 minutes of classification for `cnbc.com` at 4.6 s a ticker.
+MAX_RECLASS_TICKERS = 50
+
+
 class ReclassRequest(BaseModel):
     """Request body for the re-class of the sitemap cache (T-072). No network, no crawl."""
 
-    tickers: list[str] | None = Field(default=None, description=_TICKERS_NOTE)
+    tickers: list[str] = Field(
+        min_length=1,
+        max_length=MAX_RECLASS_TICKERS,
+        description=(
+            f"Ticker symbols to re-class, e.g. ['AAPL', 'MSFT']. Required, at most "
+            f"{MAX_RECLASS_TICKERS} as sent (duplicates count): the request has no progress and "
+            "cannot be stopped. The whole S&P 500 is the CLI's job (`reclass-sitemap`)."
+        ),
+    )
     company_names: list[str] | None = Field(
         default=None,
         description="Optional company names, positional (one per ticker), as in the discovery requests.",
