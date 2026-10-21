@@ -589,7 +589,7 @@ Before `T-071` every ticker classed **every** entry of a domain's sitemap (the f
 **Equal to the full scan, not "close to it".** The `accept`/`review` pairs, their class, reason, `pub_date`, source and title are the full scan's:
 `tests/news_collector/test_match_from_cache.py` (a synthetic corpus with titles and all the matcher's signals, an end date in the past, the
 `news:title` fixture, a 578,000-entry cache), `scripts/sitemap_preselect_check.py check` (the real corpus: 503 tickers, 109,493 entries, 38,055
-pairs, no pair missing, none extra, none changed) and its mutation tests (the check fails when an anchor family is removed). **When the matcher
+pairs, no pair missing, none extra, none changed) and its mutation tests (the check fails when an anchor family is removed); `check` is `T-068`'s design proof, on its own crawl (2026-10-19) and with the script's own copy of the logic, and `scripts/sitemap_preselect_check.py production` ("Equality on the whole universe", below) is the proof of the code that ships, on the real cache (the crawl of 2026-10-20: 109,550 entries, 57 more than `check`'s 109,493, and 38,104 pairs against 38,055; in each run the two paths agree with each other, and the two runs differ because their crawls differ (57 more entries a day later); the 49 extra pairs were not traced pair by pair). **When the matcher
 changes, the index may have to change with it:** a new signal needs an anchor in `TokenIndex.candidates`, and the equality tests fail until it has
 one; an alias or a word list that the matcher already reads (`ALIASES`, `COMMON_TICKER_WORDS`, ...) needs nothing. To find what a change that the
 index does not know about promotes, class every cached entry: `reclass-sitemap --full-scan` (CLI) or `"full_scan": true` (API).
@@ -649,7 +649,7 @@ guard there, is the maintainer's after the merge and a backup.
 **Equality on the whole universe (2026-10-21).** Run read-only on the real `cnbc.com` cache (the crawl of 2026-10-20 19:15, 109,550 entries, range from 2022-01-01): the 504
 tickers of `data/sitemap_preselect_per_ticker.csv` (plus `TTD`) through the production path (`SitemapRun.select` and the matcher on the candidates) against the matcher on every
 entry in range, with the real `CNBCConnector`: **38,104 `accept`/`review` pairs by the index, 38,104 by the full scan, 0 mismatching tickers** (class, reason and `pub_date` per
-URL), 644 s on 8 workers. To repeat it (it reads `sitemap_crawls` and `sitemap_entries` with `mode=ro` and writes nothing to the database; about 3 GB of memory a worker):
+URL), 644 s on 8 workers. To repeat it (it reads `sitemap_crawls` and `sitemap_entries` with `mode=ro` and writes nothing to the database; memory, measured with `resource.getrusage` on one process that loads the 109,550 entries, builds the index and compares one ticker: 164 MB after the load, **234 MB at the peak**; a pool has one such process per worker plus the parent):
 
 ```bash
 PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py production --db /path/to/urls.db \
