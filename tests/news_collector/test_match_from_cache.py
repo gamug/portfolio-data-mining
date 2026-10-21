@@ -459,6 +459,7 @@ class _CliOrchestrator:
 
     async def run(self, **kwargs: object) -> DiscoveryStats:
         progress = kwargs["progress"]
+        kwargs["on_start"](2)  # type: ignore[operator]
         for _ in range(2):  # two pairs finish
             progress(PartialStats(company="x", domain="d"))  # type: ignore[operator]
         return DiscoveryStats(total_inserted=2, total_rejected_not_stored=5)
@@ -507,4 +508,47 @@ def test_the_cli_has_a_bar_that_does_not_break_a_non_tty_run_and_prints_the_coun
     [bar] = bars
     assert bar.disable is True  # not a terminal (`disable=None`): nothing is written into a log
     assert updates == [1, 1]  # one tick per finished pair, and the run went on
+    assert bar.total == 2  # the total the orchestrator reported, not companies x domains
     assert "%|" not in captured.err  # no bar drawn in a pipe
+
+
+@pytest.mark.usefixtures("every_entry_a_candidate")
+async def test_on_start_reports_only_the_pairs_that_will_run_when_resume_skips_some(
+    db: str, offline: Site
+) -> None:
+    queue = URLQueue(db)
+    queue.initialize()
+    queue.mark_pair_completed("AAA", DOMAIN, RANGE.start, RANGE.end)  # a prior run did this one
+    orchestrator = DiscoveryOrchestrator(
+        connectors={DOMAIN: rejecting_connector()}, queue=queue, concurrency=1
+    )
+    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
+    totals: list[int] = []
+    ticks: list[PartialStats] = []
+    companies = [Company(ticker=t, name=f"{t} Inc.") for t in ("AAA", "BBB")]
+    await orchestrator.run(
+        companies,
+        date_range=RANGE,
+        resume=True,
+        progress=ticks.append,
+        on_start=totals.append,
+    )
+    assert totals == [1]  # two pairs in the grid, one skipped
+    assert len(ticks) == 1  # the bar ends at its total
+
+
+@pytest.mark.usefixtures("every_entry_a_candidate")
+async def test_an_on_start_callback_that_raises_never_stops_the_run(db: str, offline: Site) -> None:
+    orchestrator = DiscoveryOrchestrator(
+        connectors={DOMAIN: rejecting_connector()}, queue=URLQueue(db), concurrency=1
+    )
+    orchestrator._fetch_via_extra_api = no_api  # type: ignore[method-assign]
+
+    def boom(_total: int) -> None:
+        raise RuntimeError("the bar broke")
+
+    stats = await orchestrator.run(
+        [Company(ticker="AAA", name="AAA Inc.")], date_range=RANGE, on_start=boom
+    )
+    assert stats.errors == []
+    assert stats.total_inserted == 1

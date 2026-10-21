@@ -125,7 +125,9 @@ class DiscoveredURLOut(BaseModel):
     match_reason: str | None = None
 
 
-# About 4 minutes of classification for `cnbc.com` at 4.6 s a ticker.
+# The cap is not about classification time any more (T-071: about 0.4 s a ticker for `cnbc.com`, 20 s
+# for 50): the request has no progress and cannot be stopped, and an `apply` writes from the gateway
+# process while collectors may be writing. About 4 minutes with `full_scan`, at 4.6 s a ticker.
 MAX_RECLASS_TICKERS = 50
 
 

@@ -221,8 +221,8 @@ a foreign key back to this table, rather than re-matching on the `url` string.
 
 A domain with `sitemap_roots` (today only `cnbc.com`) is crawled **once per domain**, not once per ticker: `news_collector/sitemap_cache.py`
 stores the in-range entries in `sitemap_entries` and every ticker reads them. Since `T-071` the matching reads only the token index's
-candidates and the `reject` pairs of the cache are not stored ("Matching from the cache (T-071)", below); **until `T-071` is merged the rule
-above stands: no `cnbc.com` discovery on the real database**.
+candidates and the `reject` pairs of the cache are not stored ("Matching from the cache (T-071)", below); the first discovery on the
+real database is the maintainer's, after a backup (see the caution at the top of this file).
 
 - **Fresh enough:** the latest complete crawl is used while it started at most **7 days** ago, whatever the run's end date. The age is
   judged once, when the run starts. A run that needs today's sitemap passes **`--refresh-sitemaps`** (CLI) or `"refresh_sitemaps": true`
@@ -640,12 +640,14 @@ is the matcher and part the queue writing 1.06 million rows: the matcher alone c
 
 **The `accept`/`review` pairs are the same**: the 17,235 stored `cnbc.com` sitemap pairs of the 10 tickers (`accept`/`name` 16,598, `accept`/`upper_ticker` 515,
 `review`/`weak_first_word` 61, `review`/`weak_ticker` 61) are identical in the two runs by URL, ticker, class, reason and `pub_date`. The 1,090,441 counted rejects
-reconcile with the baseline: 1,060,484 it stored, 29,941 that were already stored as rejects (29,932 `sitemap`, 9 `ddg`), and 13 stored `accept`/`review` rows that the
-matcher now rejects and the queue never demotes (`ON` 10, `A` 3: the family accepted at G3), 3 left over that I did not trace. The run on the real file, the first runtime evidence of the
+reconcile with the baseline: 1,060,484 it stored, 29,941 that were already stored as rejects (29,932 `sitemap`, 9 `ddg`), and 16 stored `accept`/`review` rows that the
+matcher now rejects and the queue never demotes: 13 of source `sitemap` (12 `accept`, 1 `review`; `ON` 10, `A` 3: the family accepted at G3) and 3 `accept` of source `ddg`. The
+reconciliation is exact: 1,060,484 + 29,957 = 1,090,441 (29,957 = the 34,818 pairs of the 10 tickers already stored that the cache holds, read-only from the real file, that the
+matcher now classes `reject`; the other 4,861 stay `accept`/`review`). The run on the real file, the first runtime evidence of the
 guard there, is the maintainer's after the merge and a backup.
 
 **Progress.** `discover` shows a `tqdm` bar over the (company, domain) pairs (the orchestrator calls its `progress` callback once per finished pair;
-a callback that raises is logged and never stops the run). The bar is off when the output is not a terminal, so it never writes into a log or a pipe.
+a callback that raises is logged and never stops the run; `on_start` gives it the number of pairs that will run, so under `--resume` the total is the pending pairs, not the whole grid). The bar is off when the output is not a terminal, so it never writes into a log or a pipe.
 
 ## Re-class from the sitemap cache (T-072)
 
@@ -660,7 +662,7 @@ uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv       
 # write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
 uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 # the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
-#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
+#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: the request has no progress and cannot be stopped, and an `apply` writes from the gateway process (about 0.4 s a ticker for cnbc.com; with `full_scan` about 4.6 s));
 #   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
 ```
 
@@ -674,8 +676,9 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
   `skipped` row goes back to `pending`.
 - **Names.** `--tickers` are named as in `discover` (the S&P 500 list and `universe.db`: a network request for the list unless
   `--sp500 CSV` is given); the sitemap itself is never fetched.
-- **Cost.** The classification is the full scan of today (about 4.6 s a ticker for `cnbc.com`: 503 tickers take about 40 minutes
-  and a `tqdm` bar shows the progress); `T-071`'s token index will make it seconds.
+- **Cost.** Since `T-071` the token index preselects the candidates and only those are classed: about 0.4 s a ticker for `cnbc.com`
+  (the 10-ticker run of "Matching from the cache (T-071)"), so 503 tickers take minutes, and a `tqdm` bar shows the progress. `--full-scan`
+  classes every entry instead (the old full scan, about 4.6 s a ticker: 503 tickers take about 40 minutes).
 - **Reject pairs** are counted in the output (`reject`) and never stored.
 - **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with
   `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 5 it runs the migration (version 5 drops

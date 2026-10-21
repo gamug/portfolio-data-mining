@@ -127,15 +127,15 @@ async def cmd_discover(args: argparse.Namespace) -> int:
             queue=queue,
             concurrency=args.concurrency,
         )
-        pair_domains = args.domains or list(connectors)
-        # one tick per (company, domain) pair that runs; `disable=None` turns the bar off when the
-        # output is not a terminal (a pipe, a log file, a test), so it never writes into a log
-        bar = tqdm(
-            total=len(companies) * len(pair_domains),
-            unit="pair",
-            desc="discover",
-            disable=None,
-        )
+        # one tick per (company, domain) pair that runs; the total is set when the orchestrator
+        # knows it (the pairs `--resume` skips do not run). `disable=None` turns the bar off when
+        # the output is not a terminal (a pipe, a log file, a test), so it never writes into a log
+        bar = tqdm(total=None, unit="pair", desc="discover", disable=None)
+
+        def set_total(pending: int) -> None:
+            bar.total = pending
+            bar.refresh()
+
         try:
             stats = await orchestrator.run(
                 companies=companies,
@@ -144,11 +144,9 @@ async def cmd_discover(args: argparse.Namespace) -> int:
                 resume=args.resume,
                 refresh_sitemaps=args.refresh_sitemaps,
                 progress=lambda _partial: bar.update(1),
+                on_start=set_total,
             )
         finally:
-            bar.total = (
-                bar.n
-            )  # a pair skipped by --resume or a domain left out: the bar ends where it got
             bar.close()
 
     # Print summary
