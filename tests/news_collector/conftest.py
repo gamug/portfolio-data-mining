@@ -37,3 +37,17 @@ def offline(monkeypatch: pytest.MonkeyPatch) -> Site:
     monkeypatch.setattr(sc, "fetch_text", fetch_text)
     monkeypatch.setattr(_common.DDGStrategy, "discover", no_ddg)
     return site
+
+
+@pytest.fixture
+def every_entry_a_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The token index brings every entry as a candidate, so a fake matcher decides the class.
+
+    The cache and wiring tests that use a connector whose matcher accepts everything check the
+    crawl, the rows and the counts, not the matching: the real index preselects by the real
+    matcher's signals and would drop entries that fake accepts. The index has its own tests
+    (`test_match_from_cache.py`, `tests/scripts/test_sitemap_preselect_check.py`).
+    """
+    from data_mining.token_index import TokenIndex  # noqa: PLC0415
+
+    monkeypatch.setattr(TokenIndex, "candidates", lambda self, _c, _t: set(range(self.size)))

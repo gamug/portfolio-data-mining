@@ -67,6 +67,7 @@ async def run_all(
         total_discovered=stats.total_discovered,
         total_inserted=stats.total_inserted,
         total_rejected=stats.total_rejected,
+        total_rejected_not_stored=stats.total_rejected_not_stored,
         duplicate_count=stats.duplicate_count,
         ddg_count=stats.ddg_count,
         sitemap_count=stats.sitemap_count,
@@ -147,6 +148,7 @@ async def reclass_sitemap(
         date_range,
         domains=req.domains,
         apply=req.apply,
+        full_scan=req.full_scan,
     )
     return _reclass_response(report, date_range)
 

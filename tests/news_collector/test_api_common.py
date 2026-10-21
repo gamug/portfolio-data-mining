@@ -47,13 +47,13 @@ async def test_run_domain_discovery_respects_concurrency_limit(
         date_range: DateRange,
         extra_fetch: object = None,
         cache: object = None,
-    ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
+    ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str], int]:
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
         await asyncio.sleep(0.01)
         in_flight -= 1
-        return [], [], [], []
+        return [], [], [], [], 0
 
     monkeypatch.setattr(_common, "_discover_one_ticker", fake_discover_one_ticker)
 
@@ -84,13 +84,13 @@ async def test_run_domain_discovery_default_concurrency_is_five(
         date_range: DateRange,
         extra_fetch: object = None,
         cache: object = None,
-    ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
+    ) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str], int]:
         nonlocal in_flight, max_in_flight
         in_flight += 1
         max_in_flight = max(max_in_flight, in_flight)
         await asyncio.sleep(0.01)
         in_flight -= 1
-        return [], [], [], []
+        return [], [], [], [], 0
 
     monkeypatch.setattr(_common, "_discover_one_ticker", fake_discover_one_ticker)
 

@@ -127,13 +127,29 @@ async def cmd_discover(args: argparse.Namespace) -> int:
             queue=queue,
             concurrency=args.concurrency,
         )
-        stats = await orchestrator.run(
-            companies=companies,
-            domains=args.domains or None,
-            date_range=date_range,
-            resume=args.resume,
-            refresh_sitemaps=args.refresh_sitemaps,
+        pair_domains = args.domains or list(connectors)
+        # one tick per (company, domain) pair that runs; `disable=None` turns the bar off when the
+        # output is not a terminal (a pipe, a log file, a test), so it never writes into a log
+        bar = tqdm(
+            total=len(companies) * len(pair_domains),
+            unit="pair",
+            desc="discover",
+            disable=None,
         )
+        try:
+            stats = await orchestrator.run(
+                companies=companies,
+                domains=args.domains or None,
+                date_range=date_range,
+                resume=args.resume,
+                refresh_sitemaps=args.refresh_sitemaps,
+                progress=lambda _partial: bar.update(1),
+            )
+        finally:
+            bar.total = (
+                bar.n
+            )  # a pair skipped by --resume or a domain left out: the bar ends where it got
+            bar.close()
 
     # Print summary
     print("\n=== Discovery Summary ===")
@@ -142,6 +158,7 @@ async def cmd_discover(args: argparse.Namespace) -> int:
     print(
         f"Inserted (new)   : {stats.total_inserted} (matcher-rejected, never fetched: {stats.total_rejected})"
     )
+    print(f"Sitemap rejects not stored: {stats.total_rejected_not_stored} (read from the cache)")
     print(f"Duplicates       : {stats.duplicate_count}")
     print(f"DDG results      : {stats.ddg_count}")
     print(f"Sitemap/API      : {stats.sitemap_count}")
@@ -193,6 +210,7 @@ async def cmd_reclass_sitemap(args: argparse.Namespace) -> int:
                 date_range,
                 domains=args.domains or None,
                 apply=args.apply,
+                full_scan=args.full_scan,
                 progress=lambda _result: bar.update(1),
             )
         finally:
@@ -342,6 +360,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply",
         action="store_true",
         help="Enqueue the pairs that are now accept/review (promote-only); without it nothing is written",
+    )
+    rec.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="Class every cached entry instead of the token index's candidates (slower; for a "
+        "matcher change the index does not know about)",
     )
 
     # stats

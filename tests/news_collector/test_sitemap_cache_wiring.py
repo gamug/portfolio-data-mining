@@ -32,6 +32,7 @@ from news_collector.storage.queue import URLQueue
 from news_collector.strategies.ddg import DDGStrategy
 
 
+@pytest.mark.usefixtures("every_entry_a_candidate")
 async def test_two_api_requests_for_two_tickers_make_one_crawl(db: str, offline: Site) -> None:
     connector, client = fake_connector(), MagicMock()
     first, second = await asyncio.gather(

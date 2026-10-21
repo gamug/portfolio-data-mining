@@ -165,6 +165,14 @@ class ReclassRequest(BaseModel):
             "inserted and promoted. True enqueues the pairs that are now accept/review (promote-only)."
         ),
     )
+    full_scan: bool = Field(
+        default=False,
+        description=(
+            "False (the default) classes only the candidates of the token index (T-071). True "
+            "classes every cached entry: slower (about 4.6 s a ticker for cnbc.com), and the way to "
+            "find what a matcher change promotes that the index does not know about."
+        ),
+    )
 
 
 class ReclassTickerOut(BaseModel):
@@ -209,6 +217,13 @@ class DiscoverResponse(BaseModel):
     ddg_count: int
     sitemap_count: int
     inserted: int
+    rejected_not_stored: int = Field(
+        default=0,
+        description=(
+            "Sitemap pairs read from the cache that the matcher rejected and this request did not "
+            "store (they are not in `discovered` either): counted, never stored (T-071)."
+        ),
+    )
     elapsed_seconds: float
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(
@@ -228,6 +243,13 @@ class RunAllResponse(BaseModel):
     total_discovered: int
     total_inserted: int
     total_rejected: int = 0
+    total_rejected_not_stored: int = Field(
+        default=0,
+        description=(
+            "Sitemap pairs read from the cache that the matcher rejected and the run did not "
+            "store (T-071); `total_rejected` is the rejected rows it did store."
+        ),
+    )
     duplicate_count: int
     ddg_count: int
     sitemap_count: int

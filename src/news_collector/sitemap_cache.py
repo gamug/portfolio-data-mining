@@ -28,7 +28,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -36,6 +36,7 @@ import httpx
 from portfolio_common.db import Database
 
 from data_mining.db import connect
+from data_mining.token_index import TokenIndex
 from news_collector.config import sitemap_retry_after, sitemap_stale_after
 from news_collector.connectors.base import BaseConnector
 from news_collector.models import DateRange, SitemapEntry
@@ -132,6 +133,11 @@ class SitemapRun:
     # The run went on with an older cache because the refresh failed (cases a and b): not an error,
     # the pairs are checkpointed, but whoever runs the discovery is told (T-070a).
     warnings: tuple[str, ...] = ()
+    # The token index of `rows` (T-071), built once per crawl by the cache and shared by every run
+    # that reads it; a run made without one (a test, a caller of `SitemapRun(...)`) builds it on first
+    # use. It preselects candidates, it never decides a class.
+    index: TokenIndex | None = None
+    _memo: dict = field(default_factory=dict, init=False, compare=False, repr=False)
 
     def entries(self, date_range: DateRange) -> tuple[list[SitemapEntry], list[str]]:
         """The current entries within the range and the failures the pair must report.
@@ -145,6 +151,68 @@ class SitemapRun:
             return [], [f"sitemap cache of {self.domain} starts at {self.crawl.range_start}"]
         start, end = date_range.start, date_range.end
         return [e for e in self.rows if e.lastmod is None or start <= e.lastmod <= end], []
+
+    def select(
+        self, company: str, ticker: str, date_range: DateRange
+    ) -> tuple[list[SitemapEntry], int, list[str]]:
+        """The entries the matcher must class for one company, the number of entries in range, and the
+        failures the pair must report (the same ones as `entries`).
+
+        The candidates are the in-range entries of the token index for the company, in URL order (the
+        order `entries` reads them): every entry the matcher would class `accept` or `review` is among
+        them, so classing only these gives the same `accept`/`review` pairs as classing all of
+        `entries`. The other `in_range - len(candidates)` entries are `reject` by the same argument.
+        """
+        if self.crawl is None:
+            return [], 0, list(self.failures)
+        if date_range.start < self.crawl.range_start:
+            return [], 0, [f"sitemap cache of {self.domain} starts at {self.crawl.range_start}"]
+        index = self._token_index()
+        picked = sorted(index.candidates(company, ticker))
+        start, end = date_range.start, date_range.end
+        found = [
+            e
+            for e in (self.rows[i] for i in picked)
+            if e.lastmod is None or start <= e.lastmod <= end
+        ]
+        return found, self._count_in_range(date_range), []
+
+    def holds(self, url: str, date_range: DateRange) -> bool:
+        """Whether the cache has `url` in range: a live (RSS, Wayback) entry of the same URL is then
+        not read, because the cached one comes first and the first entry of a URL wins."""
+        by_url = self._memo.get("by_url")
+        if by_url is None:
+            by_url = {e.url: e.lastmod for e in self.rows}
+            self._memo["by_url"] = by_url
+        if url not in by_url:
+            return False
+        lastmod = by_url[url]
+        return lastmod is None or date_range.start <= lastmod <= date_range.end
+
+    def _token_index(self) -> TokenIndex:
+        if self.index is not None:
+            return self.index
+        index = self._memo.get("index")
+        if index is None:
+            index = build_index(self.rows)
+            self._memo["index"] = index
+        return index
+
+    def _count_in_range(self, date_range: DateRange) -> int:
+        key = ("in_range", date_range.start, date_range.end)
+        count = self._memo.get(key)
+        if count is None:
+            start, end = date_range.start, date_range.end
+            count = sum(1 for e in self.rows if e.lastmod is None or start <= e.lastmod <= end)
+            self._memo[key] = count
+        return count
+
+
+def build_index(rows: tuple[SitemapEntry, ...]) -> TokenIndex:
+    """The token index of the cached entries (CPU work: about 1.6 s for 109,493 entries)."""
+    return TokenIndex(
+        [(e.url, e.lastmod.isoformat() if e.lastmod else None, e.title) for e in rows]
+    )
 
 
 async def _no_client(_url: str) -> str:
@@ -189,6 +257,7 @@ class SitemapCache:
         self._lock_loop: asyncio.AbstractEventLoop | None = None
         self._rows: tuple[SitemapEntry, ...] = ()
         self._rows_of: str | None = None  # `started_at` of the crawl `_rows` was read from
+        self._index: TokenIndex | None = None  # the token index of `_rows` (T-071)
         self.crawls = 0  # crawls started by this object (tests, the log)
 
     @classmethod
@@ -322,6 +391,7 @@ class SitemapCache:
         if self._rows_of != latest.started_at:
             # the other process refreshed (or the first run): rebuild from the table
             self._rows = await asyncio.to_thread(self._load, latest.started_at)
+            self._index = await asyncio.to_thread(build_index, self._rows)
             self._rows_of = latest.started_at
             log.info(
                 "sitemap cache of %s: %d current entries from the crawl of %s",
@@ -329,7 +399,7 @@ class SitemapCache:
                 len(self._rows),
                 latest.started_at,
             )
-        return SitemapRun(self.domain, latest, (), self._rows, warnings)
+        return SitemapRun(self.domain, latest, (), self._rows, warnings, self._index)
 
     # ------------------------------------------------------------------
     # The crawl

@@ -2,7 +2,7 @@
 
 Today every ticker classes every entry of a domain's sitemap. The design of Work item 15 caches the
 entries once per domain and classes, per ticker, only the *candidates* of a token index. This script
-holds the prototype of that index and every check that the design rests on. **Nothing here writes to
+uses that index (`data_mining.token_index.TokenIndex`, moved to `src/` by `T-071`) and holds every check that the design rests on. **Nothing here writes to
 a database**: the cache is an in-memory SQLite table with the DDL of the design, and ``stored`` opens
 the real file with ``mode=ro``.
 
@@ -64,10 +64,10 @@ import tracemalloc
 from collections import defaultdict
 from datetime import UTC, date, datetime
 from multiprocessing import Pool
-from urllib.parse import urlsplit
 
 from data_mining import matching as M
 from data_mining.schema import SITEMAP_CACHE_DDL
+from data_mining.token_index import Row, TokenIndex
 from news_collector.config import build_date_range
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.connectors.ft import FTConnector
@@ -78,7 +78,6 @@ from news_collector.strategies.sitemap import SitemapRSSStrategy
 from news_collector.utils.http import build_client
 from news_collector.utils.url import is_valid_http_url, normalize_url
 
-Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO), title
 Pair = tuple[str, str, str | None]  # class, reason, pub_date (ISO)
 
 START = date(2022, 1, 1)
@@ -90,80 +89,7 @@ P_TICKER_URL, P_NAME_S_URL, P_NAME_CORP_URL, P_TITLE, P_NO_LASTMOD = 0.25, 0.4, 
 FAMILIES = ("name", "alias", "weak_ticker", "loose_name", "weak_first_word", "title")
 
 
-def entry_text(url: str, title: str | None) -> str:
-    """The text `classify` reads (the host is never read)."""
-    parts = urlsplit(url)
-    return f"{parts.path} {parts.query} {title or ''}"
-
-
 LAST_STORED = date(2026, 8, 13)  # the last day of the stored KLAC run, for `stored`
-
-
-class TokenIndex:
-    """`flat()` tokens of the entry text -> row ids; a second index for the title alone.
-
-    ``skip`` names anchor families to leave out: only the mutation check uses it, to prove that
-    the equality check fails when an anchor is missing.
-    """
-
-    def __init__(self, rows: list[Row], skip: frozenset[str] = frozenset()) -> None:
-        self.skip = skip
-        self.text: dict[str, list[int]] = defaultdict(list)
-        self.title: dict[str, list[int]] = defaultdict(list)
-        for i, (url, _lastmod, title) in enumerate(rows):
-            for token in set(M.flat(entry_text(url, title)).split()):
-                self.text[token].append(i)
-            if title:
-                for token in set(M.flat(title).split()):
-                    self.title[token].append(i)
-
-    @staticmethod
-    def _rarest(tokens: list[str], index: dict[str, list[int]]) -> list[int]:
-        """Postings of the rarest token: a form needs *all* its tokens, so any one is an anchor."""
-        postings = [index.get(token, []) for token in tokens]
-        return min(postings, key=len) if postings else []
-
-    def _form(self, tokens: list[str]) -> set[int]:
-        """Anchor of a loose-name form. The possessive (`form` + "s") changes only the last token,
-        so a form of 2+ words is anchored on a token other than the last, or on the entries that
-        have the last token or the last token plus `s` (both are valid; the smaller wins)."""
-        if len(tokens) < M.MIN_WORDS:
-            return set(self._rarest(tokens, self.text))
-        head = self._rarest(tokens[:-1], self.text)
-        tail = set(self.text.get(tokens[-1], ())) | set(self.text.get(tokens[-1] + "s", ()))
-        return set(head) if len(head) <= len(tail) else tail
-
-    def candidates(self, company: str, ticker: str) -> set[int]:
-        common = M.COMMON_TICKER_WORDS | M.ABBREVIATIONS
-        found: set[int] = set()
-        name = M.full_name(company)
-        distinctive = (len(name) >= M.MIN_NAME or any(c.isdigit() for c in name)) and (
-            name not in M.STOPWORDS
-        )
-        if distinctive and "name" not in self.skip:
-            found.update(self._rarest(name.split(), self.text))
-        if "alias" not in self.skip:
-            for alias in M.ALIASES.get(ticker, ()):
-                found.update(self._rarest(alias.split(), self.text))
-        if len(ticker) >= M.MIN_TICKER and ticker not in common and "weak_ticker" not in self.skip:
-            found.update(self._rarest(M.flat(ticker).split(), self.text))
-        if "loose_name" not in self.skip:
-            brand = M.flat(
-                M._CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())
-            ).strip()
-            kept = M._kept_name(company)
-            legal = re.sub(r" corp$", " corporation", kept)
-            for form in {name, name.replace(" and ", " "), kept, legal, brand}:
-                if form and M._spelled_enough(form):
-                    found.update(self._form(form.split()))
-        words = company.split(maxsplit=1)
-        first = words[0].strip(",.") if words else ""
-        first_ok = len(first) >= M.MIN_NAME and first.lower() not in M.STOPWORDS
-        if first_ok and "weak_first_word" not in self.skip:
-            found.update(self._rarest(M.flat(first).split(), self.text))
-        if "title" not in self.skip:  # explicit_ticker, upper_ticker, cashtag, abbreviation
-            found.update(self._rarest(M.flat(ticker).split(), self.title))
-        return found
 
 
 # ---------------------------------------------------------------------------------------------

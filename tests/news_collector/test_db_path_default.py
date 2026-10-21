@@ -146,8 +146,8 @@ def test_run_all_without_db_path_opens_database_url(
 async def test_run_domain_discovery_without_db_path_opens_database_url(
     real_db: Path, opened: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def nothing(*_: object, **__: object) -> tuple[list, list, list, list]:
-        return [], [], [], []
+    async def nothing(*_: object, **__: object) -> tuple[list, list, list, list, int]:
+        return [], [], [], [], 0, 0
 
     monkeypatch.setattr(_common, "_discover_one_ticker", nothing)
     req = DiscoverRequest(tickers=["AAPL"], company_names=["Apple Inc."])
