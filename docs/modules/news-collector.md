@@ -11,7 +11,7 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
 
 **Which database the gateway opens.** The collector API and CLI take the path from the request or `--db`, else `$DATABASE_URL`, else `data/urls.db`; an empty value is unset (`data_mining.resolve_db_path`, T-065). On this machine `/etc/environment` sets `DATABASE_URL="../data/urls.db"`, and points at a directory that does not exist; since T-066b the repo-root `.env` wins over it (every entry point calls `data_mining.env.load_env()` first, so `uv run apps/gateway.py` picks the `.env` database from any working directory), and `GET /crawler/status` must still show the real counts before any discovery. A one-off value on the command line (`DATABASE_URL=… uv run …`) now loses to `.env`: edit `.env`, or use a flag applied after the load (`--db`, `--allow-new-db`, a request's `db_path`); a blank `.env` line cannot switch off an inherited variable such as `HTTP_PROXY`, unset it in the system or the shell. At start-up the gateway, the crawler API and the collector API log the effective database (`DATABASE_URL source=… path=… file: … discovered_urls=N rows`) and warn when the environment differs from `.env` (only possible when `load_env()` did not run in the process; `load_env()` itself logs one line per variable it overrides, with the values only for `DATABASE_URL`, `UNIVERSE_DB_PATH`, `DISCOVERY_START_DATE`, `ALLOW_NEW_DB`; a stale `DISCOVERY_END_DATE` is named once and ignored, T-077); the gateway and the crawler refuse to start on a missing file, a missing table or a schema with no rows (`ALLOW_NEW_DB=1` or `--allow-new-db` to start on an empty database on purpose), the collector only on a missing directory or an unreadable file (`data_mining.startup_check`, T-066a). `company_names` is positional (one name per ticker, same length, else 422); when omitted, each ticker's name is looked up by exact symbol in the current S&P 500 (one Wikipedia request, 502 on failure), then, for a ticker that has left the index, in `data/universe.db` as of the request's `start_date` (`query_as_of`, never a partial name match). A ticker found in neither, or a `start_date` the store does not cover, is a 422 that asks for `company_names`. Known limit: a ticker added after `start_date` and removed before today is in neither, so pass `company_names` for it (`T-067`, PR #81). Symbols are matched exactly as Wikipedia writes them (`BRK.B`, not `BRK-B`). A request with `tickers` and no `company_names` now needs the network (Wikipedia) or a populated store; before, it worked offline but stored the ticker as the company. If Wikipedia is down the store alone can still name the tickers it knows (a 502 only for the rest). The lookup never creates `universe.db`: a missing, unreadable or empty store is reported in the 422. The same lookup serves `discover --tickers` of the CLI (`news_collector/companies.py`), which stops with status 1 when a ticker has no name. If Wikipedia is down, a ticker that is also current is named from the store as of `start_date`, so a renamed company gets its name of that date (a warning is logged; the aliases carry the ticker). An empty `company_names` list counts as omitted.
 
-**Caution until `PLAN.md` Work item 15 (`T-071`) is merged: do not run a `cnbc.com` discovery for more tickers on the real database.** The sitemap strategy turns every URL of the cnbc sitemap (about 578,000) into a pair for the ticker, and the queue stores the rejected ones: the `KLAC` run on 2026-10-18 added 578,117 rows (+243 MB); a run of all tickers would have added about 290 million. Since the sitemap date range is applied (PR #75, if merged) a ticker adds about 121,000 rows and a full run about 61 million (a projection, roughly 25 GB): smaller, still not acceptable. Work item 15 keeps the sitemap once per domain and stores only `accept`/`review` pairs.
+**Caution that ends when `PLAN.md` Work item 15 (`T-071`) is merged: do not run a `cnbc.com` discovery for more tickers on the real database before it.** With `T-071` a discovery classes only the token index's candidates from the sitemap cache and stores only the `accept`/`review` pairs ("Matching from the cache (T-071)"); the first run on the real file is the maintainer's, after a backup (it is also the first runtime evidence of the `T-070b` guard on that file: it writes a crawl row if the cache is stale). Before it, the sitemap strategy turned every URL of the cnbc sitemap (about 578,000) into a pair for the ticker, and the queue stored the rejected ones: the `KLAC` run on 2026-10-18 added 578,117 rows (+243 MB); a run of all tickers would have added about 290 million. Since the sitemap date range is applied (PR #75, if merged) a ticker adds about 121,000 rows and a full run about 61 million (a projection, roughly 25 GB): smaller, still not acceptable. Work item 15 keeps the sitemap once per domain and stores only `accept`/`review` pairs.
 
 ## Architecture
 
@@ -32,7 +32,8 @@ queue (`data/urls.db` by default — override with `$DATABASE_URL`, see root
   substring, the host is never matched, and an ordinary-word ticker (a cashtag `$ON` is `review`, an exchange form `NYSE: ON` is `accept`), a generic first word or an abbreviation
   alone is never `accept`. The class is stored on `discovered_urls` (`T-056b`, below) and the strategies set it (`T-056c`):
 `ddg` and `sitemap`/`rss` no longer drop a pair, they keep `accept`, `review` and `reject` with the class,
-the reason and (for `ddg`) the search `query`. `accept` and `review` rows stay `pending` (a `review` pair
+the reason and (for `ddg`) the search `query` (**since `T-071` a sitemap pair read from the sitemap cache that the matcher rejects is
+not stored, only counted: see "Matching from the cache (T-071)"; the `ddg`, `rss`, Wayback and `api` rejects are stored as described**). `accept` and `review` rows stay `pending` (a `review` pair
 needs its body for `portfolio-nlp`'s decision); a `reject` row is stored `skipped` (never fetched).
 **Fetch policy:** the class is computed at discovery from the URL and the title (the `ddg` hit title or an
 RSS entry title; a plain sitemap entry has none), then **re-evaluated after the fetch** by the extractor
@@ -43,7 +44,8 @@ pairs would be `review`/`accept` with a title and are never fetched; the T-057 c
 Rows from the `api` feeds (`stocktwits`, `yahoo_finance`) are `accept` with `match_reason = 'feed'`. The
 orchestrator's merge of the strategies keeps the higher class of a pair found twice (and its `query`). The
 discovery logs, `DiscoveryStats.total_rejected`, `/discovery/run` (`total_rejected`) and the CLI summary report
-`rejected=`: the **newly inserted** rows that are matcher-rejected (`URLQueue.last_inserted_rejected`). They are
+`rejected=`: the **newly inserted** rows that are matcher-rejected (`URLQueue.last_inserted_rejected`), and, next to it, the sitemap
+rejects that were **not stored** (`total_rejected_not_stored`, T-071). The inserted ones are
 part of `inserted` but never fetched, so `inserted - rejected` sizes the new fetch queue (a re-run inserts
 0 and reports 0). The run's `by_domain` and `by_company` (and the CLI summary tables) count **inserted** rows, matcher-rejected ones
 included, like `queue.stats()['by_domain']`; use `by_match_class` or `total_rejected` to tell how many of them will be fetched.
@@ -218,9 +220,9 @@ a foreign key back to this table, rather than re-matching on the `url` string.
 ## The sitemap cache of a domain (T-070a)
 
 A domain with `sitemap_roots` (today only `cnbc.com`) is crawled **once per domain**, not once per ticker: `news_collector/sitemap_cache.py`
-stores the in-range entries in `sitemap_entries` and every ticker reads them. The matching is still the full scan of today and the
-`reject` pairs are still stored (T-071 changes both), so **the rule above stands: no `cnbc.com` discovery on the real database until
-T-071 is merged**.
+stores the in-range entries in `sitemap_entries` and every ticker reads them. Since `T-071` the matching reads only the token index's
+candidates and the `reject` pairs of the cache are not stored ("Matching from the cache (T-071)", below); the first discovery on the
+real database is the maintainer's, after a backup (see the caution at the top of this file).
 
 - **Fresh enough:** the latest complete crawl is used while it started at most **7 days** ago, whatever the run's end date. The age is
   judged once, when the run starts. A run that needs today's sitemap passes **`--refresh-sitemaps`** (CLI) or `"refresh_sitemaps": true`
@@ -568,6 +570,98 @@ characters or more (`AT&T`'s `at t` is not a spelling); `matching.PLURAL_PHRASES
 matcher changes: `ticker_validation_sample.py --refresh SHEET --db urls.db` keeps every row whose class
 still holds (with its label) and replaces only the others, which a person then labels.
 
+## Matching from the cache (T-071)
+
+Before `T-071` every ticker classed **every** entry of a domain's sitemap (the full scan: about 42 µs a pair, 4.6 s a ticker for the
+109,493 in-range `cnbc.com` entries) and the queue stored every pair the matcher rejected (one ticker, `KLAC`, added 578,117 rows and 243 MB;
+503 tickers would have added about 55 million). Now, when the strategy has a cache run (`SitemapRSSStrategy(connector, client, run)`):
+
+1. `SitemapRun.select(company, ticker, range)` asks the **token index** (`data_mining/token_index.py`) for the company's candidate entries:
+   the tokens of the path, the query and the title, one anchor token per signal of the matcher (the name, an alias, the ticker, a
+   loose-name spelling, the first word) and the ticker in the title index. The cache builds the index once per crawl (about 1.6 s for 109,493
+   entries, in memory, never stored) and every run that reads that crawl shares it; a `SitemapRun` made without one builds it on first use.
+2. The candidates are classed by the **same matcher** (`explain_match`, unchanged); only the `accept` and `review` pairs are returned and
+   stored. Every other in-range entry is a `reject` by the argument in the module docstring, and is **counted, not stored**:
+   `SitemapRSSStrategy.rejected_not_stored = entries in range - pairs returned`.
+3. The run's end is applied when the candidates are read (`lastmod <= end`, an entry with no `lastmod` is kept), the pair's `pub_date` is the cached
+   `lastmod`, and a URL listed twice in a sitemap keeps the first entry (the cache's rule, as before).
+
+**Equal to the full scan, not "close to it".** The `accept`/`review` pairs, their class, reason, `pub_date`, source and title are the full scan's:
+`tests/news_collector/test_match_from_cache.py` (a synthetic corpus with titles and all the matcher's signals, an end date in the past, the
+`news:title` fixture, a 578,000-entry cache), `scripts/sitemap_preselect_check.py check` (the real corpus: 503 tickers, 109,493 entries, 38,055
+pairs, no pair missing, none extra, none changed) and its mutation tests (the check fails when an anchor family is removed); `check` is `T-068`'s design proof, on its own crawl (2026-10-19) and with the script's own copy of the logic, and `scripts/sitemap_preselect_check.py production` ("Equality on the whole universe", below) is the proof of the code that ships, on the real cache (the crawl of 2026-10-20: 109,550 entries, 57 more than `check`'s 109,493, and 38,104 pairs against 38,055; in each run the two paths agree with each other, and the two runs differ because their crawls differ (57 more entries a day later); the 49 extra pairs were not traced pair by pair). **When the matcher
+changes, the index may have to change with it:** a new signal needs an anchor in `TokenIndex.candidates`, and the equality tests fail until it has
+one; an alias or a word list that the matcher already reads (`ALIASES`, `COMMON_TICKER_WORDS`, ...) needs nothing. To find what a change that the
+index does not know about promotes, class every cached entry: `reclass-sitemap --full-scan` (CLI) or `"full_scan": true` (API).
+
+**What did not change** (guardrail 4): a run with no cache (`cache=None`, the live crawl) stores every class as before; the `ddg`, `rss`, Wayback
+and `api` rejects are stored; the first URL wins: a live (RSS, Wayback) entry whose URL the cache holds in the run's range is not read, because the
+cached entry came first in the old list (a cached entry outside the range does not block it); the `--resume` checkpoint; `status = 'pending'` for
+the fetch; what `portfolio-nlp` reads.
+
+**Where the count is reported.** The strategy's `rejected_not_stored`; `PartialStats.rejected_not_stored` and `DiscoveryStats.total_rejected_not_stored`
+(`total_rejected` stays the rejected rows that **were** stored: `ddg`, `rss`, Wayback, a live sitemap, and the rows that already existed); the orchestrator's
+per-pair and final log lines; the CLI summary line `Sitemap rejects not stored`; `RunAllResponse.total_rejected_not_stored` (`POST /discovery/run-all`)
+and `DiscoverResponse.rejected_not_stored` (the per-domain routes, `/cnbc/`, `/ft/` and the others). `total_discovered` and `sitemap_count` count the
+pairs the run **returned**, so they no longer include the sitemap rejects.
+
+**Evidence: a 10-ticker `cnbc.com` run on a copy of the real file, 2026-10-21** (the copy is the file after `T-073`, `urls.db` 481,339 rows, 2,289,635,328 bytes, schema 5, the cache filled
+by the G3 fill; tickers `KLAC AAPL ON A IT ARE TTD MSFT NVDA CRM`; `--no-resume`, concurrency 5, DDG off in both runs so the network does not decide the time; the baseline is
+`master` before `T-071` (the full scan, with the fixed sitemap date parser of PR #75, reading the same cache), run on its own copy; the real file was only read):
+
+| | baseline (full scan) | `T-071` | `T-071` with `--refresh-sitemaps` |
+|---|---|---|---|
+| time | **266.2 s** | **4.0 s** | 17.1 s (the crawl of 14 requests is in it) |
+| rows added | **1,060,682** (1,060,484 rejects) | **198** (0 rejects) | 198 |
+| `accept` / `review` added | +181 / +17 | +181 / +17 | +181 / +17 |
+| file | 2,289,635,328 → 2,721,648,640 bytes (+432 MB) | → 2,289,778,688 (+143 KB) | → 2,290,290,688 |
+| `sitemap_crawls` | 1 row | 1 row (the cache was fresh) | **2 rows**: the discovery wrote a crawl row (`2026-10-21T00:12:57`), the first run evidence of the `T-070b` guard on a copy |
+| sitemap rejects not stored | n/a | 1,090,441 | 1,090,441 |
+
+**The same runs per unit, to compare them.** The workload is the same in all three: 10 tickers × 109,550 cached entries = **1,095,500 pairs evaluated**, and
+all three add the same 198 `accept`/`review` rows.
+
+| per … | full scan (before) | `T-071` | `T-071` with `--refresh-sitemaps` |
+|---|---|---|---|
+| time per pair evaluated | 243 µs | **3.65 µs** | 15.6 µs |
+| time per ticker | 26.6 s | **0.40 s** | 1.71 s |
+| pairs evaluated per second | 4,115 | **273,875** | 64,064 |
+| time per `accept`/`review` row added | 1,344 ms | **20 ms** | 86 ms |
+| rows stored per 1,000 pairs | 968.2 | **0.18** | 0.18 |
+| rejects stored per 1,000 pairs | 968.0 | **0** | 0 |
+| file growth per pair evaluated | 394 B | **0.13 B** | 0.60 B |
+| file growth per ticker | 43.2 MB | **14 KB** | 66 KB |
+
+Per pair it is **66 times faster** (15.6 times with the forced crawl, whose 14 requests and index build are in that figure), stores **5,357 times fewer rows** and
+grows the file **3,013 times less**; before, 96.8% of the pairs evaluated became stored rows, almost all rejects, and now 0.018% do, none a reject. Part of the old time
+is the matcher and part the queue writing 1.06 million rows: the matcher alone costs about 42 µs a pair (`T-068`), 46 s of the 266 s, so about 220 s were the queue
+(an inference from that measurement, not a timing taken in this run). The file growth per stored row is not compared: 407 B a row before (the 420 B estimated in
+2026-10), and for 198 rows the 143 KB is the granularity of the pages and the WAL, not a rate.
+
+**The `accept`/`review` pairs are the same**: the 17,235 stored `cnbc.com` sitemap pairs of the 10 tickers (`accept`/`name` 16,598, `accept`/`upper_ticker` 515,
+`review`/`weak_first_word` 61, `review`/`weak_ticker` 61) are identical in the two runs by URL, ticker, class, reason and `pub_date`. The 1,090,441 counted rejects
+reconcile with the baseline: 1,060,484 it stored, 29,941 that were already stored as rejects (29,932 `sitemap`, 9 `ddg`), and 16 stored `accept`/`review` rows that the
+matcher now rejects and the queue never demotes: 13 of source `sitemap` (12 `accept`, 1 `review`; `ON` 10, `A` 3: the family accepted at G3) and 3 `accept` of source `ddg`. The
+reconciliation is exact: 1,060,484 + 29,957 = 1,090,441 (29,957 = the 34,818 pairs of the 10 tickers already stored that the cache holds, read-only from the real file, that the
+matcher now classes `reject`; the other 4,861 stay `accept`/`review`). The run on the real file, the first runtime evidence of the
+guard there, is the maintainer's after the merge and a backup.
+
+**Equality on the whole universe (2026-10-21).** Run read-only on the real `cnbc.com` cache (the crawl of 2026-10-20 19:15, 109,550 entries, range from 2022-01-01): the 504
+tickers of `data/sitemap_preselect_per_ticker.csv` (plus `TTD`) through the production path (`SitemapRun.select` and the matcher on the candidates) against the matcher on every
+entry in range, with the real `CNBCConnector`: **38,104 `accept`/`review` pairs by the index, 38,104 by the full scan, 0 mismatching tickers** (class, reason and `pub_date` per
+URL), 644 s on 8 workers. To repeat it (it reads `sitemap_crawls` and `sitemap_entries` with `mode=ro` and writes nothing to the database; memory, measured with `resource.getrusage` on one process that loads the 109,550 entries, builds the index and compares one ticker: 164 MB after the load, **234 MB at the peak**; a pool has one such process per worker plus the parent):
+
+```bash
+PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py production --db /path/to/urls.db \
+    --tickers-file data/sitemap_preselect_per_ticker.csv --workers 8 --out eq_result.txt
+```
+
+The last line is `RESULT tickers N | pairs via index X | pairs via full scan X | mismatching tickers 0`; the exit status is 1 if a ticker differs. Run it after any change to
+`TokenIndex.candidates` or to `data_mining.matching`.
+
+**Progress.** `discover` shows a `tqdm` bar over the (company, domain) pairs (the orchestrator calls its `progress` callback once per finished pair;
+a callback that raises is logged and never stops the run; `on_start` gives it the number of pairs that will run, so under `--resume` the total is the pending pairs, not the whole grid). The bar is off when the output is not a terminal, so it never writes into a log or a pipe.
+
 ## Re-class from the sitemap cache (T-072)
 
 `T-071` stops storing the sitemap pairs the matcher rejects, so a later matcher change cannot promote what was never
@@ -581,7 +675,7 @@ uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv       
 # write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
 uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 # the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
-#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: about 4.6 s a ticker for cnbc.com, no progress, cannot be stopped);
+#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: the request has no progress and cannot be stopped, and an `apply` writes from the gateway process (about 0.04 s a ticker for cnbc.com, 2 s for 50; with `full_scan` about 4.6 s a ticker));
 #   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
 ```
 
@@ -595,8 +689,11 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
   `skipped` row goes back to `pending`.
 - **Names.** `--tickers` are named as in `discover` (the S&P 500 list and `universe.db`: a network request for the list unless
   `--sp500 CSV` is given); the sitemap itself is never fetched.
-- **Cost.** The classification is the full scan of today (about 4.6 s a ticker for `cnbc.com`: 503 tickers take about 40 minutes
-  and a `tqdm` bar shows the progress); `T-071`'s token index will make it seconds.
+- **Cost.** Since `T-071` the token index preselects the candidates and only those are classed: about **0.04 s a ticker** for `cnbc.com`
+  (`select` + classify, measured on the real cache: 0.036 s on average and 0.079 s at most over 20 calls), so 503 tickers take about 20 s of CPU, plus
+  the index build (1.6 s, once) and the inserts of the pairs that are new; a `tqdm` bar shows the progress. (A *discovery* takes about 0.4 s a ticker, the
+  10-ticker run of "Matching from the cache (T-071)", because it also writes to the queue: do not use that figure for the re-class.) `--full-scan`
+  classes every entry instead (the old full scan, about 4.6 s a ticker: 503 tickers take about 40 minutes).
 - **Reject pairs** are counted in the output (`reject`) and never stored.
 - **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with
   `--apply`. `--apply` opens the queue like a collector does, so on a file below schema version 5 it runs the migration (version 5 drops

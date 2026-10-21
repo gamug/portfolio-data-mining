@@ -108,6 +108,7 @@ def test_the_signature_follows_the_roots_and_the_version(monkeypatch: pytest.Mon
     assert sc.signature([ROOT, INDEX_ROOT]) != base
 
 
+@pytest.mark.usefixtures("every_entry_a_candidate")
 async def test_two_concurrent_tickers_make_one_crawl(db: str) -> None:
     site = standard_site()
     cache = make(db, site, Clock())
@@ -121,6 +122,7 @@ async def test_two_concurrent_tickers_make_one_crawl(db: str) -> None:
     assert cache.crawls == 1
 
 
+@pytest.mark.usefixtures("every_entry_a_candidate")
 async def test_the_pair_gets_the_cached_entries_inside_the_range(db: str) -> None:
     site = standard_site()
     cache = make(db, site, Clock())
@@ -608,11 +610,14 @@ async def test_the_title_evidence_is_kept_through_the_cache(db: str) -> None:
     run = await cache.begin(RANGE)
     cached = await cnbc_strategy(site, run).discover("Apple Inc.", "AAPL", RANGE)
     live = await cnbc_strategy(site, None).discover("Apple Inc.", "AAPL", RANGE)
-    assert seen(cached) == seen(live)  # the same pairs, classes, reasons, titles and dates
+    # the same accept/review pairs, classes, reasons, titles and dates; the cached path does not
+    # return (nor store) the reject, and counts it (T-071)
+    assert seen(cached) == seen([p for p in live if p.match_class != "reject"])
     by_url = {p.url: p for p in cached}
     assert by_url[CNBC_URL].match_class == "accept"  # by the title, the slug has no name
     assert by_url[CNBC_URL].title == TITLE
-    assert by_url[CNBC_PLAIN].match_class == "reject"
+    assert CNBC_PLAIN not in by_url
+    assert {p.url: p.match_class for p in live}[CNBC_PLAIN] == "reject"  # the live path stores it
     assert rows(db, "SELECT title FROM sitemap_entries WHERE url = ?", CNBC_URL) == [(TITLE,)]
 
 

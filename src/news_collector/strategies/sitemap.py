@@ -67,6 +67,10 @@ class SitemapRSSStrategy:
         # `discover` call (T-076). The orchestrator reads it: a pair with failures is
         # reported and not checkpointed.
         self.failures: list[str] = []
+        # Sitemap pairs that the matcher rejected and `discover` did not return, because they come
+        # from the cache and a rejected cached pair is no longer stored (T-071): counted, reset per
+        # `discover`. The orchestrator and both API responses report it.
+        self.rejected_not_stored = 0
 
     async def discover(
         self,
@@ -86,14 +90,24 @@ class SitemapRSSStrategy:
         - visited_sitemaps grows; each sitemap URL processed exactly once
         """
         entries: list[SitemapEntry] = []
+        cached_pairs: list[DiscoveredURL] = []
         self.failures = []
+        self.rejected_not_stored = 0
 
-        # 1. Crawl sitemap trees
+        # 1. The sitemap: from the cache (the token index preselects the candidates, the matcher
+        # classes them, only `accept` and `review` pairs are kept: T-071), or crawled live
         if self._connector.config.sitemap_roots:
             if self._cache is not None:
-                cached, cache_failures = self._cache.entries(date_range)
-                entries.extend(cached)
+                candidates, in_range, cache_failures = self._cache.select(
+                    company, ticker, date_range
+                )
                 self.failures.extend(cache_failures)
+                cached_pairs = [
+                    p
+                    for p in self._dedupe_and_filter(candidates, company, ticker)
+                    if p.match_class != "reject"
+                ]
+                self.rejected_not_stored = in_range - len(cached_pairs)
             else:
                 entries.extend(
                     await self._crawl_sitemaps(self._connector.config.sitemap_roots, date_range)
@@ -117,8 +131,12 @@ class SitemapRSSStrategy:
             except Exception as exc:
                 log.warning("Wayback CDX failed for %s: %s", self._connector.config.domain, exc)
 
-        # 4. Deduplicate and filter by company relevance
-        results = self._dedupe_and_filter(entries, company, ticker)
+        # 4. Deduplicate and filter by company relevance. A live entry whose URL the cache holds in
+        # range is not read: the cached entry comes first, and the first entry of a URL wins, as
+        # when the cached entries were part of this list.
+        if self._cache is not None:
+            entries = [e for e in entries if not self._cached_first(e, date_range)]
+        results = cached_pairs + self._dedupe_and_filter(entries, company, ticker)
 
         log.info(
             "Sitemap/RSS discovered %d URLs for %s/%s",
@@ -127,6 +145,11 @@ class SitemapRSSStrategy:
             self._connector.config.domain,
         )
         return results
+
+    def _cached_first(self, entry: SitemapEntry, date_range: DateRange) -> bool:
+        if self._cache is None or not is_valid_http_url(entry.url):
+            return False
+        return self._cache.holds(normalize_url(entry.url), date_range)
 
     def classify_entries(
         self, entries: list[SitemapEntry], company: str, ticker: str

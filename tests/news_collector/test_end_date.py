@@ -168,8 +168,8 @@ def test_run_all_with_start_after_end_is_a_422_that_says_so(
     assert _Recording.ranges == []
 
 
-async def _nothing(*_: object, **__: object) -> tuple[list, list, list, list]:
-    return [], [], [], []
+async def _nothing(*_: object, **__: object) -> tuple[list, list, list, list, int]:
+    return [], [], [], [], 0
 
 
 async def test_a_domain_run_echoes_the_range_it_used(

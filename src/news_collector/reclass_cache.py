@@ -12,8 +12,9 @@ Idempotent: a second run finds every pair stored at its class and inserts and pr
 Without `apply` it writes nothing (the database is opened read-only) and says what it would insert
 and promote.
 
-The classification is the full scan of today (about 4.6 s a ticker for `cnbc.com`); `T-071`'s token
-index will replace it.
+The classification is `T-071`'s: the token index preselects the candidates of a company and only
+those are classed (about 0.04 s a ticker, about 20 s for 503 tickers, where the full scan took about 4.6 s a
+ticker for `cnbc.com`); the `accept`/`review` pairs are the full scan's, which the equality tests prove.
 """
 
 from __future__ import annotations
@@ -110,12 +111,27 @@ def stored_classes(db_path: str, pairs: Sequence[tuple[str, str]]) -> dict[tuple
 
 
 def _classify(
-    connector: BaseConnector, run: SitemapRun, company: Company, date_range: DateRange
+    connector: BaseConnector,
+    run: SitemapRun,
+    company: Company,
+    date_range: DateRange,
+    full_scan: bool = False,
 ) -> tuple[int, list[DiscoveredURL]]:
-    """The entries read for the company and all its pairs (every class), CPU work."""
-    entries, _failures = run.entries(date_range)
+    """The number of entries in range and the pairs of the company's **candidates** (CPU work).
+
+    The token index preselects the candidates (`SitemapRun.select`): every `accept`/`review` pair
+    is among them, so the pairs returned hold all of those and the candidate `reject`s; the other
+    entries are `reject` too, and the caller counts them as `entries` minus the stored classes.
+    `full_scan` classes every entry instead (the fallback, and the way to find what a matcher change
+    that the index does not know about promotes: a new signal needs an anchor in `TokenIndex`, and
+    the equality tests fail until it has one).
+    """
     strategy = SitemapRSSStrategy(connector, cast(httpx.AsyncClient, None), run)
-    return len(entries), strategy.classify_entries(entries, company.name, company.ticker)
+    if full_scan:
+        entries, _failures = run.entries(date_range)
+        return len(entries), strategy.classify_entries(entries, company.name, company.ticker)
+    candidates, in_range, _failures = run.select(company.name, company.ticker, date_range)
+    return in_range, strategy.classify_entries(candidates, company.name, company.ticker)
 
 
 def _record_failure(
@@ -146,12 +162,14 @@ async def reclass_from_cache(
     *,
     domains: Sequence[str] | None = None,
     apply: bool = False,
+    full_scan: bool = False,
     progress: Callable[[TickerResult], object] | None = None,
 ) -> ReclassReport:
     """Re-class the cached entries of each domain for each company; see the module docstring.
 
     `domains` defaults to every connector that has `sitemap_roots`; a named domain without roots
-    is an error line. `progress` is called after each (ticker, domain).
+    is an error line. `full_scan` classes every entry instead of the token index's candidates.
+    `progress` is called after each (ticker, domain).
     """
     began = time.monotonic()
     report = ReclassReport(applied=apply)
@@ -191,7 +209,7 @@ async def reclass_from_cache(
             for company in companies:
                 result = TickerResult(company.ticker, domain)
                 try:
-                    await _one(queue, connector, run, company, date_range, apply, result)
+                    await _one(queue, connector, run, company, date_range, apply, result, full_scan)
                 except Exception as exc:
                     _record_failure(report, domain, result, apply, exc)
                     if progress is not None:  # the pair was processed: the bar counts it
@@ -225,11 +243,17 @@ async def _one(
     date_range: DateRange,
     apply: bool,
     result: TickerResult,
+    full_scan: bool = False,
 ) -> None:
     """Fill `result`; on a database error it keeps what earlier batches already wrote."""
-    result.entries, pairs = await asyncio.to_thread(_classify, connector, run, company, date_range)
-    result.classes.update(p.match_class for p in pairs)
+    result.entries, pairs = await asyncio.to_thread(
+        _classify, connector, run, company, date_range, full_scan
+    )
     stored = [p for p in pairs if p.match_class in _STORED]
+    result.classes.update(p.match_class for p in stored)
+    result.classes["reject"] = result.entries - len(
+        stored
+    )  # candidates and the rest of the entries
     if not stored:
         return
     if apply:

@@ -133,6 +133,8 @@ async def test_a_second_run_inserts_and_promotes_nothing(db: str, site: Site) ->
 
 
 async def test_a_matcher_change_moves_a_pair_from_nothing_to_review(db: str, site: Site) -> None:
+    """A matcher change the token index does not know about (here a patched `explain_match`) is
+    found by the full scan, the fallback; the index only brings the candidates of today's signals."""
     conn = connector()
     await crawl(db, site, Clock(), conn)
     mode = {"class": "reject"}
@@ -142,19 +144,37 @@ async def test_a_matcher_change_moves_a_pair_from_nothing_to_review(db: str, sit
         return Match(mode["class"], "rule") if url == PLAIN else real(url, title, company, ticker)  # type: ignore[arg-type]
 
     conn.explain_match = matcher  # type: ignore[method-assign]
-    await run(db, conn, apply=True)
+    await run(db, conn, apply=True, full_scan=True)
     assert PLAIN not in [u for u, _c, _s in stored(db)]  # rejected: not stored
     mode["class"] = "review"  # the matcher changed
-    report = await run(db, conn, apply=True)
+    report = await run(db, conn, apply=True, full_scan=True)
     assert report.total("inserted") == 1
     assert (PLAIN, "review", "pending") in stored(db)
     mode["class"] = "accept"  # and again: a stored row is promoted, never demoted
-    promoted = await run(db, conn, apply=True)
+    promoted = await run(db, conn, apply=True, full_scan=True)
     assert (promoted.total("inserted"), promoted.total("promoted")) == (0, 1)
     mode["class"] = "reject"  # a worse class later changes nothing
-    worse = await run(db, conn, apply=True)
+    worse = await run(db, conn, apply=True, full_scan=True)
     assert (worse.total("inserted"), worse.total("promoted")) == (0, 0)
     assert (PLAIN, "accept", "pending") in stored(db)
+
+
+async def test_the_index_does_not_see_a_change_the_full_scan_finds(db: str, site: Site) -> None:
+    """The contract of T-071: a new signal needs an anchor in `TokenIndex` (the equality tests fail
+    until it has one); until then `--full-scan` is the way to find what it promotes."""
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    real = conn.explain_match
+
+    def matcher(url: str, title: str, company: str, ticker: str) -> Match:
+        return Match("review", "rule") if url == PLAIN else real(url, title, company, ticker)  # type: ignore[arg-type]
+
+    conn.explain_match = matcher  # type: ignore[method-assign]
+    by_index = await run(db, conn, apply=False)
+    by_scan = await run(db, conn, apply=False, full_scan=True)
+    assert by_index.total("new") == by_scan.total("new") - 1  # PLAIN: only the full scan sees it
+    assert by_index.results[0].entries == by_scan.results[0].entries  # the same entries read
+    assert by_index.classes()["reject"] == by_scan.classes()["reject"] + 1
 
 
 async def test_a_stored_reject_is_promoted_and_goes_back_to_pending(db: str, site: Site) -> None:
@@ -255,8 +275,11 @@ async def test_classify_entries_gives_the_pairs_discover_builds_from_the_cache(
     entries, _ = sitemap_run.entries(RANGE)
     discovered = await strategy.discover(APPLE.name, APPLE.ticker, RANGE)
     classified = strategy.classify_entries(entries, APPLE.name, APPLE.ticker)
-    assert seen(discovered) == seen(classified)  # every class, `reject` included (until T-071)
+    # `classify_entries` is the full scan (every class); `discover` returns its accept/review pairs
+    # and counts the rejects it does not store (T-071)
     assert {p.match_class for p in classified} == {"accept", "reject"}
+    assert seen(discovered) == seen([p for p in classified if p.match_class != "reject"])
+    assert strategy.rejected_not_stored == sum(p.match_class == "reject" for p in classified)
 
 
 async def test_a_range_wider_than_the_cache_is_an_error(db: str, site: Site) -> None:
@@ -306,11 +329,21 @@ def test_the_cli_is_a_dry_run_by_default_and_apply_reaches_the_re_class(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     seen: list[bool] = []
+    scans: list[bool] = []
 
     async def fake(
-        db_path, connectors, companies, date_range, *, domains=None, apply=False, progress=None
+        db_path,
+        connectors,
+        companies,
+        date_range,
+        *,
+        domains=None,
+        apply=False,
+        full_scan=False,
+        progress=None,
     ):  # type: ignore[no-untyped-def]
         seen.append(apply)
+        scans.append(full_scan)
         return ReclassReport(applied=apply)
 
     class FakeClient:
@@ -328,10 +361,11 @@ def test_the_cli_is_a_dry_run_by_default_and_apply_reaches_the_re_class(
     monkeypatch.setattr(collector_main, "build_connectors", cnbc_connectors)
     monkeypatch.setattr(collector_main, "lookup_companies", lookup)
     base = ["--db", str(tmp_path / "q.db"), "--log-dir", "", "reclass-sitemap", "--tickers", "AAPL"]
-    for extra in ([], ["--apply"]):
+    for extra in ([], ["--apply"], ["--full-scan"]):
         args = collector_main.build_parser().parse_args(base + extra)
         assert asyncio.run(collector_main.cmd_reclass_sitemap(args)) == 0
-    assert seen == [False, True]
+    assert seen == [False, True, False]
+    assert scans == [False, False, True]  # the token index by default, `--full-scan` the fallback
     out = capsys.readouterr().out
     assert "dry run (nothing written; --apply writes)" in out
     assert "APPLIED" in out
@@ -403,6 +437,9 @@ async def test_the_route_is_a_dry_run_by_default_and_apply_writes(
     assert len(stored(db)) == TWO
     again = http.post("/discovery/reclass-sitemap", json={**body, "apply": True}).json()
     assert (again["inserted"], again["promoted"]) == (0, 0)
+    assert ReclassRequest(tickers=["AAPL"]).full_scan is False  # the index is the default
+    scan = http.post("/discovery/reclass-sitemap", json={**body, "full_scan": True}).json()
+    assert (scan["inserted"], scan["would_insert"], scan["reject"]) == (0, 0, 1)  # the same answer
 
 
 def test_the_route_reports_a_domain_without_a_cache_as_an_error(
@@ -593,3 +630,22 @@ async def test_the_progress_callback_also_sees_a_failed_ticker(
     report = await run(db, conn, apply=True, progress=lambda r: seen_tickers.append(r.ticker))
     assert seen_tickers == ["AAPL"]
     assert report.failed == 1
+
+
+async def test_the_index_and_the_full_scan_give_the_same_re_class(db: str, site: Site) -> None:
+    """Both paths read the same entries and class them the same: `T-071` replaced the scan."""
+    conn = connector()
+    await crawl(db, site, Clock(), conn)
+    by_index = await run(db, conn, apply=False)
+    by_scan = await run(db, conn, apply=False, full_scan=True)
+    [a], [b] = by_index.results, by_scan.results
+    assert (a.entries, dict(a.classes), a.new, a.promotable) == (
+        b.entries,
+        dict(b.classes),
+        b.new,
+        b.promotable,
+    )
+    assert a.classes["reject"] >= 1  # the reject is counted, never stored
+    applied = await run(db, conn, apply=True)  # and the written rows are the scan's accept/review
+    assert applied.total("inserted") == a.new
+    assert all(cls in ("accept", "review") for _u, cls, _s in stored(db))

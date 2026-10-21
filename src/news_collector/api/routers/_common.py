@@ -91,12 +91,14 @@ async def _discover_one_ticker(
     date_range: DateRange,
     extra_fetch: Callable | None = None,
     cache: SitemapRun | None = None,
-) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str]]:
+) -> tuple[list[DiscoveredURL], list[DiscoveredURL], list[DiscoveredURL], list[str], int]:
     """
     Run DDG + Sitemap for one ticker on a single connector.
 
     Optionally calls extra_fetch(company.ticker, date_range) for API-based connectors.
-    Returns (ddg_urls, sitemap_urls, api_urls, errors).
+    Returns (ddg_urls, sitemap_urls, api_urls, errors, rejected_not_stored): the last is the
+    number of sitemap pairs read from the cache that the matcher rejected and that are not
+    returned or stored (T-071).
     """
     domain_sem = asyncio.Semaphore(1)
     ddg_strategy = DDGStrategy(connector, domain_sem)
@@ -119,12 +121,14 @@ async def _discover_one_ticker(
         ddg_urls = ddg_result  # type: ignore[assignment]
 
     sitemap_urls: list[DiscoveredURL] = []
+    rejected_not_stored = 0
     if isinstance(sitemap_result, Exception):
         msg = f"Sitemap failed for {company.ticker}: {sitemap_result}"
         log.warning(msg)
         errors.append(msg)
     else:
         sitemap_urls = sitemap_result  # type: ignore[assignment]
+        rejected_not_stored = sitemap_strategy.rejected_not_stored
     if sitemap_strategy.failures:
         # a failed root or child is an error here too (T-076); there is no checkpoint on this route
         msg = f"Sitemap incomplete for {company.ticker}: {summarize_failures(sitemap_strategy.failures)}"
@@ -142,7 +146,7 @@ async def _discover_one_ticker(
             log.warning(msg)
             errors.append(msg)
 
-    return ddg_urls, sitemap_urls, api_urls, errors
+    return ddg_urls, sitemap_urls, api_urls, errors, rejected_not_stored
 
 
 async def run_domain_discovery(
@@ -176,7 +180,13 @@ async def run_domain_discovery(
     async def _handle(company: Company) -> DiscoverResponse:
         async with concurrency_sem:
             t0 = time.monotonic()
-            ddg_urls, sitemap_urls, api_urls, errors = await _discover_one_ticker(
+            (
+                ddg_urls,
+                sitemap_urls,
+                api_urls,
+                errors,
+                rejected_not_stored,
+            ) = await _discover_one_ticker(
                 company, connector, client, date_range, extra_fetch, cache
             )
 
@@ -197,6 +207,7 @@ async def run_domain_discovery(
                 ddg_count=len(ddg_urls),
                 sitemap_count=len(sitemap_urls) + len(api_urls),
                 inserted=inserted,
+                rejected_not_stored=rejected_not_stored,
                 elapsed_seconds=round(time.monotonic() - t0, 3),
                 errors=errors,
                 warnings=list(cache.warnings) if cache else [],

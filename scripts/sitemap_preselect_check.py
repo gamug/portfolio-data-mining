@@ -2,7 +2,7 @@
 
 Today every ticker classes every entry of a domain's sitemap. The design of Work item 15 caches the
 entries once per domain and classes, per ticker, only the *candidates* of a token index. This script
-holds the prototype of that index and every check that the design rests on. **Nothing here writes to
+uses that index (`data_mining.token_index.TokenIndex`, moved to `src/` by `T-071`) and holds every check that the design rests on. **Nothing here writes to
 a database**: the cache is an in-memory SQLite table with the DDL of the design, and ``stored`` opens
 the real file with ``mode=ro``.
 
@@ -30,6 +30,8 @@ Subcommands:
     cache-size  size of the cache table with its indexes (in range, all dates, with titles)
     duplicates  normalized URLs that the sitemap lists twice with different ``lastmod`` values
     stored      read-only on a ``urls.db``: stored cnbc sitemap rows against the crawl
+    production  read-only on a ``urls.db``: the production path (``SitemapRun.select`` + the matcher on
+                the candidates) against the matcher on every entry in range, real connector (T-071)
     probe       crawl one sitemap root of the ft or nasdaq connector (network only; ft takes ~15 min)
 
 Usage:
@@ -42,6 +44,8 @@ Usage:
     PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py duplicates --entries entries.jsonl
     PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py stored --entries entries.jsonl \\
         --db /workspaces/thesis/data/urls.db
+    PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py production --db /path/urls.db \\
+        --tickers-file data/sitemap_preselect_per_ticker.csv --workers 8 --out eq_result.txt
     PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py probe --domain ft.com \\
         --root https://www.ft.com/sitemaps/index.xml
 """
@@ -64,21 +68,25 @@ import tracemalloc
 from collections import defaultdict
 from datetime import UTC, date, datetime
 from multiprocessing import Pool
-from urllib.parse import urlsplit
+from pathlib import Path
+from typing import cast
+
+import httpx
 
 from data_mining import matching as M
 from data_mining.schema import SITEMAP_CACHE_DDL
+from data_mining.token_index import Row, TokenIndex
 from news_collector.config import build_date_range
 from news_collector.connectors.cnbc import CNBCConnector
 from news_collector.connectors.ft import FTConnector
 from news_collector.connectors.nasdaq import NasdaqConnector
-from news_collector.models import SitemapEntry
+from news_collector.models import DateRange, SitemapEntry
+from news_collector.sitemap_cache import Crawl, SitemapRun, build_index
 from news_collector.sp500 import fetch_sp500_companies
 from news_collector.strategies.sitemap import SitemapRSSStrategy
 from news_collector.utils.http import build_client
 from news_collector.utils.url import is_valid_http_url, normalize_url
 
-Row = tuple[str, str | None, str | None]  # normalized url, lastmod (ISO), title
 Pair = tuple[str, str, str | None]  # class, reason, pub_date (ISO)
 
 START = date(2022, 1, 1)
@@ -90,80 +98,7 @@ P_TICKER_URL, P_NAME_S_URL, P_NAME_CORP_URL, P_TITLE, P_NO_LASTMOD = 0.25, 0.4, 
 FAMILIES = ("name", "alias", "weak_ticker", "loose_name", "weak_first_word", "title")
 
 
-def entry_text(url: str, title: str | None) -> str:
-    """The text `classify` reads (the host is never read)."""
-    parts = urlsplit(url)
-    return f"{parts.path} {parts.query} {title or ''}"
-
-
 LAST_STORED = date(2026, 8, 13)  # the last day of the stored KLAC run, for `stored`
-
-
-class TokenIndex:
-    """`flat()` tokens of the entry text -> row ids; a second index for the title alone.
-
-    ``skip`` names anchor families to leave out: only the mutation check uses it, to prove that
-    the equality check fails when an anchor is missing.
-    """
-
-    def __init__(self, rows: list[Row], skip: frozenset[str] = frozenset()) -> None:
-        self.skip = skip
-        self.text: dict[str, list[int]] = defaultdict(list)
-        self.title: dict[str, list[int]] = defaultdict(list)
-        for i, (url, _lastmod, title) in enumerate(rows):
-            for token in set(M.flat(entry_text(url, title)).split()):
-                self.text[token].append(i)
-            if title:
-                for token in set(M.flat(title).split()):
-                    self.title[token].append(i)
-
-    @staticmethod
-    def _rarest(tokens: list[str], index: dict[str, list[int]]) -> list[int]:
-        """Postings of the rarest token: a form needs *all* its tokens, so any one is an anchor."""
-        postings = [index.get(token, []) for token in tokens]
-        return min(postings, key=len) if postings else []
-
-    def _form(self, tokens: list[str]) -> set[int]:
-        """Anchor of a loose-name form. The possessive (`form` + "s") changes only the last token,
-        so a form of 2+ words is anchored on a token other than the last, or on the entries that
-        have the last token or the last token plus `s` (both are valid; the smaller wins)."""
-        if len(tokens) < M.MIN_WORDS:
-            return set(self._rarest(tokens, self.text))
-        head = self._rarest(tokens[:-1], self.text)
-        tail = set(self.text.get(tokens[-1], ())) | set(self.text.get(tokens[-1] + "s", ()))
-        return set(head) if len(head) <= len(tail) else tail
-
-    def candidates(self, company: str, ticker: str) -> set[int]:
-        common = M.COMMON_TICKER_WORDS | M.ABBREVIATIONS
-        found: set[int] = set()
-        name = M.full_name(company)
-        distinctive = (len(name) >= M.MIN_NAME or any(c.isdigit() for c in name)) and (
-            name not in M.STOPWORDS
-        )
-        if distinctive and "name" not in self.skip:
-            found.update(self._rarest(name.split(), self.text))
-        if "alias" not in self.skip:
-            for alias in M.ALIASES.get(ticker, ()):
-                found.update(self._rarest(alias.split(), self.text))
-        if len(ticker) >= M.MIN_TICKER and ticker not in common and "weak_ticker" not in self.skip:
-            found.update(self._rarest(M.flat(ticker).split(), self.text))
-        if "loose_name" not in self.skip:
-            brand = M.flat(
-                M._CAMEL_TAIL.sub("", re.sub(r"\([^)]*\)", " ", company).strip())
-            ).strip()
-            kept = M._kept_name(company)
-            legal = re.sub(r" corp$", " corporation", kept)
-            for form in {name, name.replace(" and ", " "), kept, legal, brand}:
-                if form and M._spelled_enough(form):
-                    found.update(self._form(form.split()))
-        words = company.split(maxsplit=1)
-        first = words[0].strip(",.") if words else ""
-        first_ok = len(first) >= M.MIN_NAME and first.lower() not in M.STOPWORDS
-        if first_ok and "weak_first_word" not in self.skip:
-            found.update(self._rarest(M.flat(first).split(), self.text))
-        if "title" not in self.skip:  # explicit_ticker, upper_ticker, cashtag, abbreviation
-            found.update(self._rarest(M.flat(ticker).split(), self.title))
-        return found
 
 
 # ---------------------------------------------------------------------------------------------
@@ -521,6 +456,111 @@ def cmd_synthetic(args: argparse.Namespace) -> int:
     return status
 
 
+# The production path (T-071, review of PR #99): `SitemapRun.select` + `classify_entries` of the
+# candidates against `classify_entries` of every entry in range, with the real connector; the
+# state is built once per worker (a spawned worker, as on Windows, rebuilds it).
+_PROD: dict = {}
+
+
+def _prod_init(rows: tuple[SitemapEntry, ...], start: date, end: date, domain: str) -> None:
+    _PROD["range"] = DateRange(start=start, end=end)
+    _PROD["run"] = SitemapRun(
+        domain, Crawl("x", start, "x", len(rows)), (), rows, (), build_index(rows)
+    )
+    _PROD["strategy"] = SitemapRSSStrategy(
+        CNBCConnector(httpx.AsyncClient()), cast(httpx.AsyncClient, None), None
+    )
+    _PROD["full"] = [e for e in rows if e.lastmod is None or start <= e.lastmod <= end]
+
+
+def _non_reject(found: list) -> dict[str, tuple]:
+    return {
+        p.url: (p.match_class, p.match_reason or "", p.pub_date)
+        for p in found
+        if p.match_class != "reject"
+    }
+
+
+def _prod_one(company: tuple[str, str]) -> tuple[str, bool, int, int, int]:
+    ticker, name = company
+    strategy: SitemapRSSStrategy = _PROD["strategy"]
+    candidates, in_range, _ = _PROD["run"].select(name, ticker, _PROD["range"])
+    via_index = _non_reject(strategy.classify_entries(candidates, name, ticker))
+    via_full = _non_reject(strategy.classify_entries(_PROD["full"], name, ticker))
+    return ticker, via_index == via_full, len(via_index), len(via_full), in_range
+
+
+def production_compare(
+    rows: tuple[SitemapEntry, ...],
+    companies: list[tuple[str, str]],
+    start: date,
+    end: date,
+    workers: int = 1,
+    domain: str = "cnbc.com",
+) -> list[tuple[str, bool, int, int, int]]:
+    """`(ticker, equal, pairs via the index, pairs via the full scan, entries in range)` per company."""
+    if workers <= 1:
+        _prod_init(rows, start, end, domain)
+        return [_prod_one(c) for c in companies]
+    with Pool(workers, initializer=_prod_init, initargs=(rows, start, end, domain),
+              maxtasksperchild=25) as pool:  # fmt: skip
+        return list(pool.imap_unordered(_prod_one, companies, chunksize=2))
+
+
+def load_cache(db: str, domain: str) -> tuple[date, tuple[SitemapEntry, ...]]:
+    """The entries of the latest complete crawl of `domain`, from a database opened read-only."""
+    if not Path(db).is_file():
+        raise SystemExit(f"the database file does not exist: {db}")
+    con = sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        latest = con.execute(
+            "SELECT started_at, range_start FROM sitemap_crawls "
+            "WHERE domain = ? AND complete = 1 ORDER BY started_at DESC LIMIT 1",
+            (domain,),
+        ).fetchone()
+        if latest is None:
+            raise SystemExit(f"{db} has no complete crawl of {domain}")
+        rows = tuple(
+            SitemapEntry(url=u, lastmod=date.fromisoformat(m) if m else None, title=t)
+            for u, m, t in con.execute(
+                "SELECT url, lastmod, title FROM sitemap_entries "
+                "WHERE domain = ? AND last_seen = ? ORDER BY url",
+                (domain, latest[0]),
+            )
+        )
+    finally:
+        con.close()
+    return date.fromisoformat(latest[1]), rows
+
+
+def cmd_production(args: argparse.Namespace) -> int:
+    start, rows = load_cache(args.db, args.domain)
+    companies, source = load_companies(args.tickers_file)
+    if "TTD" not in {t for t, _ in companies}:
+        companies = [*companies, ("TTD", "The Trade Desk")]
+    out = open(args.out, "w", encoding="utf-8") if args.out else None  # noqa: SIM115
+
+    def say(text: str) -> None:
+        print(text, flush=True)
+        if out:
+            out.write(text + "\n")
+
+    say(f"{args.domain}: {len(rows)} entries, range from {start}; tickers: {source} plus TTD")
+    began = time.monotonic()
+    results = production_compare(rows, companies, start, date.today(), args.workers, args.domain)
+    bad = [r for r in results if not r[1]]
+    say(
+        f"RESULT tickers {len(results)} | pairs via index {sum(r[2] for r in results)}"
+        f" | pairs via full scan {sum(r[3] for r in results)} | mismatching tickers {len(bad)}"
+        f" | {time.monotonic() - began:.0f} s"
+    )
+    for r in bad[:20]:
+        say(f"MISMATCH {r}")
+    if out:
+        out.close()
+    return 1 if bad else 0
+
+
 def cmd_cache_size(args: argparse.Namespace) -> None:
     raw = read_raw(args.entries)
     connector = CNBCConnector(None)  # type: ignore[arg-type]
@@ -730,6 +770,17 @@ def print_deletable(db: sqlite3.Connection, lastmod: dict[str, date | None]) -> 
         print(f"  {label}: {n} ({n / max(len(urls), 1):.1%})")
 
 
+def _add_production_parser(sub: argparse._SubParsersAction) -> None:
+    production = sub.add_parser(
+        "production", help="the production path against the full scan on a urls.db (read-only)"
+    )
+    production.add_argument("--db", required=True)
+    production.add_argument("--domain", default="cnbc.com")
+    production.add_argument("--tickers-file", help="CSV with ticker,name; default: live list")
+    production.add_argument("--workers", type=int, default=4)
+    production.add_argument("--out", help="also write the result lines to this file")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", maxsplit=1)[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -738,6 +789,7 @@ def main() -> None:
     probe = sub.add_parser("probe", help="crawl one ft or nasdaq root (network only)")
     probe.add_argument("--domain", required=True, choices=["ft.com", "nasdaq.com"])
     probe.add_argument("--root", required=True)
+    _add_production_parser(sub)
     for name in ("check", "synthetic", "cache-size", "duplicates", "stored", "timing"):
         cmd = sub.add_parser(name)
         cmd.add_argument("--entries", required=True)
@@ -766,7 +818,8 @@ def main() -> None:
         asyncio.run(cmd_probe(args))
         return
     commands = {"check": cmd_check, "synthetic": cmd_synthetic, "cache-size": cmd_cache_size,
-                "duplicates": cmd_duplicates, "stored": cmd_stored, "timing": cmd_timing}  # fmt: skip
+                "duplicates": cmd_duplicates, "stored": cmd_stored, "timing": cmd_timing,
+                "production": cmd_production}  # fmt: skip
     sys.exit(commands[args.cmd](args) or 0)
 
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import httpx
 
@@ -41,6 +42,16 @@ def _format_duration(seconds: float) -> str:
     if minutes:
         return f"{minutes}m{secs:02d}s"
     return f"{secs}s"
+
+
+def _call_safely(callback: Callable[[Any], object] | None, arg: object, name: str) -> None:
+    """Call a caller's callback; one that raises is logged and never stops the run."""
+    if callback is None:
+        return
+    try:
+        callback(arg)
+    except Exception:
+        log.exception("the %s callback raised", name)
 
 
 def build_connectors(client: httpx.AsyncClient) -> dict[str, BaseConnector]:
@@ -89,6 +100,8 @@ class DiscoveryOrchestrator:
         date_range: DateRange | None = None,
         resume: bool = True,
         refresh_sitemaps: bool = False,
+        progress: Callable[[PartialStats], object] | None = None,
+        on_start: Callable[[int], object] | None = None,
     ) -> DiscoveryStats:
         """
         Run discovery for all (company, domain) combinations.
@@ -104,6 +117,11 @@ class DiscoveryOrchestrator:
                 skip work. Pass False to force a full redo of every pair.
             refresh_sitemaps: Crawl the sitemap of every domain that has one even when its
                 cache is fresh (T-070a). Without it a cache at most 7 days old is used.
+            progress: Called once per finished (company, domain) pair with its `PartialStats`
+                (the CLI's progress bar, T-071); an exception it raises is logged, never fatal.
+            on_start: Called once with the number of pairs that will run (the pending ones: those
+                `resume` skips are not in it), before the sitemap caches are prepared, so a bar
+                gets its real total (same rule: an exception is logged, never fatal).
 
         Returns:
             Aggregated DiscoveryStats.
@@ -137,6 +155,7 @@ class DiscoveryOrchestrator:
         pending_pairs = [(c, d) for c, d in all_pairs if (c.ticker, d) not in skip_pairs]
         stats.skipped_pairs = len(all_pairs) - len(pending_pairs)
         total_tasks = len(pending_pairs)
+        _call_safely(on_start, total_tasks, "on_start")
 
         log.info(
             "\n\n======================================================================\n"
@@ -182,6 +201,7 @@ class DiscoveryOrchestrator:
             progress_log.info("-> %s / %s: started", company.ticker, domain)
             result = await self._run_one_with_sem(global_sem, company, domain, date_range)
             completed += 1
+            _call_safely(progress, result, "progress")
             elapsed = time.monotonic() - t0
             # ETA is based on this session's own throughput (elapsed/completed) since
             # that's the only timing data available - only remaining/total_tasks (this
@@ -220,9 +240,11 @@ class DiscoveryOrchestrator:
 
         stats.elapsed_seconds = time.monotonic() - t0
         log.info(
-            "Discovery complete: inserted=%d (of which rejected=%d, never fetched), duplicates=%d, promoted=%d, elapsed=%.1fs",
+            "Discovery complete: inserted=%d (of which rejected=%d, never fetched), "
+            "sitemap rejects not stored=%d, duplicates=%d, promoted=%d, elapsed=%.1fs",
             stats.total_inserted,
             stats.total_rejected,
+            stats.total_rejected_not_stored,
             stats.duplicate_count,
             stats.total_promoted,
             stats.elapsed_seconds,
@@ -300,11 +322,13 @@ class DiscoveryOrchestrator:
 
         sitemap_urls: list[DiscoveredURL] = []
         sitemap_failures: list[str] = list(sitemap_strategy.failures)
+        rejected_not_stored = 0
         if isinstance(sitemap_results, Exception):
             log.warning("Sitemap failed for %s/%s: %s", company.ticker, domain, sitemap_results)
             sitemap_failures.append(f"sitemap strategy raised: {sitemap_results}")
         else:
             sitemap_urls = sitemap_results  # type: ignore[assignment]
+            rejected_not_stored = sitemap_strategy.rejected_not_stored
 
         # StockTwits and Yahoo Finance have API fetch methods — use them too
         api_urls = await self._fetch_via_extra_api(connector, domain, company, date_range)
@@ -345,15 +369,18 @@ class DiscoveryOrchestrator:
         partial.duplicate_count = duplicate_count
         partial.promoted_count = self._queue.last_promotion.promoted
         partial.rejected_count = self._queue.last_inserted_rejected
+        partial.rejected_not_stored = rejected_not_stored
 
         log.info(
-            "%s / %s: ddg=%d sitemap/api=%d inserted=%d (of which rejected=%d) dupes=%d promoted=%d",
+            "%s / %s: ddg=%d sitemap/api=%d inserted=%d (of which rejected=%d) "
+            "sitemap rejects not stored=%d dupes=%d promoted=%d",
             company.ticker,
             domain,
             partial.ddg_count,
             partial.sitemap_count,
             inserted,
             partial.rejected_count,
+            partial.rejected_not_stored,
             duplicate_count,
             partial.promoted_count,
         )

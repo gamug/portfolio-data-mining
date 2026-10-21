@@ -67,6 +67,7 @@ async def run_all(
         total_discovered=stats.total_discovered,
         total_inserted=stats.total_inserted,
         total_rejected=stats.total_rejected,
+        total_rejected_not_stored=stats.total_rejected_not_stored,
         duplicate_count=stats.duplicate_count,
         ddg_count=stats.ddg_count,
         sitemap_count=stats.sitemap_count,
@@ -130,9 +131,10 @@ async def reclass_sitemap(
     complete crawl that covers the range is an error line: this route never crawls (use a
     discovery with `refresh_sitemaps` for that).
 
-    `tickers` is required and at most `MAX_RECLASS_TICKERS` as sent (the request model, a 422 otherwise): the classification takes about
-    4.6 s a ticker for `cnbc.com` and this request has no progress and cannot be stopped, and an
-    `apply` writes from the gateway process while collectors may be writing. The whole S&P 500 is
+    `tickers` is required and at most `MAX_RECLASS_TICKERS` as sent (the request model, a 422 otherwise): the request has no
+    progress and cannot be stopped, and an `apply` writes from the gateway process while collectors
+    may be writing (the classification itself takes about 0.04 s a ticker for `cnbc.com`, about
+    4.6 s with `full_scan`). The whole S&P 500 is
     the CLI's job (`reclass-sitemap`, with a progress bar).
     """
     try:
@@ -147,6 +149,7 @@ async def reclass_sitemap(
         date_range,
         domains=req.domains,
         apply=req.apply,
+        full_scan=req.full_scan,
     )
     return _reclass_response(report, date_range)
 

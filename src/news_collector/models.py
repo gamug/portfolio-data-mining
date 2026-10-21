@@ -156,6 +156,9 @@ class PartialStats:
         0  # newly inserted matcher-rejected rows (part of inserted_count, never fetched)
     )
     promoted_count: int = 0  # stored rows whose match class rose (rediscovery)
+    # sitemap pairs the matcher rejected and the run did not store (T-071); `rejected_count` is
+    # the rejected rows it did store (ddg, rss, wayback, and a sitemap read live, not from the cache)
+    rejected_not_stored: int = 0
     error: str | None = None
     # The error is the domain's (the sitemap cache of the domain is unusable), the same for every
     # pair of it: the run reports it once per domain. Each pair is still not checkpointed.
@@ -171,6 +174,8 @@ class DiscoveryStats:
     duplicate_count: int = 0
     total_promoted: int = 0
     total_rejected: int = 0  # part of total_inserted/total_discovered, never fetched
+    # sitemap pairs read from the cache that the matcher rejected and the run did not store (T-071)
+    total_rejected_not_stored: int = 0
     ddg_count: int = 0
     sitemap_count: int = 0
     by_domain: dict[str, int] = field(default_factory=dict)
@@ -201,6 +206,7 @@ class DiscoveryStats:
         self.duplicate_count += partial.duplicate_count
         self.total_promoted += partial.promoted_count
         self.total_rejected += partial.rejected_count
+        self.total_rejected_not_stored += partial.rejected_not_stored
         self.ddg_count += partial.ddg_count
         self.sitemap_count += partial.sitemap_count
         self.by_domain[partial.domain] = (

@@ -219,7 +219,7 @@ async def test_api_route_lists_a_failed_root_in_errors(monkeypatch: pytest.Monke
     connector.config.sitemap_roots = [_ROOT]
     connector.config.rss_feeds = []
     connector.config.wayback_fallback = False
-    _, _, _, errors = await _common._discover_one_ticker(
+    _, _, _, errors, _ = await _common._discover_one_ticker(
         Company(ticker="ACME", name="Acme"), connector, MagicMock(), _RANGE, None
     )
     assert len(errors) == 1
