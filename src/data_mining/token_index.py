@@ -1,6 +1,6 @@
 """The token index that preselects the candidate sitemap entries of one company (T-068, T-071).
 
-Today (before `T-071`) every ticker classed every entry of a domain's sitemap, about 4.6 s a ticker
+Before `T-071` every ticker classed every entry of a domain's sitemap, about 4.6 s a ticker
 for `cnbc.com`. The design of Work item 15 keeps the entries once per domain in the cache and, per
 ticker, classes only the *candidates* of this index. **The index preselects; it never decides**: every
 candidate is classed by `data_mining.matching.classify`, and the result must equal the full scan's

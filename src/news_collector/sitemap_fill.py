@@ -1,7 +1,8 @@
 """Fill the sitemap cache of one domain, with no discovery (T-073, the step before gate G3).
 
-The cache is filled by the first run that needs it. On the real file that run is a discovery, which
-must not happen for `cnbc.com` until `T-071` stops storing rejects, so this does only the crawl:
+The cache is filled by the first run that needs it. On the real file that run was to be a discovery,
+which could not run for `cnbc.com` until `T-071` stopped storing rejects (it has since: PR #99, and
+the first discovery ran 2026-10-21), so this does only the crawl:
 `SitemapCache.begin` writes `sitemap_crawls` and `sitemap_entries`, and nothing else in the file.
 A backup that matches the file is required first (the caller says it is a rehearsal copy
 otherwise), and the pipeline tables are fingerprinted before and after to show they were not touched.
