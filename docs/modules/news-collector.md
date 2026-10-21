@@ -618,6 +618,26 @@ by the G3 fill; tickers `KLAC AAPL ON A IT ARE TTD MSFT NVDA CRM`; `--no-resume`
 | `sitemap_crawls` | 1 row | 1 row (the cache was fresh) | **2 rows**: the discovery wrote a crawl row (`2026-10-21T00:12:57`), the first run evidence of the `T-070b` guard on a copy |
 | sitemap rejects not stored | n/a | 1,090,441 | 1,090,441 |
 
+**The same runs per unit, to compare them.** The workload is the same in all three: 10 tickers × 109,550 cached entries = **1,095,500 pairs evaluated**, and
+all three add the same 198 `accept`/`review` rows.
+
+| per … | full scan (before) | `T-071` | `T-071` with `--refresh-sitemaps` |
+|---|---|---|---|
+| time per pair evaluated | 243 µs | **3.65 µs** | 15.6 µs |
+| time per ticker | 26.6 s | **0.40 s** | 1.71 s |
+| pairs evaluated per second | 4,115 | **273,875** | 64,064 |
+| time per `accept`/`review` row added | 1,344 ms | **20 ms** | 86 ms |
+| rows stored per 1,000 pairs | 968.2 | **0.18** | 0.18 |
+| rejects stored per 1,000 pairs | 968.0 | **0** | 0 |
+| file growth per pair evaluated | 394 B | **0.13 B** | 0.60 B |
+| file growth per ticker | 43.2 MB | **14 KB** | 66 KB |
+
+Per pair it is **66 times faster** (15.6 times with the forced crawl, whose 14 requests and index build are in that figure), stores **5,357 times fewer rows** and
+grows the file **3,013 times less**; before, 96.8% of the pairs evaluated became stored rows, almost all rejects, and now 0.018% do, none a reject. Part of the old time
+is the matcher and part the queue writing 1.06 million rows: the matcher alone costs about 42 µs a pair (`T-068`), 46 s of the 266 s, so about 220 s were the queue
+(an inference from that measurement, not a timing taken in this run). The file growth per stored row is not compared: 407 B a row before (the 420 B estimated in
+2026-10), and for 198 rows the 143 KB is the granularity of the pages and the WAL, not a rate.
+
 **The `accept`/`review` pairs are the same**: the 17,235 stored `cnbc.com` sitemap pairs of the 10 tickers (`accept`/`name` 16,598, `accept`/`upper_ticker` 515,
 `review`/`weak_first_word` 61, `review`/`weak_ticker` 61) are identical in the two runs by URL, ticker, class, reason and `pub_date`. The 1,090,441 counted rejects
 reconcile with the baseline: 1,060,484 it stored, 29,941 that were already stored as rejects (29,932 `sitemap`, 9 `ddg`), and 13 stored `accept`/`review` rows that the
