@@ -646,6 +646,19 @@ reconciliation is exact: 1,060,484 + 29,957 = 1,090,441 (29,957 = the 34,818 pai
 matcher now classes `reject`; the other 4,861 stay `accept`/`review`). The run on the real file, the first runtime evidence of the
 guard there, is the maintainer's after the merge and a backup.
 
+**Equality on the whole universe (2026-10-21).** Run read-only on the real `cnbc.com` cache (the crawl of 2026-10-20 19:15, 109,550 entries, range from 2022-01-01): the 504
+tickers of `data/sitemap_preselect_per_ticker.csv` (plus `TTD`) through the production path (`SitemapRun.select` and the matcher on the candidates) against the matcher on every
+entry in range, with the real `CNBCConnector`: **38,104 `accept`/`review` pairs by the index, 38,104 by the full scan, 0 mismatching tickers** (class, reason and `pub_date` per
+URL), 644 s on 8 workers. To repeat it (it reads `sitemap_crawls` and `sitemap_entries` with `mode=ro` and writes nothing to the database; about 3 GB of memory a worker):
+
+```bash
+PYTHONPATH=src uv run python scripts/sitemap_preselect_check.py production --db /path/to/urls.db \
+    --tickers-file data/sitemap_preselect_per_ticker.csv --workers 8 --out eq_result.txt
+```
+
+The last line is `RESULT tickers N | pairs via index X | pairs via full scan X | mismatching tickers 0`; the exit status is 1 if a ticker differs. Run it after any change to
+`TokenIndex.candidates` or to `data_mining.matching`.
+
 **Progress.** `discover` shows a `tqdm` bar over the (company, domain) pairs (the orchestrator calls its `progress` callback once per finished pair;
 a callback that raises is logged and never stops the run; `on_start` gives it the number of pairs that will run, so under `--resume` the total is the pending pairs, not the whole grid). The bar is off when the output is not a terminal, so it never writes into a log or a pipe.
 
@@ -662,7 +675,7 @@ uv run python cli/news_collector_cli.py reclass-sitemap --sp500 SP500.csv       
 # write: enqueue the pairs that are now accept/review (promote-only, through the discovery's own write path)
 uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
 # the same on the API: POST /discovery/reclass-sitemap {"tickers": ["AAPL"], "apply": false}
-#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: the request has no progress and cannot be stopped, and an `apply` writes from the gateway process (about 0.4 s a ticker for cnbc.com; with `full_scan` about 4.6 s));
+#   the route needs `tickers` (at most `MAX_RECLASS_TICKERS`, 50 today, counted as sent: the request has no progress and cannot be stopped, and an `apply` writes from the gateway process (about 0.04 s a ticker for cnbc.com, 2 s for 50; with `full_scan` about 4.6 s a ticker));
 #   the whole S&P 500 is the CLI's job, which shows a progress bar and logs one line per ticker
 ```
 
@@ -676,8 +689,10 @@ uv run python cli/news_collector_cli.py reclass-sitemap --tickers AAPL --apply
   `skipped` row goes back to `pending`.
 - **Names.** `--tickers` are named as in `discover` (the S&P 500 list and `universe.db`: a network request for the list unless
   `--sp500 CSV` is given); the sitemap itself is never fetched.
-- **Cost.** Since `T-071` the token index preselects the candidates and only those are classed: about 0.4 s a ticker for `cnbc.com`
-  (the 10-ticker run of "Matching from the cache (T-071)"), so 503 tickers take minutes, and a `tqdm` bar shows the progress. `--full-scan`
+- **Cost.** Since `T-071` the token index preselects the candidates and only those are classed: about **0.04 s a ticker** for `cnbc.com`
+  (`select` + classify, measured on the real cache: 0.036 s on average and 0.079 s at most over 20 calls), so 503 tickers take about 20 s of CPU, plus
+  the index build (1.6 s, once) and the inserts of the pairs that are new; a `tqdm` bar shows the progress. (A *discovery* takes about 0.4 s a ticker, the
+  10-ticker run of "Matching from the cache (T-071)", because it also writes to the queue: do not use that figure for the re-class.) `--full-scan`
   classes every entry instead (the old full scan, about 4.6 s a ticker: 503 tickers take about 40 minutes).
 - **Reject pairs** are counted in the output (`reject`) and never stored.
 - **Database path.** A path that is not an existing file is an error line and nothing is created, in a dry run and with

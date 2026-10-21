@@ -13,8 +13,8 @@ Without `apply` it writes nothing (the database is opened read-only) and says wh
 and promote.
 
 The classification is `T-071`'s: the token index preselects the candidates of a company and only
-those are classed (seconds for 503 tickers, where the full scan took about 4.6 s a ticker for
-`cnbc.com`); the `accept`/`review` pairs are the full scan's, which the equality tests prove.
+those are classed (about 0.04 s a ticker, about 20 s for 503 tickers, where the full scan took about 4.6 s a
+ticker for `cnbc.com`); the `accept`/`review` pairs are the full scan's, which the equality tests prove.
 """
 
 from __future__ import annotations

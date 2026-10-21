@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from data_mining import matching as M
+from data_mining.schema import SITEMAP_CACHE_DDL
 from news_collector.models import SitemapEntry
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
@@ -246,3 +247,92 @@ def test_redated_counts_old_urls_in_the_range() -> None:
 def test_index_memory_reports_rows_and_index() -> None:
     rows = [(e.url, "2024-05-01", None) for e in _base()]
     assert "token index" in mod.index_memory(rows)
+
+
+# ---- `production`: the production path against the full scan on a urls.db (T-071) ----------
+
+START = date(2022, 1, 1)
+
+
+def _cache_db(path: Path, rows: list[SitemapEntry]) -> str:
+    db = sqlite3.connect(path)
+    db.executescript(SITEMAP_CACHE_DDL)
+    db.execute(
+        "INSERT INTO sitemap_crawls (domain, started_at, finished_at, complete, range_start, "
+        "signature, entries, failures) VALUES ('cnbc.com', '2026-10-20T19:15:41', "
+        "'2026-10-20T19:16:00', 1, '2022-01-01', 'sig', ?, 0)",
+        (len(rows),),
+    )
+    db.executemany(
+        "INSERT INTO sitemap_entries (domain, url, lastmod, title, first_seen, last_seen) "
+        "VALUES ('cnbc.com', ?, ?, ?, '2026-10-20T19:15:41', '2026-10-20T19:15:41')",
+        [(e.url, e.lastmod.isoformat() if e.lastmod else None, e.title) for e in rows],
+    )
+    db.commit()
+    db.close()
+    return str(path)
+
+
+def _corpus() -> list[SitemapEntry]:
+    """The synthetic corpus with one entry per URL, as a cache holds them (the table's key)."""
+    return list(
+        {e.url: e for e in reversed(mod.synthetic_corpus(_base(), COMPANIES, n=1500))}.values()
+    )
+
+
+def test_production_compare_finds_the_full_scan_pairs_through_the_index() -> None:
+    results = mod.production_compare(tuple(_corpus()), COMPANIES, START, date(2026, 10, 21))
+    assert [r[0] for r in results] == [t for t, _ in COMPANIES]
+    assert all(r[1] for r in results)  # equal, ticker by ticker
+    assert sum(r[2] for r in results) == sum(r[3] for r in results) > MIN_PAIRS
+
+
+def test_production_compare_fails_when_the_index_loses_a_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mutation: an index that returns no candidate must be caught (the check can fail)."""
+    monkeypatch.setattr(mod.TokenIndex, "candidates", lambda *_a, **_k: set())
+    results = mod.production_compare(tuple(_corpus()), COMPANIES, START, date(2026, 10, 21))
+    assert any(not r[1] for r in results)
+
+
+def test_production_reads_the_database_read_only_and_writes_the_result_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    db_path = _cache_db(tmp_path / "urls.db", _corpus())
+    tickers = tmp_path / "t.csv"
+    tickers.write_text("ticker,name\n" + "".join(f"{t},{n}\n" for t, n in COMPANIES))
+    out = tmp_path / "result.txt"
+    before = hashlib.sha256(Path(db_path).read_bytes()).hexdigest()
+    code = mod.cmd_production(
+        argparse.Namespace(
+            db=db_path, domain="cnbc.com", tickers_file=str(tickers), workers=1, out=str(out)
+        )
+    )
+    assert code == 0
+    assert "mismatching tickers 0" in out.read_text()
+    assert "RESULT tickers" in capsys.readouterr().out
+    assert hashlib.sha256(Path(db_path).read_bytes()).hexdigest() == before
+
+
+def test_production_refuses_a_missing_file_and_a_database_without_the_crawl(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit, match="does not exist"):
+        mod.load_cache(str(tmp_path / "nope.db"), "cnbc.com")
+    empty = sqlite3.connect(tmp_path / "empty.db")
+    empty.executescript(SITEMAP_CACHE_DDL)
+    empty.close()
+    with pytest.raises(SystemExit, match="no complete crawl"):
+        mod.load_cache(str(tmp_path / "empty.db"), "cnbc.com")
+
+
+def test_production_subcommand_is_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[argparse.Namespace] = []
+    monkeypatch.setattr(mod, "cmd_production", lambda a: seen.append(a) or 0)
+    monkeypatch.setattr(sys, "argv", ["x", "production", "--db", "u.db", "--workers", "2"])
+    with pytest.raises(SystemExit) as stop:
+        mod.main()
+    assert stop.value.code == 0
+    assert seen[0].db == "u.db"
+    assert seen[0].workers == 2

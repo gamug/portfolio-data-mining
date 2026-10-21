@@ -133,7 +133,7 @@ async def reclass_sitemap(
 
     `tickers` is required and at most `MAX_RECLASS_TICKERS` as sent (the request model, a 422 otherwise): the request has no
     progress and cannot be stopped, and an `apply` writes from the gateway process while collectors
-    may be writing (the classification itself takes about 0.4 s a ticker for `cnbc.com`, about
+    may be writing (the classification itself takes about 0.04 s a ticker for `cnbc.com`, about
     4.6 s with `full_scan`). The whole S&P 500 is
     the CLI's job (`reclass-sitemap`, with a progress bar).
     """
