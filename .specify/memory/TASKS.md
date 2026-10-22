@@ -64,6 +64,27 @@ Requested by `portfolio-financial-analysis` for its `T-149` (filing identity):
 
 - [ ] **T-045** Add filer CIK (10-digit zero-padded string) and period of report ("YYYY-MM-DD" or null) to `_filing_to_dict` in `src/sec_edgar/agent.py`. Update docstrings in `agent.py`, OpenAPI route descriptions in `apps/sec_edgar_api.py`, `SPEC.md` FR-004, and `docs/modules/sec-edgar.md` documenting the new fields and that `{ticker}` accepts ticker or CIK. Add hermetic unit tests in `tests/sec_edgar/test_agent.py`. → `PLAN.md` Work item 8.
 
+## Work item 16 — The gateway keeps an untagged duration column, and the financials payload carries the filing's own filed facts (T-159b)
+
+Requested by `portfolio-financial-analysis`'s T-143 pilot (part A, the reviewer's empty-values
+finding, §3 "F0" and §2 "the filed facts in the payload"): the gateway drops every
+non-dimensional row of an untagged income-statement or cash-flow column (a 16/24-week filer's
+quarter or year-to-date column, which `edgartools` renders as a bare date), and the pilot's
+downstream fix needs the filing's own facts in the payload.
+
+- [ ] **T-159b** In `src/sec_edgar/agent.py`, look an untagged column on a duration statement
+      up as a period of unknown length (the filed non-dimensional facts of the concept that end
+      on the column's date, at most 371 days long, plus the instants at that date): a unique
+      matching period length keeps the value, two matching lengths leave the cell alone, no
+      matching fact drops it as before; a tagged column and a balance-sheet row are unchanged.
+      Add `filed_facts` (the filing's own non-dimensional, numeric facts for the statements'
+      dates, each with its own value) and its `_safe_filed_facts` wrapper, and return them
+      additively from `get_financials` as `data["filed_facts"]` / `data["filed_facts_error"]`.
+      Update the docstrings, the OpenAPI route description in `apps/sec_edgar_api.py`,
+      `SPEC.md` FR-004 and `docs/modules/sec-edgar.md`. Add hermetic unit tests in
+      `tests/sec_edgar/test_agent.py` with facts captured live in
+      `tests/sec_edgar/fixtures/`. → `PLAN.md` Work item 16.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once

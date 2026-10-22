@@ -142,7 +142,13 @@ def edgar_latest_filing(ticker: str, form: FilingForm) -> dict:
     summary="Get financial statements",
     description=(
         "Fetch rendered financial statements for a filing. "
-        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros."
+        "The path parameter '{ticker}' accepts either a ticker symbol or an SEC CIK number with or without leading zeros. "
+        "The response carries the three statements, the corrections made to them, the "
+        "reconciliation errors, the cover-page share count ('cover'), and (T-159b) the filing's "
+        "own filed facts ('filed_facts': one entry per non-dimensional, numeric XBRL fact of "
+        "the filing whose period ends on one of the statements' dates, each with its own "
+        "'concept', 'value', 'unit', 'period_start', 'period_end' and 'decimals'; "
+        "'filed_facts_error' carries the read error, null on success)."
     ),
 )
 def edgar_financials(

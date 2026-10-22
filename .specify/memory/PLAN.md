@@ -1393,6 +1393,56 @@ so a full run of the 503 tickers would have added about 503 × 578,000 ≈ 290 m
 
 The decisions the maintainer takes at G1 are the six of the **G1 summary** at the top of this section.
 
+## Work item 16 — The gateway keeps an untagged duration column, and the financials payload carries the filing's own filed facts (code, T-159b)
+
+**Status: in progress. `T-159b` active.**
+
+**Why**: Requested by `portfolio-financial-analysis`'s T-143 pilot (part A, the reviewer's
+empty-values finding, §3 "F0" and §2 "the filed facts in the payload"). The pilot measured
+17,363 values the filing itself holds and the gateway does not serve; 499 of them are dropped
+by the gateway's own **untagged-column defect**: `edgartools` renders a 16/24-week filer's
+quarter or year-to-date column as a bare date (no tag -- its day-span falls outside every
+bucket it labels), the gateway looked that column up as an *instant*, found nothing for a
+flow, and dropped the row -- the filer's own filed value, served and then thrown away. The
+pilot's downstream fix (its `T-159c`) needs the filing's own facts to fill the rest (F1-F3,
+F5b), so the payload has to carry them.
+
+**Approach**:
+1. In `src/sec_edgar/agent.py`, treat an untagged column on a duration statement (income
+   statement, cash flow) as a period of unknown length: look up the filed non-dimensional
+   facts of the concept that *end* on the column's date -- the durations of at most 371 days
+   (PER-08's 52/53-week year) and the instants filed at that date (a cash-flow statement's
+   "cash at end of period" row is an instant fact rendered under a duration column). A fact
+   whose value matches and whose period length is unique among the matching facts identifies
+   the cell: the rendered value stands (T-042's treatment of a matching value -- the same
+   magnitude, the rendered sign kept). Two matching facts of *different* lengths are
+   ambiguous and the cell is left alone (never guessed); no matching fact drops the value, as
+   before. A tagged column and a balance-sheet row keep their own lookups and are unchanged.
+2. Add `filed_facts(xbrl, period_ends)` and its `_safe_filed_facts` wrapper: the filing's own
+   non-dimensional, numeric facts whose period ends on one of the statements' dates, each with
+   its concept, its own raw value, its unit, its period start/end and its `decimals`.
+   `get_financials` returns them additively as `data["filed_facts"]`, with
+   `data["filed_facts_error"]` carrying a read failure (never a failed response, and never an
+   entry in `reconciliation_errors`).
+3. Update the docstrings, the OpenAPI route description in `apps/sec_edgar_api.py`,
+   `SPEC.md` FR-004 and `docs/modules/sec-edgar.md`.
+4. Add hermetic tests in `tests/sec_edgar/test_agent.py`, with the facts captured live in
+   `tests/sec_edgar/fixtures/`: an untagged 168-day column kept, an untagged column matching
+   facts of two lengths left alone, a tagged column and a balance-sheet row unchanged, the
+   filed facts present and non-dimensional only, and the `_safe_` wrapper isolating a failure.
+
+**Acceptance criteria**:
+- An untagged income-statement or cash-flow column is served again: the rows the gateway used
+  to drop on the 32 filings with untagged columns are served, with the SEC's own value.
+- No tagged column and no balance-sheet row changes (the same values, the same drops).
+- A cell whose filed facts match at two different period lengths is left alone, never guessed.
+- `data["filed_facts"]` holds the filing's own non-dimensional, numeric facts for the
+  statements' dates, each with its own value (never derived) -- and no dimensional fact and
+  no non-numeric fact.
+- A failed filed-facts read returns an empty list plus `filed_facts_error`, never a failed
+  response.
+- All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13 and 14 are closed (merged or approved; tasks in `CHANGELOG.md`). Work

@@ -71,6 +71,15 @@ _DURATION_DAY_BUCKETS = {"Q": (80, 100), "YTD": (175, 285), "FY": (351, 10**6)}
 # -- XBRL monetary facts are whole numbers; this only absorbs float round-tripping, not a real
 # discrepancy.
 _VALUE_MATCH_TOLERANCE = 1.0
+# T-159b: the longest period an **untagged** column may hold -- PER-08's 52/53-week year.
+# `edgartools` labels a duration column "(Q1)".."(Q4)", "(YTD)" or "(FY)" only when the period's
+# day-span falls in one of the buckets above (:data:`_DURATION_DAY_BUCKETS`); a 16/24-week
+# filer's quarter or year-to-date column falls outside every one of them and is rendered as a
+# bare date, with no tag to say how long the period is.
+_MAX_UNTAGGED_DURATION_DAYS = 371
+# The statements whose columns are durations. A balance-sheet column is an instant, so it
+# keeps its own lookup (:func:`_instant_fact_values`).
+_DURATION_STATEMENTS = frozenset({"income_statement", "cash_flow"})
 
 # Row-metadata keys edgartools' income-statement dataframe carries alongside each period's
 # value column -- everything else on a row is a period column (e.g. "2023-12-31 (FY)").
@@ -307,6 +316,128 @@ def _filed_nondimensional_values(
     return _duration_fact_values(xbrl, concept, end_date, duration_kind)
 
 
+def _untagged_column_candidates(
+    xbrl: Any, concept: str, end_date: str
+) -> list[tuple[float, int | None]]:
+    """T-159b: the filed, non-dimensional facts of *concept* that **end** on *end_date*, each
+    with the length of its own period -- the durations of at most
+    :data:`_MAX_UNTAGGED_DURATION_DAYS` days (in days) and the instants filed at that date
+    (length ``None``).
+
+    An untagged column's duration is unknown (see :data:`_MAX_UNTAGGED_DURATION_DAYS`), so the
+    candidates are every fact that could be the column's: the quarter's own fact, the
+    year-to-date's, and the instant a cash-flow statement's "cash at end of period" row is
+    filed as (an instant fact rendered under a duration column -- the shape
+    :func:`_filed_nondimensional_values`' own docstring documents)."""
+    candidates: list[tuple[float, int | None]] = []
+    durations = (
+        _new_nondimensional_query(xbrl, concept)
+        .by_date_range(end_date=end_date, exact=True)
+        .to_dataframe()
+    )
+    if not durations.empty and "value" in durations.columns:
+        for _, row in durations.iterrows():
+            value = _numeric(row.get("value"))
+            days = _duration_days(row.get("period_start"), row.get("period_end"))
+            if value is None or days is None or not (0 < days <= _MAX_UNTAGGED_DURATION_DAYS):
+                continue
+            candidates.append((value, days))
+    instants = (
+        _new_nondimensional_query(xbrl, concept)
+        .by_instant_date(end_date, exact=True)
+        .to_dataframe()
+    )
+    if not instants.empty and "value" in instants.columns:
+        for _, row in instants.iterrows():
+            value = _numeric(row.get("value"))
+            if value is None:
+                continue
+            candidates.append((value, None))
+    return candidates
+
+
+def _reconcile_untagged_cell(
+    xbrl: Any, concept: str, end_date: str, rendered_value: float
+) -> tuple[float | None, str | None]:
+    """T-159b: the value an **untagged** column's cell should carry, and the reason it changed
+    (``None`` = unchanged).
+
+    An untagged column on a duration statement is a period of unknown length, so the cell is
+    checked against every filed non-dimensional fact of the concept that ends on the column's
+    date (:func:`_untagged_column_candidates`), matched by magnitude -- T-042's own comparison.
+
+    * a fact whose value matches, and whose period length is **unique** among the matching
+      facts, identifies the cell's fact: the rendered value stands (T-042's treatment of a
+      matching value -- the same magnitude, the rendered sign kept);
+    * two matching facts of **different** lengths (a quarter and a year-to-date whose values
+      happen to be equal) cannot be told apart: the cell is left alone, never guessed;
+    * no filed fact matches: the value was never filed non-dimensionally and is dropped, as
+      before."""
+    matching = [
+        (value, length)
+        for value, length in _untagged_column_candidates(xbrl, concept, end_date)
+        if abs(abs(value) - abs(rendered_value)) <= _VALUE_MATCH_TOLERANCE
+    ]
+    if not matching:
+        return None, "no_filed_nondimensional_fact"
+    if len({length for _, length in matching}) > 1:
+        # Two facts of different lengths (a quarter and a year-to-date whose values happen to
+        # be equal): the cell's fact cannot be told apart -- left alone, never guessed.
+        return rendered_value, None
+    if len({value for value, _ in matching}) > 1:
+        # Two facts of the same length with different values, both matching the rendered
+        # value's magnitude: the same, left alone.
+        return rendered_value, None
+    return rendered_value, None
+
+
+def _reconcile_period_cell(
+    xbrl: Any, concept: str, end_date: str, duration_kind: str | None, rendered_value: float
+) -> tuple[float | None, str | None]:
+    """T-042: the value a **tagged** duration column's or a balance-sheet instant column's
+    cell should carry, and the reason it changed (``None`` = unchanged).
+
+    The filed fact is looked up by the column's own period (a duration kind, or an instant for
+    the balance sheet) -- :func:`_filed_nondimensional_values`. More than one candidate is
+    ambiguous and the cell is left alone; no candidate drops the value; one candidate that
+    differs from the rendered value replaces it (T-042's correction)."""
+    filed_values = _filed_nondimensional_values(xbrl, concept, end_date, duration_kind)
+    if len(filed_values) > 1:
+        return rendered_value, None
+    if not filed_values:
+        return None, "no_filed_nondimensional_fact"
+    filed_value = filed_values[0]
+    if abs(abs(filed_value) - abs(rendered_value)) <= _VALUE_MATCH_TOLERANCE:
+        # Same magnitude, opposite sign: edgartools' presentation layer applies a
+        # per-concept sign convention (contra accounts, cash-flow decreases, etc, driven by
+        # the row's own "weight"/"preferred_sign" metadata) on top of the filed fact's raw
+        # tagged sign -- a genuinely filed value, not a defect. The full-universe scan that
+        # found this defect explicitly excluded these ("after excluding sign-convention
+        # flips"); flipping the sign back here would silently reintroduce that false-positive
+        # shape.
+        return rendered_value, None
+    corrected_value = (
+        math.copysign(abs(filed_value), rendered_value) if rendered_value else filed_value
+    )
+    return corrected_value, "filed_value_mismatch"
+
+
+def _reconciled_cell(
+    xbrl: Any,
+    concept: str,
+    statement: str,
+    end_date: str,
+    duration_kind: str | None,
+    rendered_value: float,
+) -> tuple[float | None, str | None]:
+    """The value one rendered cell should carry, and the reason it changed (``None`` =
+    unchanged) -- :func:`_reconcile_untagged_cell` for an untagged column on a duration
+    statement (T-159b), :func:`_reconcile_period_cell` for every other column (T-042)."""
+    if duration_kind is None and statement in _DURATION_STATEMENTS:
+        return _reconcile_untagged_cell(xbrl, concept, end_date, rendered_value)
+    return _reconcile_period_cell(xbrl, concept, end_date, duration_kind, rendered_value)
+
+
 def reconcile_with_filed_facts(
     rows: list[dict[str, Any]],
     xbrl: Any,
@@ -327,6 +458,14 @@ def reconcile_with_filed_facts(
     A column whose name doesn't parse as a period, or where more than one filed value matches
     equally well (ambiguous -- can't tell which one the rendered value should be compared
     against), is left alone: never guess.
+
+    **T-159b:** on a duration statement (income statement, cash flow) an **untagged** column --
+    one `edgartools` could not label "(Q1)".."(Q4)"/"(YTD)"/"(FY)", e.g. a 16/24-week filer's
+    quarter or year-to-date column -- is a period of unknown length, not an instant. Such a
+    column used to be looked up as an instant, found nothing (a flow is not filed as an
+    instant), and be dropped. It is now checked against every filed non-dimensional fact of the
+    concept that ends on the column's date (see :func:`_reconcile_untagged_cell`); a balance
+    sheet's own instant lookup and every tagged column are unchanged.
 
     Returns ``(rows, corrections)`` -- a new list (*rows* argument not mutated) and one
     ``{"statement", "concept", "column", "original", "corrected", "rule": "T-042", "reason"}``
@@ -349,46 +488,21 @@ def reconcile_with_filed_facts(
             if parsed is None:
                 continue
             end_date, duration_kind = parsed
-            filed_values = _filed_nondimensional_values(xbrl, concept, end_date, duration_kind)
-            if len(filed_values) > 1:
-                continue
-            if not filed_values:
-                rows[i][column] = None
-                corrections.append(
-                    {
-                        "statement": statement,
-                        "concept": concept,
-                        "column": column,
-                        "original": rendered_value,
-                        "corrected": None,
-                        "rule": "T-042",
-                        "reason": "no_filed_nondimensional_fact",
-                    }
-                )
-                continue
-            filed_value = filed_values[0]
-            if abs(abs(filed_value) - abs(rendered_value)) <= _VALUE_MATCH_TOLERANCE:
-                # Same magnitude, opposite sign: edgartools' presentation layer applies a
-                # per-concept sign convention (contra accounts, cash-flow decreases, etc,
-                # driven by the row's own "weight"/"preferred_sign" metadata) on top of the
-                # filed fact's raw tagged sign -- a genuinely filed value, not a defect. The
-                # full-universe scan that found this defect explicitly excluded these
-                # ("after excluding sign-convention flips"); flipping the sign back here
-                # would silently reintroduce that false-positive shape.
-                continue
-            corrected_value = (
-                math.copysign(abs(filed_value), rendered_value) if rendered_value else filed_value
+            value, reason = _reconciled_cell(
+                xbrl, concept, statement, end_date, duration_kind, rendered_value
             )
-            rows[i][column] = corrected_value
+            if reason is None:
+                continue
+            rows[i][column] = value
             corrections.append(
                 {
                     "statement": statement,
                     "concept": concept,
                     "column": column,
                     "original": rendered_value,
-                    "corrected": corrected_value,
+                    "corrected": value,
                     "rule": "T-042",
-                    "reason": "filed_value_mismatch",
+                    "reason": reason,
                 }
             )
     return rows, corrections
@@ -504,6 +618,81 @@ def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str
         return cover_shares_outstanding(xbrl), None
     except Exception as e:
         logger.error("T-043 cover share-count read failed", exc_info=True)
+        return [], f"{type(e).__name__}: {e}"
+
+
+def _statement_period_dates(rows: list[dict[str, Any]]) -> set[str]:
+    """The dates of a statement's period columns -- the filing's own period end and its
+    comparatives (a column name is "<end_date>" or "<end_date> (tag)"; only the date is kept)."""
+    dates: set[str] = set()
+    for column in _period_columns(rows):
+        parsed = _parse_period_column(column)
+        if parsed is not None:
+            dates.add(parsed[0])
+    return dates
+
+
+def filed_facts(xbrl: Any, period_ends: set[str]) -> list[dict[str, Any]]:
+    """T-159b: the filing's own **filed facts**, for the dates its statements cover.
+
+    One entry per filed fact: ``{"concept", "value", "unit", "period_start", "period_end",
+    "decimals"}``. ``concept`` is the fact's own element id (e.g. ``us-gaap:InterestExpense``),
+    ``value`` the fact's own raw tagged value -- never derived, summed or corrected (T-042's
+    principle: a derived number must not look like a filed one), ``unit`` the fact's ISO
+    currency for a monetary fact (``USD``) and the filing's own unit id otherwise (``shares``,
+    ``usdPerShare``, ``pure``, a filer's custom unit), ``period_start`` the fact's own period
+    start (``None`` for an instant), ``period_end`` the date the fact's period ends, and
+    ``decimals`` the fact's own ``decimals`` attribute (``"-3"``, ``"INF"``, ...).
+
+    Only facts whose period **ends** on one of *period_ends* (the statement columns' dates) are
+    returned, and only the **non-dimensional** ones: a fact carrying any dimension is a segment
+    or a product breakdown, not the filer's own value for the period. A fact with no unit is not
+    a numeric fact and is skipped too (a cover-page text fact such as
+    ``dei:EntityCentralIndexKey`` parses as a number but is not one).
+
+    This is the same already-loaded filing T-042 and T-043 read (``xbrl.facts.query()``, no
+    extra network call). Nothing filed -> ``[]``. Raises whatever the live query raises;
+    :func:`_safe_filed_facts` is the isolating call site."""
+    entries: list[dict[str, Any]] = []
+    for fact in xbrl.facts.query().execute():
+        if any(key.startswith("dim_") for key in fact):
+            continue
+        if not fact.get("unit_ref"):
+            continue
+        value = _numeric(fact.get("numeric_value"))
+        if value is None:
+            continue
+        period_end = fact.get("period_end") or fact.get("period_instant")
+        if period_end not in period_ends:
+            continue
+        entries.append(
+            {
+                "concept": fact.get("concept"),
+                "value": value,
+                "unit": fact.get("currency") or fact.get("unit_ref"),
+                "period_start": fact.get("period_start"),
+                "period_end": period_end,
+                "decimals": fact.get("decimals"),
+            }
+        )
+    return entries
+
+
+def _safe_filed_facts(xbrl: Any, period_ends: set[str]) -> tuple[list[dict[str, Any]], str | None]:
+    """``get_financials``' call site for :func:`filed_facts` -- the same isolation (and the same
+    deliberately broad ``except Exception``, see :func:`_safe_reconcile_with_filed_facts`) as
+    T-043's, for the same reason: the filed facts are an additive field, so a live
+    ``xbrl.facts.query()`` failure there must not turn an otherwise-successful response into
+    ``{"success": False}``. On failure returns ``([], "<ExcType>: <message>")`` -- an empty list
+    plus an error ``get_financials`` surfaces as ``data["filed_facts_error"]`` (``None`` on
+    success), so "failed to read" is never indistinguishable from "filer filed none".
+
+    Deliberately *not* recorded in ``reconciliation_errors`` (PR #48 review), for T-043's reason:
+    a failed read of an additive field leaves every statement valid."""
+    try:
+        return filed_facts(xbrl, period_ends), None
+    except Exception as e:
+        logger.error("T-159b filed-facts read failed", exc_info=True)
         return [], f"{type(e).__name__}: {e}"
 
 
@@ -801,14 +990,21 @@ class EdgarAgent:
                 reason?}>],
                 "reconciliation_errors": [<{statement, error}>],
                 "cover": {"shares_outstanding": [<{value, as_of_date, class_member}>],
-                "error": str | None}}}
+                "error": str | None},
+                "filed_facts": [<{concept, value, unit, period_start, period_end, decimals}>],
+                "filed_facts_error": str | None}}
             "corrections" lists every value this method derived, replaced, or dropped rather
             than returning as-is from edgartools, across all three statements: rule "T-118"
             (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
             specifically; rule "T-042" (see reconcile_with_filed_facts' docstring) is the
             general check -- any non-dimensional value on any statement that edgartools'
             rendering synthesized rather than the filer actually tagging non-dimensionally is
-            replaced with the genuinely filed value, or dropped (None) when none exists. Empty
+            replaced with the genuinely filed value, or dropped (None) when none exists. On a
+            duration statement (income statement, cash flow) an **untagged** column -- one
+            edgartools could not label "(Q1)".."(Q4)"/"(YTD)"/"(FY)", e.g. a 16/24-week
+            filer's quarter or year-to-date column -- is a period of unknown length and is
+            checked against every filed non-dimensional fact of the concept that ends on the
+            column's date, instead of being looked up as an instant and dropped (T-159b). Empty
             when nothing was corrected. A derived number is never indistinguishable from a
             filed fact in this response. "T-042" validation failing for one statement (see
             _safe_reconcile_with_filed_facts' docstring for why this catches broadly) never
@@ -831,6 +1027,20 @@ class EdgarAgent:
             failing the call. That failure is deliberately NOT added to "reconciliation_errors",
             which stays about the three statements only: it means "a statement came back
             unvalidated", and a failed cover read leaves every statement valid.
+            "filed_facts" (T-159b, additive -- the three statements, "corrections",
+            "reconciliation_errors" and "cover" semantics are unchanged) is the filing's own
+            filed facts for the dates its statements cover (the filing's period end and its
+            comparatives), read from the already-loaded filing's XBRL (see filed_facts'
+            docstring): one entry per **non-dimensional, numeric** fact -- "concept" the fact's
+            own element id, "value" the fact's own raw tagged value (never derived, summed or
+            corrected), "unit" the ISO currency for a monetary fact ("USD") or the filing's own
+            unit id otherwise, "period_start" the fact's own period start (None for an
+            instant), "period_end" the date the fact's period ends, "decimals" the fact's own
+            "decimals" attribute. Empty list when the filing holds none; reading it failing
+            returns an empty list and "filed_facts_error" = "<ExcType>: <message>"
+            ("filed_facts_error" is None on success) instead of failing the call -- and that
+            failure is deliberately NOT added to "reconciliation_errors" either, for the same
+            reason as the cover read's.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -901,6 +1111,12 @@ class EdgarAgent:
                 "cash_flow",
             )
             cover_shares, cover_error = _safe_cover_shares_outstanding(xbrl)
+            filed_fact_list, filed_facts_error = _safe_filed_facts(
+                xbrl,
+                _statement_period_dates(income_statement)
+                | _statement_period_dates(balance_sheet)
+                | _statement_period_dates(cash_flow),
+            )
         except Exception as e:
             return {"success": False, "error": f"Failed to extract financials: {e}"}
         else:
@@ -926,6 +1142,8 @@ class EdgarAgent:
                         if error is not None
                     ],
                     "cover": {"shares_outstanding": cover_shares, "error": cover_error},
+                    "filed_facts": filed_fact_list,
+                    "filed_facts_error": filed_facts_error,
                 },
             }
 
