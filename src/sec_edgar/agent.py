@@ -621,6 +621,81 @@ def _safe_cover_shares_outstanding(xbrl: Any) -> tuple[list[dict[str, Any]], str
         return [], f"{type(e).__name__}: {e}"
 
 
+def _statement_period_dates(rows: list[dict[str, Any]]) -> set[str]:
+    """The dates of a statement's period columns -- the filing's own period end and its
+    comparatives (a column name is "<end_date>" or "<end_date> (tag)"; only the date is kept)."""
+    dates: set[str] = set()
+    for column in _period_columns(rows):
+        parsed = _parse_period_column(column)
+        if parsed is not None:
+            dates.add(parsed[0])
+    return dates
+
+
+def filed_facts(xbrl: Any, period_ends: set[str]) -> list[dict[str, Any]]:
+    """T-159b: the filing's own **filed facts**, for the dates its statements cover.
+
+    One entry per filed fact: ``{"concept", "value", "unit", "period_start", "period_end",
+    "decimals"}``. ``concept`` is the fact's own element id (e.g. ``us-gaap:InterestExpense``),
+    ``value`` the fact's own raw tagged value -- never derived, summed or corrected (T-042's
+    principle: a derived number must not look like a filed one), ``unit`` the fact's ISO
+    currency for a monetary fact (``USD``) and the filing's own unit id otherwise (``shares``,
+    ``usdPerShare``, ``pure``, a filer's custom unit), ``period_start`` the fact's own period
+    start (``None`` for an instant), ``period_end`` the date the fact's period ends, and
+    ``decimals`` the fact's own ``decimals`` attribute (``"-3"``, ``"INF"``, ...).
+
+    Only facts whose period **ends** on one of *period_ends* (the statement columns' dates) are
+    returned, and only the **non-dimensional** ones: a fact carrying any dimension is a segment
+    or a product breakdown, not the filer's own value for the period. A fact with no unit is not
+    a numeric fact and is skipped too (a cover-page text fact such as
+    ``dei:EntityCentralIndexKey`` parses as a number but is not one).
+
+    This is the same already-loaded filing T-042 and T-043 read (``xbrl.facts.query()``, no
+    extra network call). Nothing filed -> ``[]``. Raises whatever the live query raises;
+    :func:`_safe_filed_facts` is the isolating call site."""
+    entries: list[dict[str, Any]] = []
+    for fact in xbrl.facts.query().execute():
+        if any(key.startswith("dim_") for key in fact):
+            continue
+        if not fact.get("unit_ref"):
+            continue
+        value = _numeric(fact.get("numeric_value"))
+        if value is None:
+            continue
+        period_end = fact.get("period_end") or fact.get("period_instant")
+        if period_end not in period_ends:
+            continue
+        entries.append(
+            {
+                "concept": fact.get("concept"),
+                "value": value,
+                "unit": fact.get("currency") or fact.get("unit_ref"),
+                "period_start": fact.get("period_start"),
+                "period_end": period_end,
+                "decimals": fact.get("decimals"),
+            }
+        )
+    return entries
+
+
+def _safe_filed_facts(xbrl: Any, period_ends: set[str]) -> tuple[list[dict[str, Any]], str | None]:
+    """``get_financials``' call site for :func:`filed_facts` -- the same isolation (and the same
+    deliberately broad ``except Exception``, see :func:`_safe_reconcile_with_filed_facts`) as
+    T-043's, for the same reason: the filed facts are an additive field, so a live
+    ``xbrl.facts.query()`` failure there must not turn an otherwise-successful response into
+    ``{"success": False}``. On failure returns ``([], "<ExcType>: <message>")`` -- an empty list
+    plus an error ``get_financials`` surfaces as ``data["filed_facts_error"]`` (``None`` on
+    success), so "failed to read" is never indistinguishable from "filer filed none".
+
+    Deliberately *not* recorded in ``reconciliation_errors`` (PR #48 review), for T-043's reason:
+    a failed read of an additive field leaves every statement valid."""
+    try:
+        return filed_facts(xbrl, period_ends), None
+    except Exception as e:
+        logger.error("T-159b filed-facts read failed", exc_info=True)
+        return [], f"{type(e).__name__}: {e}"
+
+
 _CIK_LEN = 10
 _DATE_ISO_LEN = 10
 
@@ -915,7 +990,9 @@ class EdgarAgent:
                 reason?}>],
                 "reconciliation_errors": [<{statement, error}>],
                 "cover": {"shares_outstanding": [<{value, as_of_date, class_member}>],
-                "error": str | None}}}
+                "error": str | None},
+                "filed_facts": [<{concept, value, unit, period_start, period_end, decimals}>],
+                "filed_facts_error": str | None}}
             "corrections" lists every value this method derived, replaced, or dropped rather
             than returning as-is from edgartools, across all three statements: rule "T-118"
             (see correct_revenue_totals' docstring) reconstructs APA's revenue instance
@@ -950,6 +1027,20 @@ class EdgarAgent:
             failing the call. That failure is deliberately NOT added to "reconciliation_errors",
             which stays about the three statements only: it means "a statement came back
             unvalidated", and a failed cover read leaves every statement valid.
+            "filed_facts" (T-159b, additive -- the three statements, "corrections",
+            "reconciliation_errors" and "cover" semantics are unchanged) is the filing's own
+            filed facts for the dates its statements cover (the filing's period end and its
+            comparatives), read from the already-loaded filing's XBRL (see filed_facts'
+            docstring): one entry per **non-dimensional, numeric** fact -- "concept" the fact's
+            own element id, "value" the fact's own raw tagged value (never derived, summed or
+            corrected), "unit" the ISO currency for a monetary fact ("USD") or the filing's own
+            unit id otherwise, "period_start" the fact's own period start (None for an
+            instant), "period_end" the date the fact's period ends, "decimals" the fact's own
+            "decimals" attribute. Empty list when the filing holds none; reading it failing
+            returns an empty list and "filed_facts_error" = "<ExcType>: <message>"
+            ("filed_facts_error" is None on success) instead of failing the call -- and that
+            failure is deliberately NOT added to "reconciliation_errors" either, for the same
+            reason as the cover read's.
             On failure: {"success": False, "error": str} -- e.g. filing not
             found, no XBRL data, or form+year is ambiguous (multiple
             filings matched and accession_number wasn't given or didn't
@@ -1020,6 +1111,12 @@ class EdgarAgent:
                 "cash_flow",
             )
             cover_shares, cover_error = _safe_cover_shares_outstanding(xbrl)
+            filed_fact_list, filed_facts_error = _safe_filed_facts(
+                xbrl,
+                _statement_period_dates(income_statement)
+                | _statement_period_dates(balance_sheet)
+                | _statement_period_dates(cash_flow),
+            )
         except Exception as e:
             return {"success": False, "error": f"Failed to extract financials: {e}"}
         else:
@@ -1045,6 +1142,8 @@ class EdgarAgent:
                         if error is not None
                     ],
                     "cover": {"shares_outstanding": cover_shares, "error": cover_error},
+                    "filed_facts": filed_fact_list,
+                    "filed_facts_error": filed_facts_error,
                 },
             }
 

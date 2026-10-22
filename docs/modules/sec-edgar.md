@@ -219,3 +219,29 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > rows that the gateway used to drop are served again (2,826 identified, 36 ambiguous), the
 > 89 rows that used to be corrupted are dropped instead, and no tagged column and no
 > balance-sheet row changes.
+
+> **The filing's own filed facts (T-159b):** `/edgar/financials` also returns
+> `data["filed_facts"]` — a list of the filing's own **filed facts** for the dates its
+> statements cover (the filing's period end and its comparatives), read from the
+> already-loaded filing's XBRL (`xbrl.facts.query()`, no extra network call; the same
+> mechanism as T-042 and T-043). One entry per **non-dimensional, numeric** fact:
+> `{"concept", "value", "unit", "period_start", "period_end", "decimals"}`. `concept` is the
+> fact's own element id (e.g. `us-gaap:InterestExpense`), `value` the fact's own raw tagged
+> value — never derived, summed or corrected (T-042's principle: a derived number must not
+> look like a filed one), `unit` the fact's ISO currency for a monetary fact (`USD`) and the
+> filing's own unit id otherwise (`shares`, `usdPerShare`, `pure`, a filer's custom unit),
+> `period_start` the fact's own period start (`null` for an instant), `period_end` the date
+> the fact's period ends, `decimals` the fact's own `decimals` attribute.
+>
+> A fact carrying any dimension is skipped (a segment or a product breakdown is not the
+> filer's own value for the period) and a fact with no unit is not a numeric fact and is
+> skipped too — even when its text parses as a number (the cover page's
+> `dei:EntityCentralIndexKey` "0000899689"). Facts filed outside the statements' dates are
+> not returned either.
+>
+> **Failure isolation:** like the cover read, a failed read goes through `_safe_filed_facts`:
+> `filed_facts` comes back `[]` and `data["filed_facts_error"]` carries
+> `"<ExcType>: <message>"` (`null` on success), so "failed to read" stays distinguishable from
+> "filer filed none". The failure is deliberately **not** added to `reconciliation_errors` —
+> that list means "a statement came back unvalidated", and a failed read of an additive field
+> leaves every statement valid.
