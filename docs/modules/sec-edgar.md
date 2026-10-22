@@ -187,3 +187,35 @@ the API routes make, with real ticker/form/year arguments instead of hardcoded "
 > It also lags (XOM's and NEE's newest 10-Qs were absent) and had no rows at all for HUM, whose
 > cover page matched the returned value. Live-verified figures: `SPEC.md` FR-004,
 > `CHANGELOG.md` `T-043` (Work item 6).
+
+> **Untagged duration columns (T-159b):** `edgartools` labels a rendered statement column
+> `"(Q1)".."Q4"`, `"(YTD)"` or `"(FY)"` only when the period's day-span falls in one of the
+> buckets it uses (a quarter 80–100 days, a year-to-date 175–285, a fiscal year 351 or more).
+> A 16/24-week filer's quarter or year-to-date falls outside every one of them — KR, COST, PEP,
+> DPZ, AZO, AAP, EXE, LHX — so its column is rendered as a **bare date** with no tag. Such a
+> column used to be looked up as an *instant* (the balance sheet's lookup), which finds nothing
+> for a flow, so **every non-dimensional row of an untagged income-statement or cash-flow
+> column was dropped** — the filer's own filed value, served and then thrown away.
+>
+> An untagged column is a period of **unknown length**, and is now checked against every filed
+> non-dimensional fact of the concept that **ends** on the column's date: the durations of at
+> most 371 days (PER-08's 52/53-week year) and the instants filed at that date (a cash-flow
+> statement's "cash at end of period" row is an instant fact rendered under a duration column).
+> A fact whose value matches and whose period length is **unique** among the matching facts
+> identifies the cell — the rendered value stands (T-042's treatment of a matching value: the
+> same magnitude, the rendered sign kept). Two matching facts of **different** lengths (a
+> quarter and a year-to-date whose values happen to be equal) cannot be told apart, so the cell
+> is left alone — never guessed. No matching fact means the value was never filed
+> non-dimensionally, and it is dropped, as before. A **tagged** column and a **balance-sheet**
+> row are unchanged: they keep their own lookups.
+>
+> One shape changes for the better: a cash-flow statement's "cash at **beginning** of period"
+> row is the instant fact at the period's *start*, which is not the column's date. The old
+> instant lookup on an untagged column replaced it with the end-of-period value — the
+> substitution T-042's own docstring calls a corruption. It is now dropped instead, never
+> corrupted.
+>
+> Live-measured on the 32 filings with untagged columns (the pilot's T-143 part A scope): 2,862
+> rows that the gateway used to drop are served again (2,826 identified, 36 ambiguous), the
+> 89 rows that used to be corrupted are dropped instead, and no tagged column and no
+> balance-sheet row changes.

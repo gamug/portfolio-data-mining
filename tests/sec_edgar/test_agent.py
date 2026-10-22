@@ -1495,6 +1495,209 @@ def test_get_financials_survives_a_cover_read_failure(agent: EdgarAgent) -> None
 
 
 # ---------------------------------------------------------------------
+# T-159b: the untagged duration column, and the filing's own filed facts
+# ---------------------------------------------------------------------
+
+_UNTAGGED_FIXTURES = Path(__file__).parent / "fixtures" / "untagged_columns_facts.json"
+
+
+def _captured_untagged_facts(key: str, concept: str) -> list[dict]:
+    """Real ``xbrl.facts.query().by_concept(...).by_dimension(None).execute()`` rows, captured
+    live from the named filing -- see ``fixtures/untagged_columns_facts.json``'s
+    ``accession_number`` per key."""
+    return json.loads(_UNTAGGED_FIXTURES.read_text())[key]["facts"][concept]
+
+
+def _period_frames(facts: list[dict], end_date: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The duration and instant frames ``edgartools``' own query serves for *facts* at
+    *end_date*: a duration fact carries its own ``period_start``/``period_end``, an instant
+    fact only its value."""
+    durations = pd.DataFrame(
+        [
+            {
+                "value": float(fact["numeric_value"]),
+                "period_start": fact["period_start"],
+                "period_end": fact["period_end"],
+            }
+            for fact in facts
+            if fact.get("period_start") and fact.get("period_end") == end_date
+        ]
+    )
+    instants = pd.DataFrame(
+        [
+            {"value": float(fact["numeric_value"])}
+            for fact in facts
+            if fact.get("period_instant") == end_date
+        ]
+    )
+    return durations, instants
+
+
+def _mock_facts_xbrl_by_period(durations: pd.DataFrame, instants: pd.DataFrame) -> MagicMock:
+    """A minimal `xbrl` whose fact query serves the duration and the instant filter
+    separately -- the untagged-column lookup asks for both."""
+
+    def frame(df: pd.DataFrame) -> MagicMock:
+        query = MagicMock()
+        query.by_concept.return_value = query
+        query.by_dimension.return_value = query
+        query.by_date_range.return_value = query
+        query.by_instant_date.return_value = query
+        query.to_dataframe.return_value = df
+        return query
+
+    xbrl = MagicMock()
+    query = xbrl.facts.query.return_value
+    query.by_concept.return_value = query
+    query.by_dimension.return_value = query
+    query.by_date_range.side_effect = lambda **_kwargs: frame(durations)
+    query.by_instant_date.side_effect = lambda *_args, **_kwargs: frame(instants)
+    return xbrl
+
+
+def _pep_revenue_xbrl(end_date: str) -> MagicMock:
+    """PEP's 10-Q (captured live): the filed facts of `us-gaap:Revenues` at *end_date*."""
+    facts = _captured_untagged_facts("PEP_10-Q", "us-gaap_Revenues")
+    durations, instants = _period_frames(facts, end_date)
+    return _mock_facts_xbrl_by_period(durations, instants)
+
+
+def test_reconcile_untagged_168_day_column_is_kept() -> None:
+    """PEP's 10-Q (captured live, accession 0000077476-22-000043, period 2022-06-11): the
+    income statement's untagged column "2022-06-11" holds the 168 calendar days from
+    2021-12-26 (a 167-day span), a period `edgartools` cannot label "(Q1)".."(Q4)"/"(YTD)"/"(FY)"
+    because its day-span falls outside every one of those buckets. The filed revenue for it
+    (``us-gaap:Revenues``, 36,425,000,000) was dropped -- an instant lookup finds no instant
+    fact for a flow. The untagged column is a duration of unknown length, and the lookup finds
+    the 167-day fact, so the value is kept."""
+    xbrl = _pep_revenue_xbrl("2022-06-11")
+    rows = [_row("us-gaap_Revenues", "Net Revenue", **{"2022-06-11": 36_425_000_000.0})]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "income_statement")
+
+    assert corrected[0]["2022-06-11"] == 36_425_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_untagged_column_matching_two_lengths_is_left_alone() -> None:
+    """PEP's 10-Q (captured live): ``us-gaap:GainLossOnSaleOfBusiness`` at "2021-06-12" was
+    filed for both the 83-day quarter and the 167-day year-to-date, both with the value 0 --
+    two facts of *different* lengths match, so the fact cannot be told apart and the cell is
+    left alone (never guessed), exactly as a tagged column's ambiguity is."""
+    facts = _captured_untagged_facts("PEP_10-Q", "us-gaap_GainLossOnSaleOfBusiness")
+    durations, instants = _period_frames(facts, "2021-06-12")
+    xbrl = _mock_facts_xbrl_by_period(durations, instants)
+    rows = [_row("us-gaap_GainLossOnSaleOfBusiness", "Gain on divestitures", **{"2021-06-12": 0.0})]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "income_statement")
+
+    assert corrected[0]["2021-06-12"] == 0.0
+    assert corrections == []
+
+
+def test_reconcile_untagged_column_without_a_filed_fact_is_dropped() -> None:
+    """Nothing filed for the concept at the column's date -> the value is dropped, as before."""
+    xbrl = _pep_revenue_xbrl("2022-06-11")
+    rows = [_row("us-gaap_NeverFiledConcept", "Never filed", **{"2022-06-11": 500.0})]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "income_statement")
+
+    assert corrected[0]["2022-06-11"] is None
+    assert corrections == [
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_NeverFiledConcept",
+            "column": "2022-06-11",
+            "original": 500.0,
+            "corrected": None,
+            "rule": "T-042",
+            "reason": "no_filed_nondimensional_fact",
+        }
+    ]
+
+
+def test_reconcile_tagged_column_keeps_its_own_look_up() -> None:
+    """A tagged column is unchanged by T-159b: "(Q2)" is still looked up as a quarter (the
+    80-100 day bucket), so the quarter's own fact is the one compared."""
+    xbrl = _pep_revenue_xbrl("2022-06-11")
+    rows = [_row("us-gaap_Revenues", "Net Revenue", **{"2022-06-11 (Q2)": 20_225_000_000.0})]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "income_statement")
+
+    assert corrected[0]["2022-06-11 (Q2)"] == 20_225_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_balance_sheet_row_keeps_its_instant_look_up() -> None:
+    """The balance sheet's columns are instants: they keep their own lookup, and the
+    untagged-column rule (a duration statement only) does not reach them."""
+    facts = _captured_untagged_facts(
+        "PEP_10-Q", "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+    )
+    durations, instants = _period_frames(facts, "2022-06-11")
+    xbrl = _mock_facts_xbrl_by_period(durations, instants)
+    rows = [
+        _row(
+            "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+            "Cash and cash equivalents",
+            **{"2022-06-11": 5_545_000_000.0},
+        )
+    ]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "balance_sheet")
+
+    assert corrected[0]["2022-06-11"] == 5_545_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_untagged_cash_flow_column_keeps_the_instant_cash_row() -> None:
+    """PEP's 10-Q (captured live): the cash-flow statement's "cash at end of period" row is
+    filed as an *instant* fact at the column's date but rendered under a duration column --
+    the untagged-column lookup finds that instant and keeps the value."""
+    facts = _captured_untagged_facts(
+        "PEP_10-Q", "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+    )
+    durations, instants = _period_frames(facts, "2022-06-11")
+    xbrl = _mock_facts_xbrl_by_period(durations, instants)
+    rows = [
+        _row(
+            "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+            "Cash and cash equivalents at end of period",
+            **{"2022-06-11": 5_545_000_000.0},
+        )
+    ]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "cash_flow")
+
+    assert corrected[0]["2022-06-11"] == 5_545_000_000.0
+    assert corrections == []
+
+
+def test_reconcile_untagged_cash_flow_column_drops_another_periods_cash() -> None:
+    """The same filing's "cash at beginning of period" row is the instant fact at the
+    *period's start* (2021-12-25), not at the column's date: it is dropped rather than
+    replaced with the end-of-period value -- the substitution T-042's own docstring calls a
+    corruption, and which the old instant lookup on an untagged column actually made."""
+    facts = _captured_untagged_facts(
+        "PEP_10-Q", "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+    )
+    durations, instants = _period_frames(facts, "2022-06-11")
+    xbrl = _mock_facts_xbrl_by_period(durations, instants)
+    rows = [
+        _row(
+            "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
+            "Cash and cash equivalents at beginning of period",
+            **{"2022-06-11": 5_707_000_000.0},
+        )
+    ]
+
+    corrected, corrections = reconcile_with_filed_facts(rows, xbrl, "cash_flow")
+
+    assert corrected[0]["2022-06-11"] is None
+    assert corrections[0]["reason"] == "no_filed_nondimensional_fact"
+
+
+# ---------------------------------------------------------------------
 # list_years_available
 # ---------------------------------------------------------------------
 
