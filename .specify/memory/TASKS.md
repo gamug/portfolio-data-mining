@@ -104,8 +104,10 @@ the second private file for reviewer A's GUARD calibration (`FR-016`, brief
   `docs/modules/data-mining.md`. → part 2 approach.
 - [x] **T-061b-5** Run phase a (49 requests), wait for the rolling hour, run phase b; record the counts,
   dates and sha256 in the manifest; confirm the four production DB sha1s are unchanged. → part 2
-  acceptance.
-- [ ] **T-061b-6** Open the PR with counts, dates and sha256s only (no price). → part 2.
+  acceptance. Done 2026-10-29: 29 of 32 lines, 10,174 rows, 69 requests; the 3 reused-ticker lines
+  (APC/NFX/STI) reported not delivered. The file and manifest are private.
+- [x] **T-061b-6** Open the PR with counts, dates and sha256s only (no price). → part 2.
+  Opened 2026-10-29: #102.
 
 ## Status
 
