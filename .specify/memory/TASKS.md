@@ -94,6 +94,8 @@ Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14
 Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its successor, Work item 12, closed 2026-10-17);
 Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 12, `T-062`, closed 2026-10-17 after the audited real run; Work item 13, `T-063`, closed 2026-10-17 by decision, no code; Work item 14, `T-064`–`T-067` and `T-075`–`T-077`, closed 2026-10-19: `T-064` in PR #73, `T-075` in #75, `T-076` in #78, `T-065` in #79, `T-066a` in #80, `T-067` in #81, `T-066b` in #83 (design #82), `T-077` in #85 (design #84), and the `articles` label and quarantine step of the 939 rows written 2026-10-19 (PR #87)); Work item 15, `T-068`–`T-074`, closed 2026-10-21 (the sitemap cache, PRs in `PLAN.md` Work item 15; the real file at schema version 5, `G3` N = 578,113, the first real discovery 2026-10-21).
 
+Work item 11, part 2 (`T-061b`, the Tiingo calibration file) closed 2026-10-29 in PR #102; reviewer B verified the manifest against the universe spans and closed L-42 — see `CHANGELOG.md`.
+
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's

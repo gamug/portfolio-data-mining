@@ -76,15 +76,19 @@ stack actually pinned in `pyproject.toml`.
 8. **One sanctioned one-off, private build-step source: Tiingo.** The
    `leaver-prices` build step (`src/data_mining/leaver_prices.py`, run by
    `cli/pricing_cli.py leaver-prices`) fetches daily EOD prices for the 33
-   S&P 500 leaver lines from Tiingo into a **private local file** under
-   `/workspaces/thesis/data/private/tiingo/`, for `portfolio-financial-analysis`
-   to import. It is deliberately **not** one of the four services' sources
-   (AI behavior #1): no `apps/*` or `src/pricing/` code touches it, no service
-   serves it, nothing from it is committed or redistributed, no value reaches a
-   database, and the key lives only in `$TIINGO_API_KEY` — never in `.env`, a
-   file, a URL, a log or a commit. It is a build step like `universe-gics`, not
-   a runtime provider. Adding any **other** external source still needs this
-   section amended first (#7).
+   S&P 500 leaver lines, and its `leaver-prices-calibration` follow-up
+   (`src/data_mining/leaver_calibration.py`, the 32 pre-2022 leaver lines,
+   FR-016) does the same for the GUARD calibration — both from Tiingo into
+   **private local files** under `/workspaces/thesis/data/private/tiingo/`
+   (the calibration file in `calibration_2019_2021/`), for
+   `portfolio-financial-analysis` to import. They are deliberately **not** one
+   of the four services' sources (AI behavior #1): no `apps/*` or
+   `src/pricing/` code touches them, no service serves them, nothing from them
+   is committed or redistributed, no value reaches a database, and the key
+   lives only in `$TIINGO_API_KEY` — never in `.env`, a file, a URL, a log or
+   a commit. They are build steps like `universe-gics`, not runtime
+   providers. Adding any **other** external source still needs this section
+   amended first (#7).
 
 ## Project structure
 
@@ -432,4 +436,4 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 2.0.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-18
+**Version**: 2.1.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-29

@@ -16,6 +16,8 @@ Usage:
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-snapshot
     .venv\\Scripts\\python.exe cli\\pricing_cli.py universe-gics --out ..\\data\\universe_history_gics.db
     .venv\\Scripts\\python.exe cli\\pricing_cli.py leaver-prices
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py leaver-prices-calibration --phase a
+    .venv\\Scripts\\python.exe cli\\pricing_cli.py leaver-prices-calibration --phase b
     .venv\\Scripts\\python.exe cli\\pricing_cli.py pricing AAPL --start 2024-01-01 --end 2024-06-01
     .venv\\Scripts\\python.exe cli\\pricing_cli.py actions XOM --start 2022-01-01 --end 2026-08-27
     .venv\\Scripts\\python.exe cli\\pricing_cli.py news-company AAPL --start 2024-01-01 --end 2024-06-01
@@ -41,6 +43,11 @@ from data_mining.env import load_env
 load_env()  # .env wins over the inherited environment (T-066b)
 
 
+from data_mining.leaver_calibration import (
+    CALIBRATION_OUTPUT_DIR,
+    fetch_calibration_phase_a,
+    fetch_calibration_phase_b,
+)
 from data_mining.leaver_prices import DEFAULT_OUTPUT_DIR, LeaverPricesError, fetch_leaver_prices
 from data_mining.portfolio import list_universe, resolve_symbol
 from data_mining.universe_gics import build_gics_db
@@ -174,6 +181,34 @@ def cmd_market_financials(
     print_json(market_client.get_basic_financials(args.ticker.upper(), metric=args.metric))
 
 
+def cmd_leaver_prices_calibration(args: argparse.Namespace, **_clients: Any) -> None:
+    """Fetch the 32 pre-2022 leaver lines into the private calibration file.
+
+    Phase a spends 49 requests (prices + 17 metadata); phase b spends the
+    remaining 15 metadata after the rolling hour has passed and writes the
+    outputs. Counts and hashes only -- never a price.
+    """
+    try:
+        if args.phase == "a":
+            report = fetch_calibration_phase_a(output_dir=Path(args.out))
+        else:
+            fetched = fetch_calibration_phase_b(output_dir=Path(args.out))
+            report = {
+                "phase": "b",
+                "output_dir": str(Path(args.out)),
+                "data_file": fetched["data_file"],
+                "data_file_sha256": fetched["data_file_sha256"],
+                "request_count": fetched["request_count"],
+                "lines": len(fetched["lines"]),
+                "not_delivered": [entry["ask"] for entry in fetched["not_delivered"]],
+                "rows_kept": sum(entry["rows_kept"] for entry in fetched["lines"]),
+            }
+    except LeaverPricesError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(1)
+    print_json(report)
+
+
 def parse_args() -> argparse.Namespace:  # noqa: PLR0915 -- a flat argparse subcommand table
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -249,6 +284,25 @@ def parse_args() -> argparse.Namespace:  # noqa: PLR0915 -- a flat argparse subc
     p.set_defaults(func=cmd_leaver_prices)
 
     p = sub.add_parser(
+        "leaver-prices-calibration",
+        help="Fetch the Tiingo daily prices for the 32 pre-2022 S&P 500 leaver lines "
+        "into a second private calibration file (phase a: 49 requests; phase b: "
+        "the remaining metadata after the rolling hour)",
+    )
+    p.add_argument(
+        "--out",
+        default=str(CALIBRATION_OUTPUT_DIR),
+        help=f"Private output directory (default: {CALIBRATION_OUTPUT_DIR})",
+    )
+    p.add_argument(
+        "--phase",
+        choices=("a", "b"),
+        required=True,
+        help="a = prices + 17 metadata (49 requests); b = remaining metadata + outputs",
+    )
+    p.set_defaults(func=cmd_leaver_prices_calibration)
+
+    p = sub.add_parser(
         "pricing", help="Daily OHLCV price history (Finnhub, falls back to yfinance)"
     )
     p.add_argument("ticker")
@@ -301,9 +355,10 @@ def main() -> None:
     # key configured -- argparse exits on -h/--help before returning here.
     args = parse_args()
 
-    # leaver-prices fetches from Tiingo only (and read-only GETs to the shared
-    # gateway) -- it never calls Finnhub, so it must not require that key.
-    if args.command == "leaver-prices":
+    # leaver-prices (and its calibration follow-up) fetch from Tiingo only
+    # (and read-only GETs to the shared gateway) -- they never call Finnhub,
+    # so they must not require that key.
+    if args.command in {"leaver-prices", "leaver-prices-calibration"}:
         args.func(args)
         return
 

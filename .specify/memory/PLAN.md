@@ -1136,6 +1136,41 @@ dropped.
   DB sha1s unchanged.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+### Part 2 — the 32 pre-2022 leaver lines (calibration file, T-061b) — closed 2026-10-29 (PR #102; reviewer B verified the manifest, L-42 closed)
+
+**Why**: reviewer A calibrates the GUARD layer of the backtest on 2019–2021. The S&P 500 members that
+left the index before 2022-01-03 are absent from the analysis database; the pricing gateway serves 26 of
+the 58 missing lines, and these 32 are delisted or acquired. The user keeps Tiingo (2026-10-29 decision):
+the output is a **second** private file, separate from part 1 and from every database.
+
+**Approach** (`FR-016`, brief `data_mining_tiingo_calibration32_task.md`):
+1. `src/data_mining/leaver_calibration.py`, run by `cli/pricing_cli.py leaver-prices-calibration
+   --phase a|b`, reusing part 1's trims, split formula, rate limiter and key handling. Ranges
+   `2019-02-01 .. latest valid_to` (BMS from `2019-06-07`), read-only from
+   `universe_history_gics.db`.
+2. CIKs verified on EDGAR (submissions JSON + an in-span cover page; no SEC document stored).
+3. Reused Tiingo symbols mapped to the old security's own series: `FOX→TFCF`, `FOXA→TFCFA`,
+   `ARNC→HWM`, `ADS→BFH`, `DWDP→DD`, `HFC→DINO`; APC/STI/NFX reported not delivered (their tickers
+   were reused by later companies and the keyed API serves only the current owner). LLL/TSS are
+   kept under a documented override (the metadata names the ticker's 2026 ETF, but the prices are
+   the old 2019 series; accepted only on the first/last date and the calendar's row count). No proxy.
+4. Output `…/tiingo/calibration_2019_2021/prices.csv` (part 1's columns plus `split_cum`) and
+   `manifest.json`; the dividend basis is `divCash / split_cum` (the 2026-10-15 AAPL control).
+5. Two phases, ≤64 requests: `a` = 32 prices + 17 metadata (49); `b` = the remaining 15 after the
+   rolling hour. A private `.raw/` cache is deleted once the manifest is written.
+
+**Acceptance criteria**:
+- Every row's date is an NYSE session, else nothing is written; rows kept + missing sessions equal the
+  calendar's expected sessions.
+- An identity mismatch (Tiingo's name or dates) or an unexplained adjusted close-to-close move over
+  25% stops the run; DWDP is accepted only if DD's metadata names DowDuPont/DuPont and covers
+  `2019-02-01..2019-05-31`; FOX/FOXA must be the distinct `TFCF`/`TFCFA` series.
+- The 30 non-reused lines have 0 gateway candles; FOX/FOXA's 4 and 5 Fox Corp candles are recorded,
+  not used. A short tail sets `last_equals_exit` false with the date and reason; never filled.
+- ≤64 Tiingo requests, under the 50/hour cap (largest rolling hour ≤49); the four production DB
+  sha1s unchanged; the 2026-10-15 folder untouched.
+- Hermetic tests in `tests/data_mining/test_leaver_calibration.py`; all quality gates clean.
+
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, T-062)
 
 **Why:** the T-057 re-tag quarantined at least 433 `reject` pairs on 234 URLs (News Corp 400 as `NWS` + `NWSA`,
