@@ -1136,7 +1136,7 @@ dropped.
   DB sha1s unchanged.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
-### Part 2 — the 32 pre-2022 leaver lines (calibration file, T-061b) — code + run done 2026-10-29, PR #102 open
+### Part 2 — the 32 pre-2022 leaver lines (calibration file, T-061b) — closed 2026-10-29 (PR #102; reviewer B verified the manifest, L-42 closed)
 
 **Why**: reviewer A calibrates the GUARD layer of the backtest on 2019–2021. The S&P 500 members that
 left the index before 2022-01-03 are absent from the analysis database; the pricing gateway serves 26 of

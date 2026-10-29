@@ -85,30 +85,6 @@ downstream fix needs the filing's own facts in the payload.
       `tests/sec_edgar/test_agent.py` with facts captured live in
       `tests/sec_edgar/fixtures/`. → `PLAN.md` Work item 16.
 
-## Work item 11, part 2 — Tiingo calibration file for the 32 pre-2022 leaver lines (T-061b)
-
-Part 1 (`T-061`, the 33-line `leaver-prices` fetch) is closed in `CHANGELOG.md`; this is its next part:
-the second private file for reviewer A's GUARD calibration (`FR-016`, brief
-`data_mining_tiingo_calibration32_task.md`).
-
-- [x] **T-061b-1** Add `src/data_mining/leaver_calibration.py`: the 32-line table (per-line start/end,
-  verified CIK, Tiingo symbol, accepted names), the two phases with the private `.raw/` cache, EDGAR CIK
-  verification (submissions JSON + in-span cover page), the gateway counts (FOX/FOXA recorded, the other
-  30 must be 0), the trims/split formula reused from `leaver_prices`, `split_cum`, `last_equals_exit`,
-  the >25% jump scan, and the CSV + manifest writer. → `PLAN.md` Work item 11, part 2.
-- [x] **T-061b-2** Add `cli/pricing_cli.py leaver-prices-calibration --phase a|b` and route it without
-  `FINNHUB_API_KEY`. → part 2, step 1.
-- [x] **T-061b-3** Add hermetic tests in `tests/data_mining/test_leaver_calibration.py` (synthetic rows
-  only; no real price). → part 2 acceptance.
-- [x] **T-061b-4** Amend constitution #8 (MINOR 2.1.0), `SPEC.md` FR-016/§2.1/§11 and
-  `docs/modules/data-mining.md`. → part 2 approach.
-- [x] **T-061b-5** Run phase a (49 requests), wait for the rolling hour, run phase b; record the counts,
-  dates and sha256 in the manifest; confirm the four production DB sha1s are unchanged. → part 2
-  acceptance. Done 2026-10-29: 29 of 32 lines, 10,174 rows, 69 requests; the 3 reused-ticker lines
-  (APC/NFX/STI) reported not delivered. The file and manifest are private.
-- [x] **T-061b-6** Open the PR with counts, dates and sha256s only (no price). → part 2.
-  Opened 2026-10-29: #102.
-
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -117,6 +93,8 @@ Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.
 Work item 7, `T-044`, closed 2026-10-09; Work item 9, `T-046`, closed 2026-10-14 in PR #51;
 Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its successor, Work item 12, closed 2026-10-17);
 Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 12, `T-062`, closed 2026-10-17 after the audited real run; Work item 13, `T-063`, closed 2026-10-17 by decision, no code; Work item 14, `T-064`–`T-067` and `T-075`–`T-077`, closed 2026-10-19: `T-064` in PR #73, `T-075` in #75, `T-076` in #78, `T-065` in #79, `T-066a` in #80, `T-067` in #81, `T-066b` in #83 (design #82), `T-077` in #85 (design #84), and the `articles` label and quarantine step of the 939 rows written 2026-10-19 (PR #87)); Work item 15, `T-068`–`T-074`, closed 2026-10-21 (the sitemap cache, PRs in `PLAN.md` Work item 15; the real file at schema version 5, `G3` N = 578,113, the first real discovery 2026-10-21).
+
+Work item 11, part 2 (`T-061b`, the Tiingo calibration file) closed 2026-10-29 in PR #102; reviewer B verified the manifest against the universe spans and closed L-42 — see `CHANGELOG.md`.
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
 

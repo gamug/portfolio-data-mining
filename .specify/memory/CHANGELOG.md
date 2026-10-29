@@ -690,6 +690,43 @@ parts 2–3): "Fetch the Tiingo prices for the 33 leaver lines into a private lo
       committed tests, `membership_span` per stint + ANSS `declared_exception` + K's spin-off note in
       the manifest, and a trim-reason-class comparison.
 
+### Part 2 — the 32 pre-2022 leaver lines (T-061b) — closed 2026-10-29 (PR #102)
+
+Part 1 (`T-061`, the 33-line `leaver-prices` fetch) is closed in `CHANGELOG.md`; this is its next part:
+the second private file for reviewer A's GUARD calibration (`FR-016`, brief
+`data_mining_tiingo_calibration32_task.md`).
+
+- [x] **T-061b-1** Add `src/data_mining/leaver_calibration.py`: the 32-line table (per-line start/end,
+  verified CIK, Tiingo symbol, accepted names), the two phases with the private `.raw/` cache, EDGAR CIK
+  verification (submissions JSON + in-span cover page), the gateway counts (FOX/FOXA recorded, the other
+  30 must be 0), the trims/split formula reused from `leaver_prices`, `split_cum`, `last_equals_exit`,
+  the >25% jump scan, and the CSV + manifest writer. → `PLAN.md` Work item 11, part 2.
+- [x] **T-061b-2** Add `cli/pricing_cli.py leaver-prices-calibration --phase a|b` and route it without
+  `FINNHUB_API_KEY`. → part 2, step 1.
+- [x] **T-061b-3** Add hermetic tests in `tests/data_mining/test_leaver_calibration.py` (synthetic rows
+  only; no real price). → part 2 acceptance.
+- [x] **T-061b-4** Amend constitution #8 (MINOR 2.1.0), `SPEC.md` FR-016/§2.1/§11 and
+  `docs/modules/data-mining.md`. → part 2 approach.
+- [x] **T-061b-5** Run phase a (49 requests), wait for the rolling hour, run phase b; record the counts,
+  dates and sha256 in the manifest; confirm the four production DB sha1s are unchanged. → part 2
+  acceptance. Done 2026-10-29: 29 of 32 lines, 10,174 rows, 69 requests; the 3 reused-ticker lines
+  (APC/NFX/STI) reported not delivered. The file and manifest are private.
+- [x] **T-061b-6** Open the PR with counts, dates and sha256s only (no price). → part 2.
+  Opened 2026-10-29: #102.
+
+**Closed 2026-10-29 (PR #102; reviewer B verified the manifest against the universe spans and
+closed L-42).** 29 of the 32 lines, **10,174** rows of **10,200** sessions; sha256
+`ae6fcc699062f9c960af0eff74ad144c5d76dcaa75b0f31cdb802e6d0848cd9e`. Every date an NYSE session,
+no duplicates, every row inside its line's span, first/last/count equal to the manifest; the PR holds
+no data. 10 lines end before their index exit (dated: deal close first, or a carried close trimmed);
+13 jumps > 25% labelled (3 corporate events, 10 market-wide with SPY's same-day return); **123**
+dividend rows, **1** split-factor row (DWDP 2019-04-02, the Dow Inc. distribution, removed from the
+adjusted series); LLL/TSS kept on the documented identity override; APC/NFX/STI not delivered
+(356 sessions; the 5 probes found no same-entity series); 69 requests (64 fetch + 5 probes), largest
+rolling hour 49; 1,354 tests; the four production DB sha1s unchanged. **L-42 final:** of the 58 lines
+absent from the database, 55 are in the calibration files (26 gateway + 29 Tiingo); 3 of 649 stay out
+of the calibration, cited with C12.
+
 ## Work item 12 — Matcher: stop rejecting pairs whose URL spells the company out (code + data, origin: Work item 10 real run)
 
 - [x] **T-062** *(Work item 12; follow-up found by the T-057 real run; changes the matcher; scheduled by the maintainer 2026-10-16)*
