@@ -21,6 +21,7 @@ connection/schema layer, and the universe loader (live + point-in-time).
 | `universe_gics.py` | `build_gics_db()`, `fill_gics()`, `fetch_revision_list()`/`fetch_revision_content()` — fills `gics_sector`/`gics_sub_industry` plus the revision citation for the S&P 500 leaver stints, from the revision history of Wikipedia's ["List of S&P 500 companies"](https://en.wikipedia.org/wiki/List_of_S%26P_500_companies) page. | `cli/pricing_cli.py`'s `universe-gics` subcommand only |
 | `nyse_calendar.py` | `is_trading_day()`, `sessions()`, `nyse_holidays()`, `next_trading_day()`, `add_trading_days()` — the NYSE trading calendar, ported from `portfolio-financial-analysis`'s `src/kg_schema/trading_calendar.py` (commit `87dd9bf`), used for the leaver-prices "expected sessions" counts and the off-calendar guard. | `leaver_prices.py` |
 | `leaver_prices.py` | `fetch_leaver_prices()`, `build_series()`, `detect_non_real()`, `split_cum_factors()`, `LINES` — the one-off, **private** Tiingo fetch for the 33 S&P 500 leaver lines (FR-015): a CSV + JSON manifest into `/workspaces/thesis/data/private/tiingo/`. Never a service source. | `cli/pricing_cli.py`'s `leaver-prices` subcommand only |
+| `leaver_calibration.py` | `fetch_calibration_phase_a()`, `fetch_calibration_phase_b()`, `verify_cik()`, `CALIBRATION_LINES` — the one-off, **private** Tiingo fetch for the 32 pre-2022 leaver lines (FR-016; reviewer A's GUARD calibration), reusing `leaver_prices`'s trims, split formula, rate limiter and key handling: a CSV (with `split_cum`) + JSON manifest into `…/tiingo/calibration_2019_2021/`. Never a service source. | `cli/pricing_cli.py`'s `leaver-prices-calibration` subcommand only |
 | `token_index.py` | `TokenIndex`, `entry_text()`, `Row` — the in-memory index of the entries of a domain's sitemap cache (tokens of the path, query and title; a second one for the title) that preselects, per company, the candidate entries the matcher must class (`T-068`, `T-071`): it never decides a class, and its equality with the full scan is tested; it imports `matching` and nothing else. | `news_collector.sitemap_cache` (`SitemapRun.select`), `scripts/sitemap_preselect_check.py` |
 | `matching.py` | `classify()`, `Match`, `MatchClass`, `ALIASES`, `WORD_TICKERS` — the pure company-matching rule (accept / review / reject from the URL path and title; no I/O, no dependency), shared by the news-collector connectors (`BaseConnector.classify_match`) and, later, the extractor's post-fetch re-evaluation (`T-056c`). | `news_collector` connectors; `scripts/audit_ticker_tagging.py`, `scripts/score_ticker_rules.py` |
 | `quarantine.py` | `quarantine_articles()`, `release_articles()`, `sync_quarantine()` — the reversible quarantine of fetched articles whose pair is not `accept` (`fetch_status = 'quarantined'`, previous status in `articles.prev_fetch_status`; T-057). | `extractor.db.record_fetch`; `scripts/retag_urls.py` |
@@ -129,6 +130,37 @@ is deleted once the file passes.
 # The key is set in the shell only, never in .env:
 read -rs TIINGO_API_KEY && export TIINGO_API_KEY
 uv run cli/pricing_cli.py leaver-prices
+```
+
+## Leaver calibration fetch (`leaver-prices-calibration`, FR-016)
+
+`leaver_calibration.fetch_calibration_phase_a()` / `_b()` fetch Tiingo's daily
+EOD rows for the **32 pre-2022 leaver lines** reviewer A calibrates the GUARD
+layer on (`2019-02-01` or the first membership day .. the latest `valid_to`,
+inclusive), into a **second** private file at
+`/workspaces/thesis/data/private/tiingo/calibration_2019_2021/`. It reuses
+`leaver_prices`'s trim rule, split formula, rate limiter and key handling; the
+CSV adds `split_cum` per row so `divCash / split_cum` puts a raw dividend on
+the adjusted price basis (the 2026-10-15 AAPL control). Reused Tiingo symbols
+map to the old security's own series (`FOX→TFCF`, `FOXA→TFCFA`, `ARNC→HWM`,
+`ADS→BFH`, `DWDP→DD`, `HFC→DINO`); a line whose ticker was reused by a later
+company (APC/STI/NFX) is reported as not delivered with the sessions it
+covers, never proxied. The manifest records the EDGAR-verified CIK (submissions
+JSON + in-span cover page; no document stored), Tiingo's name and dates, the
+rows kept / expected / missing / trimmed, `last_equals_exit` (false only for a
+documented short tail: trading ended before the index exit), dividend and split
+counts, and every adjusted close-to-close move over 25% with its known cause.
+
+The 64 requests exceed the 50/hour cap, so the run is two phases: **a** spends
+49 (32 price series + 17 metadata), **b** spends the remaining 15 after the
+rolling hour and writes the outputs. Raw responses are cached in a private
+`.raw/` folder inside the calibration directory and removed once the manifest
+is written; a failed check keeps the cache, so a re-run spends no request.
+
+```bash
+uv run cli/pricing_cli.py leaver-prices-calibration --phase a
+# wait until the rolling hour has cleared
+uv run cli/pricing_cli.py leaver-prices-calibration --phase b
 ```
 
 The one procedure covering every copy (this machine, T-100's machine if

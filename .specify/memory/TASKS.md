@@ -85,6 +85,28 @@ downstream fix needs the filing's own facts in the payload.
       `tests/sec_edgar/test_agent.py` with facts captured live in
       `tests/sec_edgar/fixtures/`. → `PLAN.md` Work item 16.
 
+## Work item 11, part 2 — Tiingo calibration file for the 32 pre-2022 leaver lines (T-061b)
+
+Part 1 (`T-061`, the 33-line `leaver-prices` fetch) is closed in `CHANGELOG.md`; this is its next part:
+the second private file for reviewer A's GUARD calibration (`FR-016`, brief
+`data_mining_tiingo_calibration32_task.md`).
+
+- [x] **T-061b-1** Add `src/data_mining/leaver_calibration.py`: the 32-line table (per-line start/end,
+  verified CIK, Tiingo symbol, accepted names), the two phases with the private `.raw/` cache, EDGAR CIK
+  verification (submissions JSON + in-span cover page), the gateway counts (FOX/FOXA recorded, the other
+  30 must be 0), the trims/split formula reused from `leaver_prices`, `split_cum`, `last_equals_exit`,
+  the >25% jump scan, and the CSV + manifest writer. → `PLAN.md` Work item 11, part 2.
+- [x] **T-061b-2** Add `cli/pricing_cli.py leaver-prices-calibration --phase a|b` and route it without
+  `FINNHUB_API_KEY`. → part 2, step 1.
+- [x] **T-061b-3** Add hermetic tests in `tests/data_mining/test_leaver_calibration.py` (synthetic rows
+  only; no real price). → part 2 acceptance.
+- [x] **T-061b-4** Amend constitution #8 (MINOR 2.1.0), `SPEC.md` FR-016/§2.1/§11 and
+  `docs/modules/data-mining.md`. → part 2 approach.
+- [x] **T-061b-5** Run phase a (49 requests), wait for the rolling hour, run phase b; record the counts,
+  dates and sha256 in the manifest; confirm the four production DB sha1s are unchanged. → part 2
+  acceptance.
+- [ ] **T-061b-6** Open the PR with counts, dates and sha256s only (no price). → part 2.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once

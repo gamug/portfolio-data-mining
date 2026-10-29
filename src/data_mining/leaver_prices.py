@@ -522,18 +522,23 @@ def detect_non_real(symbol: str, rows: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def build_series(
-    symbol: str, raw_rows: list[dict[str, Any]], valid_to: str
+    symbol: str,
+    raw_rows: list[dict[str, Any]],
+    valid_to: str,
+    start: str = START,
 ) -> list[dict[str, Any]]:
-    """Split-adjusted, dividend-unadjusted rows in ``[START, valid_to]``.
+    """Split-adjusted, dividend-unadjusted rows in ``[start, valid_to]``.
 
     ``divCash``/``splitFactor`` are kept exactly as Tiingo returns them; the
-    analysis repo decides how to load them.
+    analysis repo decides how to load them. ``start`` defaults to the
+    leaver-prices convention (``START``); the calibration fetch passes its own
+    per-line start.
     """
     factors = split_cum_factors(raw_rows)
     out: list[dict[str, Any]] = []
     for r in raw_rows:
         day = _parse_tiingo_date(r["date"])
-        if not (START <= day <= valid_to):
+        if not (start <= day <= valid_to):
             continue
         factor = factors[day]
         out.append(
