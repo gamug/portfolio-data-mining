@@ -4,8 +4,7 @@
     "name": "Python with UV",
     // Image is built from .devcontainer/Dockerfile (python 3.12 bookworm base + uv).
     "build": {
-        "dockerfile": "Dockerfile",
-        "context": ".."
+        "dockerfile": "Dockerfile"
     },
     // Use 'forwardPorts' to make a list of ports inside the container available locally.
     // "forwardPorts": [],

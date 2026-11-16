@@ -87,17 +87,22 @@ downstream fix needs the filing's own facts in the payload.
 
 ## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
 
-The dev container is now built from `.devcontainer/Dockerfile` (python 3.12 bookworm base,
-`uv` copied from Astral's image) instead of the prebuilt image plus the `va-h` uv feature.
-The change was written but never built.
+The dev container is built from `.devcontainer/Dockerfile` (python 3.12 bookworm base, `uv`
+pinned by version and digest and copied from Astral's image) instead of the prebuilt image plus
+the `va-h` uv feature. No `SPEC.md` section applies (tooling only, no behaviour change); it
+touches the README's Dev Container section only. Parts of it can be checked without the GPU
+host (a), the rest only on it (b).
 
-- [ ] **T-078** On the GPU-equipped WSL2 host, run "Dev Containers: Rebuild Container" and
-      confirm: the image builds; `uv --version` and `uvx --version` work as `vscode`;
-      `bash scripts/init.sh` (`uv sync --frozen --group dev`, pre-commit install, `gh`)
-      completes; `nvidia-smi` and `torch.cuda.is_available()` see the GPU (`--gpus=all` still
-      applies); `/workspaces/thesis` is mounted and `.env` reaches the container's environment;
-      `uv run pytest -q` passes. Decide whether to pin the `uv` version in the `COPY --from`
-      line (currently `:latest`). → `PLAN.md` Work item 17.
+- [x] **T-078a** *(no GPU needed, done 2026-11-16)* `docker build -f .devcontainer/Dockerfile
+      .devcontainer` succeeds; as `vscode` in the built image `uv --version` and `uvx --version`
+      print 0.12.1, `sudo -n true` works, Python is 3.12. → `PLAN.md` Work item 17.
+- [ ] **T-078b** *(GPU host)* "Dev Containers: Rebuild Container" starts the container; `.env`
+      reaches its environment and `/workspaces/thesis` is mounted. → `PLAN.md` Work item 17.
+- [ ] **T-078c** *(GPU host)* `bash scripts/init.sh` completes (`uv sync --frozen --group dev`,
+      pre-commit install, `gh`). → same.
+- [ ] **T-078d** *(GPU host)* `nvidia-smi` and `torch.cuda.is_available()` see the GPU
+      (`--gpus=all` still applies). → same.
+- [ ] **T-078e** *(GPU host)* `uv run pytest -q` passes inside the container. → same.
 
 ## Status
 
@@ -109,6 +114,8 @@ Work item 10, `T-053`–`T-060`, closed 2026-10-16 (`T-059`; its successor, Work
 Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 12, `T-062`, closed 2026-10-17 after the audited real run; Work item 13, `T-063`, closed 2026-10-17 by decision, no code; Work item 14, `T-064`–`T-067` and `T-075`–`T-077`, closed 2026-10-19: `T-064` in PR #73, `T-075` in #75, `T-076` in #78, `T-065` in #79, `T-066a` in #80, `T-067` in #81, `T-066b` in #83 (design #82), `T-077` in #85 (design #84), and the `articles` label and quarantine step of the 939 rows written 2026-10-19 (PR #87)); Work item 15, `T-068`–`T-074`, closed 2026-10-21 (the sitemap cache, PRs in `PLAN.md` Work item 15; the real file at schema version 5, `G3` N = 578,113, the first real discovery 2026-10-21).
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
+
+Work item 17 (`T-078a`–`T-078e`, test the devcontainer Dockerfile image): `T-078a` done, the rest wait on the GPU host.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
