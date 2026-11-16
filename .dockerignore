@@ -1,0 +1,22 @@
+# The Dockerfile copies nothing from the build context (only `COPY --from` another image),
+# but the dev container sends the repo root as context: keep it small.
+.git
+.venv
+.venv-windows
+.venv-stale-windows-do-not-use
+venv
+env
+.env
+__pycache__
+*.py[cod]
+.pytest_cache
+.hypothesis
+.mypy_cache
+.ruff_cache
+.vscode
+.idea
+data
+models
+output
+input
+*.log

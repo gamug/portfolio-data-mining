@@ -134,9 +134,9 @@ Run any service from the repo root, e.g.:
 uv run apps/pricing_api.py
 ```
 
-The **Dev Container** (`.devcontainer/`) is built from `.devcontainer/Dockerfile` (the devcontainers python 3.12
+The **Dev Container** (`.devcontainer/`) is built from the repo-root `Dockerfile` (the devcontainers python 3.12
 base image plus `uv`, copied from `ghcr.io/astral-sh/uv` pinned by version and digest; to bump uv, update both in the
-`COPY --from` line). Check the image builds without VS Code: `docker build -f .devcontainer/Dockerfile .devcontainer`.
+`COPY --from` line). Check the image builds without VS Code: `docker build .` (the repo-root `.dockerignore` keeps the context small).
 Opening the repo in it also bind-mounts a shared
 `thesis` data directory at `/workspaces/thesis`. Two pieces of configuration:
 
