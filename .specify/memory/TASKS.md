@@ -85,6 +85,20 @@ downstream fix needs the filing's own facts in the payload.
       `tests/sec_edgar/test_agent.py` with facts captured live in
       `tests/sec_edgar/fixtures/`. → `PLAN.md` Work item 16.
 
+## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
+
+The dev container is now built from `.devcontainer/Dockerfile` (python 3.12 bookworm base,
+`uv` copied from Astral's image) instead of the prebuilt image plus the `va-h` uv feature.
+The change was written but never built.
+
+- [ ] **T-078** On the GPU-equipped WSL2 host, run "Dev Containers: Rebuild Container" and
+      confirm: the image builds; `uv --version` and `uvx --version` work as `vscode`;
+      `bash scripts/init.sh` (`uv sync --frozen --group dev`, pre-commit install, `gh`)
+      completes; `nvidia-smi` and `torch.cuda.is_available()` see the GPU (`--gpus=all` still
+      applies); `/workspaces/thesis` is mounted and `.env` reaches the container's environment;
+      `uv run pytest -q` passes. Decide whether to pin the `uv` version in the `COPY --from`
+      line (currently `:latest`). → `PLAN.md` Work item 17.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once

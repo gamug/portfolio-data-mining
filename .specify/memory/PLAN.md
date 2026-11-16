@@ -1443,6 +1443,22 @@ F5b), so the payload has to carry them.
   response.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
+
+**Status: open. `T-078` active.**
+
+**Why**: `.devcontainer/devcontainer.json` used `image` + the `va-h` uv feature; it now builds
+from `.devcontainer/Dockerfile` (same base image, `uv` copied from `ghcr.io/astral-sh/uv`),
+and `devcontainer-lock.json` was removed. GPU `runArgs`, `--env-file`, the thesis mount and
+`postCreateCommand` stay in `devcontainer.json`. The image has not been built yet.
+
+**Approach**: rebuild the container on the project's GPU host and run the checks listed in
+`T-078`; pin the `uv` version if the build should be reproducible.
+
+**Acceptance criteria**:
+- The image builds and the container starts with GPU, `.env` and the thesis mount as before.
+- `uv`, `scripts/init.sh` and `uv run pytest -q` work inside it.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13 and 14 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
