@@ -87,14 +87,13 @@ downstream fix needs the filing's own facts in the payload.
 
 ## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
 
-The dev container is built from `.devcontainer/Dockerfile` (python 3.12 bookworm base, `uv`
+The dev container is built from the repo-root `Dockerfile` (python 3.12 bookworm base, `uv`
 pinned by version and digest and copied from Astral's image) instead of the prebuilt image plus
 the `va-h` uv feature. No `SPEC.md` section applies (tooling only, no behaviour change); it
 touches the README's Dev Container section only. Parts of it can be checked without the GPU
 host (a), the rest only on it (b).
 
-- [x] **T-078a** *(no GPU needed, done 2026-11-16)* `docker build -f .devcontainer/Dockerfile
-      .devcontainer` succeeds; as `vscode` in the built image `uv --version` and `uvx --version`
+- [x] **T-078a** *(no GPU needed, done 2026-11-16)* `docker build .` succeeds; as `vscode` in the built image `uv --version` and `uvx --version`
       print 0.12.1, `sudo -n true` works, Python is 3.12. → `PLAN.md` Work item 17.
 - [ ] **T-078b** *(GPU host)* "Dev Containers: Rebuild Container" starts the container; `.env`
       reaches its environment and `/workspaces/thesis` is mounted. → `PLAN.md` Work item 17.

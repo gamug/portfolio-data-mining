@@ -1451,12 +1451,11 @@ F5b), so the payload has to carry them.
 so the image can be built, pinned and inspected without the Dev Containers extension
 (`docker build`), and so tools can be baked in later instead of installed by `scripts/init.sh`.
 `.devcontainer/devcontainer.json` used `image` + the `va-h` uv feature; it now builds from
-`.devcontainer/Dockerfile` (same base image, `uv` copied from `ghcr.io/astral-sh/uv`, pinned by
+the repo-root `Dockerfile` (same base image, `uv` copied from `ghcr.io/astral-sh/uv`, pinned by
 version and digest, which replaces the feature's lock file `devcontainer-lock.json`). GPU
 `runArgs`, `--env-file`, the thesis mount and `postCreateCommand` stay in `devcontainer.json`.
 The base image runs as root and connects as `vscode` through its metadata `remoteUser`, so the
-Dockerfile has no `USER`. The build context is the `.devcontainer/` folder (no `.dockerignore`
-needed).
+Dockerfile has no `USER`. The build context is the repo root, trimmed by the root `.dockerignore` (`.venv`, `data/`, caches).
 
 **Approach**: `T-078a` builds the image and checks uv, `sudo` and Python as `vscode`; `T-078b`–`T-078e`
 rebuild the container on the project's GPU host and check the mounts, `init.sh`, the GPU and the tests.
