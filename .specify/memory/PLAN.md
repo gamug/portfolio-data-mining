@@ -1478,6 +1478,27 @@ F5b), so the payload has to carry them.
   response.
 - All quality gates clean (`ruff check`, `ruff format --check`, `mypy`, `pytest`).
 
+## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
+
+**Status: open. `T-078a` done; `T-078b`–`T-078e` need the GPU host.**
+
+**Why**: the maintainer asked for a Dockerfile with the dev container's instructions preserved,
+so the image can be built, pinned and inspected without the Dev Containers extension
+(`docker build`), and so tools can be baked in later instead of installed by `scripts/init.sh`.
+`.devcontainer/devcontainer.json` used `image` + the `va-h` uv feature; it now builds from
+the repo-root `Dockerfile` (same base image, `uv` copied from `ghcr.io/astral-sh/uv`, pinned by
+version and digest, which replaces the feature's lock file `devcontainer-lock.json`). GPU
+`runArgs`, `--env-file`, the thesis mount and `postCreateCommand` stay in `devcontainer.json`.
+The base image runs as root and connects as `vscode` through its metadata `remoteUser`, so the
+Dockerfile has no `USER`. The build context is the repo root, trimmed by the root `.dockerignore` (`.venv`, `data/`, caches).
+
+**Approach**: `T-078a` builds the image and checks uv, `sudo` and Python as `vscode`; `T-078b`–`T-078e`
+rebuild the container on the project's GPU host and check the mounts, `init.sh`, the GPU and the tests.
+
+**Acceptance criteria**:
+- The image builds and the container starts with GPU, `.env` and the thesis mount as before.
+- `uv`, `scripts/init.sh` and `uv run pytest -q` work inside it.
+
 ## Sequencing
 
 Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13 and 14 are closed (merged or approved; tasks in `CHANGELOG.md`). Work
@@ -1487,6 +1508,8 @@ quarantine and the hand-off. Work item 12 (`T-062`, the matcher follow-up) close
 2026-10-17 after the audited real run; `portfolio-nlp` did not wait on it. Work item 13 (`T-063`, the News Corp pairs) closed 2026-10-17 by decision: they wait for the NER check, nothing is released.
 Work item 14 (`T-064`–`T-067`, `T-075`–`T-077`, found 2026-10-18) has all its code merged; the `articles` label and quarantine step of the 939 rows was written 2026-10-19 (`CHANGELOG.md` `T-067`); it is closed. History: it was maintainer-scheduled; `T-064` goes first because it blocks the data half of the `T-062` step 6 check; then `T-065`, then `T-066a` (start-up check and visibility, done in PR #80); `T-067` (done in PR #81); `T-066b` (the shared `data_mining.env.load_env()` and its test) has its design: `.env` wins over the inherited environment for every variable, the system value is the fallback, and constitution rule 7 is amended (version 2.0.0, `TASKS.md` `T-066b`); the code is done (`T-066b`, `TASKS.md`). `T-077` (found 2026-10-18: `.env` pins `DISCOVERY_END_DATE=2026-08-10` and, since `T-066b`, wins) makes the end date an input with a UTC-today default in the CLI and the API, retires the variable with one notice, and removes `config.py`'s import-time `.env` read; its docs PR (#84, merged) amended the constitution to 2.0.1; the code is done in PR #85. The 939 older rows with `company = ticker` were decided and the `discovered_urls` part written 2026-10-18 (`T-067`; see that section).
 Work item 15 (`T-068`–`T-074`, the sitemap cache, option B chosen by the maintainer 2026-10-18) is **closed (2026-10-21)**; its three gates were G1 the design numbers, G2 the schema, G3 the real-data step, **passed 2026-10-19, 2026-10-19 and 2026-10-20 (N = 578,113); `T-068` to `T-074` are closed (the per-task lines above)**; it does not depend on Work item 14 except that `T-064` (PR #73) is the fix that let the large batch through.
+Work item 16 (`T-159b`) is in progress. Work item 17 (`T-078a`–`T-078e`, the devcontainer Dockerfile) has its
+build check done and waits on the GPU host for the rest; it blocks nothing.
 Otherwise there is no ordering constraint from the rest of the backlog, since every other `SPEC.md` §13
 item is accepted (Non-goals above) and not touched by this plan.
 

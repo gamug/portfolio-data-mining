@@ -85,6 +85,24 @@ downstream fix needs the filing's own facts in the payload.
       `tests/sec_edgar/test_agent.py` with facts captured live in
       `tests/sec_edgar/fixtures/`. → `PLAN.md` Work item 16.
 
+## Work item 17 — Test the devcontainer Dockerfile image (ops, T-078)
+
+The dev container is built from the repo-root `Dockerfile` (python 3.12 bookworm base, `uv`
+pinned by version and digest and copied from Astral's image) instead of the prebuilt image plus
+the `va-h` uv feature. No `SPEC.md` section applies (tooling only, no behaviour change); it
+touches the README's Dev Container section only. Parts of it can be checked without the GPU
+host (a), the rest only on it (b).
+
+- [x] **T-078a** *(no GPU needed, done 2026-11-16)* `docker build .` succeeds; as `vscode` in the built image `uv --version` and `uvx --version`
+      print 0.12.1, `sudo -n true` works, Python is 3.12. → `PLAN.md` Work item 17.
+- [ ] **T-078b** *(GPU host)* "Dev Containers: Rebuild Container" starts the container; `.env`
+      reaches its environment and `/workspaces/thesis` is mounted. → `PLAN.md` Work item 17.
+- [ ] **T-078c** *(GPU host)* `bash scripts/init.sh` completes (`uv sync --frozen --group dev`,
+      pre-commit install, `gh`). → same.
+- [ ] **T-078d** *(GPU host)* `nvidia-smi` and `torch.cuda.is_available()` see the GPU
+      (`--gpus=all` still applies). → same.
+- [ ] **T-078e** *(GPU host)* `uv run pytest -q` passes inside the container. → same.
+
 ## Status
 
 Closed Work items 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14 and 15 are in `CHANGELOG.md` (Work item 5 closed 2026-10-02 once
@@ -97,6 +115,8 @@ Work item 11, `T-061`, closed 2026-10-16 in PR #62; Work item 12, `T-062`, close
 Work item 11, part 2 (`T-061b`, the Tiingo calibration file) closed 2026-10-29 in PR #102; reviewer B verified the manifest against the universe spans and closed L-42 — see `CHANGELOG.md`.
 
 Work item 8 (`T-045`, filer CIK and period of report on filing-list rows) is open and active.
+
+Work item 17 (`T-078a`–`T-078e`, test the devcontainer Dockerfile image): `T-078a` done, the rest wait on the GPU host.
 
 Work item 1 (CI workflow) was built and then reverted at the maintainer's
 request (#35), so T-001–T-007 stay unchecked and T-010–T-014 are moot until
